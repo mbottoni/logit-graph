@@ -1,5 +1,6 @@
 # data
 images/*
+.ipynb_checkpoints/*
 
 # vscode
 .DS_Store
