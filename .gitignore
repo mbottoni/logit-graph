@@ -1,0 +1,20 @@
+# data
+images/*
+
+# vscode
+.DS_Store
+*.DS_Store
+
+# R
+*.RData
+*/.RData
+*.Rproj
+*/.Rpro
+*.Rproj.user
+*/.Rproj.user
+*.Rhistory
+*/.Rhistory
+.Rproj.user
+
+# c
+*.pyc

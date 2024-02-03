@@ -1,0 +1,29 @@
+name: logit-graph
+channels:
+  - pip
+  - defaults
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.7.0
+  - pip
+  - mkl < 2022
+  - pandas
+  - openpyxl
+  - numpy
+  - scipy
+  - pdblp
+  - tqdm
+  - jupyterlab
+  - pytorch
+  - torchvision 
+  - torchaudio 
+  - scikit-learn
+  - statsmodels
+  - lightgbm
+  - seaborn
+  - causalnex
+  - fastparquet
+  - pip:
+    - ICPy
+    - lingam
