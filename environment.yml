@@ -1,4 +1,4 @@
-name: logit-graph
+name: logit_graph
 channels:
   - pip
   - defaults
@@ -8,15 +8,13 @@ dependencies:
   - python=3.8.16
   - pip
   - pandas
-  - openpyxl
   - numpy
   - scipy
-  - pdblp
   - tqdm
   - jupyterlab
   - pytorch
-  - torchvision 
-  - torchaudio 
+  - torchvision
+  - torchaudio
   - scikit-learn
   - statsmodels
   - lightgbm
