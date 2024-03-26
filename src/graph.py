@@ -118,7 +118,6 @@ class GraphModel:
         print('\n'*3)
         return is_converged
 
-
     def populate_edges(self, warm_up=50, max_iterations=100):
         i = 0
         stop_condition = False

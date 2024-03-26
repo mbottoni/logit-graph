@@ -22,5 +22,12 @@ __pycache__/*
 *.pyc
 
 deprecated/
+
 .html
 *.html
+
+.pickle
+*.pickle
+
+.pkl
+*.pkl
