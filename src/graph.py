@@ -21,8 +21,9 @@ class GraphModel:
                     adj_matrix[j, i] = 0
         return adj_matrix
 
-    def calculate_spectrum(self):
-        G = nx.from_numpy_array(self.graph)
+    @classmethod
+    def calculate_spectrum(cls, graph):
+        G = nx.from_numpy_array(graph)
         eigenvalues = nx.laplacian_spectrum(G)
         return np.sort(eigenvalues)
 
@@ -127,7 +128,7 @@ class GraphModel:
         while i < max_iterations and (i < warm_up or not stop_condition):
             print(f'iteration: {i}')
             self.add_vertex(self.p)  # add vertex
-            spectrum = self.calculate_spectrum()
+            spectrum = self.calculate_spectrum(self.graph)
 
             spectra.append(spectrum)
             graphs.append(self.graph.copy())
