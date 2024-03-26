@@ -4,48 +4,84 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import imageio
 import pickle
+from scipy.stats import gaussian_kde
+from pyvis.network import Network
+
 
 class GraphUtils:
     @staticmethod
-    def plot_graph_from_adjacency(adj_matrix, filename, pos=None, title='Graph'):
+    def plot_graph_from_adjacency(adj_matrix: np.array, pos=None, title='Graph', size=(10, 10)):
         """Plot the graph from an adjacency matrix and save the plot as an image."""
-        G = nx.from_numpy_matrix(adj_matrix)
-        fig = plt.figure()
+        G = nx.from_numpy_array(adj_matrix)
+        fig = plt.figure(figsize=size)
         plt.title(title)
         nx.draw(G, pos=pos, with_labels=True, node_size=700, node_color="skyblue", font_size=15, font_weight='bold')
-        plt.show()
-        plt.savefig(filename, format='png')
         plt.close(fig)
         return fig
 
     @staticmethod
-    def plot_graph_and_spectrum(adj_matrix, spectrum, filename, pos=None, title=None):
+    def plot_graph_and_spectrum(adj_matrix: np.array, spectrum, pos=None, title=None, size=(15, 10)):
         """Plot the graph and its spectrum side by side, and save the plot as an image."""
-        G = nx.from_numpy_matrix(adj_matrix)
-        fig, axs = plt.subplots(1, 2, figsize=(15, 10))
+        G = nx.from_numpy_array(adj_matrix)
+        fig, axs = plt.subplots(1, 2, figsize=size)
         nx.draw(G, pos=pos, with_labels=True, ax=axs[0], node_size=700, node_color="skyblue", font_size=15, font_weight='bold')
         axs[0].set_title('Graph')
-        axs[1].hist(spectrum, bins=60)
+        axs[1].hist(spectrum, bins=60, density=True, alpha=0.75, color='skyblue', edgecolor='black')
+
+        # Calculate and plot the KDE
+        kde = gaussian_kde(spectrum)
+        x_range = np.linspace(min(spectrum), max(spectrum), 500)
+        kde_values = kde(x_range)
+        axs[1].plot(x_range, kde_values, color='darkblue', lw=2, label='KDE')
+
         axs[1].set_title('Spectrum')
         if title:
             plt.suptitle(title)
-        plt.savefig(filename, format='png')
         plt.close(fig)
         return fig
 
     @staticmethod
-    def plot_degree_distribution(adj_matrix, filename, title='Degree Distribution'):
-        """Plot the degree distribution of the graph."""
-        G = nx.from_numpy_matrix(adj_matrix)
+    def plot_degree_distribution(adj_matrix: np.array, title='Degree Distribution', size=(10,10)):
+        """Plot the degree distribution of the graph along with its KDE."""
+        G = nx.from_numpy_array(adj_matrix)
         degrees = [G.degree(n) for n in G.nodes()]
-        fig = plt.figure()
-        plt.hist(degrees, bins=range(min(degrees), max(degrees) + 2), align='left')
-        plt.title(title)
+        kde = gaussian_kde(degrees)
+        x_range = np.linspace(min(degrees), max(degrees), 500)
+        kde_values = kde(x_range)
+        fig = plt.figure(figsize=size)
+        # Plot the histogram
+        plt.hist(degrees, bins=range(min(degrees), max(degrees) + 2), density=True,
+                 align='left', alpha=0.75, color='skyblue', edgecolor='black')
+        # Plot the KDE
+        plt.plot(x_range, kde_values, color='darkblue', lw=2, label='KDE')
+        # Set titles and labels
+        max_degree = np.max(degrees)
+        avg_degree = np.mean(degrees)
+        info = f" | max_degree: {max_degree}, avg_degree: {avg_degree}"
+        plt.title(title+info)
         plt.xlabel('Degree')
         plt.ylabel('Frequency')
-        plt.savefig(filename, format='png')
+        plt.legend()
+        # Prevent the plot from showing automatically in Jupyter notebooks
         plt.close(fig)
         return fig
+
+    @staticmethod
+    def save_graph_html(g: np.array, params_dict):
+        # Plot with pyvis
+        net = Network(
+            directed = False,
+            select_menu = True, # Show part 1 in the plot (optional)
+            filter_menu = True, # Show part 2 in the plot (optional)
+            notebook = True,
+            cdn_resources='in_line'
+        )
+        path = '../data/output/'
+        params_str = "_".join(f"{k}={v}" for k, v in params_dict.items())
+        graph_filename = f"{path}graph_{params_str}.html"
+        net.show_buttons() # Show part 3 in the plot (optional)
+        net.from_nx(nx.from_numpy_array(g)) # Create directly from nx graph
+        net.show(graph_filename)
 
     @staticmethod
     def loading_graph_artifacts(params_dict):
