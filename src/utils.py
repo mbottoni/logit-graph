@@ -3,6 +3,7 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import imageio
+import pickle
 
 class GraphUtils:
     @staticmethod
@@ -46,6 +47,35 @@ class GraphUtils:
         plt.close(fig)
         return fig
 
+    @staticmethod
+    def loading_graph_artifacts(params_dict):
+        path = '../data/input/'
+        params_str = "_".join(f"{k}={v}" for k, v in params_dict.items())
+        graph_filename = f"{path}graph_data_{params_str}.pickle"
+        spec_filename = f"{path}spec_data_{params_str}.pickle"
+        
+        # Load graphs and spec from pickle files
+        with open(graph_filename, 'rb') as f:
+            graphs = pickle.load(f)
+        with open(spec_filename, 'rb') as f:
+            spec = pickle.load(f)
+        
+        return graphs, spec
 
+    @staticmethod
+    def saving_graph_artifacts(params_dict, graphs, spec):
+        path = '../data/input/'
+        params_str = "_".join(f"{k}={v}" for k, v in params_dict.items())
+        graph_filename = f"{path}graph_data_{params_str}.pickle"
+        spec_filename = f"{path}spec_data_{params_str}.pickle"
+        
+        print(graph_filename)
+        print(spec_filename)
+        
+        # Save graphs and spec in pickle files
+        with open(graph_filename, 'wb') as f:
+            pickle.dump(graphs, f)
+        with open(spec_filename, 'wb') as f:
+            pickle.dump(spec, f)
 
 
