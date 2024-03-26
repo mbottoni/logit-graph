@@ -1,5 +1,6 @@
 import numpy as np
 import networkx as nx
+from scipy.stats import ks_2samp
 
 class GraphModel:
     def __init__(self, n, p, c, beta, threshold, sigma=1):
@@ -64,16 +65,58 @@ class GraphModel:
             for j in range(self.n):
                 if i != j and self.graph[i, j] == 0:
                     normalization = self.n * (self.n - 1) / 2
-                    noise = abs(np.random.normal(0, self.sigma))
+                    #noise = abs(np.random.normal(0, self.sigma))
+                    noise = 0 # deprecated
                     sum_degrees_raw = (self.get_sum_degrees(i, p) + self.get_sum_degrees(j, p) )
                     sum_degrees = (sum_degrees_raw + noise) / normalization
-                    print(f"sum_degrees: {sum_degrees}  noise: {noise}  normalization: {normalization} sum_degrees_raw: {sum_degrees_raw}")
+                    #print(f"sum_degrees: {sum_degrees}  noise: {noise}  normalization: {normalization} sum_degrees_raw: {sum_degrees_raw}")
                     self.graph[i, j] = self.get_edge_logit(sum_degrees)
 
-    def check_convergence(self, graph_list, tolerance=1):
-        #difference = sum(np.sum(np.abs(graph_list[-i] - graph_list[-(i + 1)])) for i in range(1, 20, 2))
-        #return difference <= tolerance
-        return False
+    def check_convergence(self, graphs, spectra, stability_window=5,
+                          spectral_stability_threshold=0.1, degree_dist_threshold=0.05):
+
+        def degree_distribution_stability(graph1, graph2):
+            # Calculate degree sequences
+            degrees1 = np.sum(graph1, axis=1)
+            degrees2 = np.sum(graph2, axis=1)
+            # Compute the Kolmogorov-Smirnov statistic
+            ks_stat, _ = ks_2samp(degrees1, degrees2)
+            print(f"KS Statistic: {ks_stat}")
+            return ks_stat
+
+        def spectral_change_stability(spectrum1, spectrum2):
+            # Filter out zero eigenvalues and focus on the leading non-zero eigenvalues
+            non_zero_spectrum1 = spectrum1[spectrum1 > 1e-5][:5]  # Consider the first 5 non-zero eigenvalues
+            non_zero_spectrum2 = spectrum2[spectrum2 > 1e-5][:5]
+            epsilon = 1e-9
+            relative_changes = np.abs((non_zero_spectrum1 - non_zero_spectrum2) / (non_zero_spectrum1 + epsilon))
+            print(f"Max Relative Change in Spectrum: {np.max(relative_changes)}")
+            return np.max(relative_changes)
+
+        if len(graphs) <= stability_window:
+            print("Not enough graphs for stability check.")
+            return False
+
+        # Spectral Stability: Check if the spectral changes are below the threshold
+        spectral_changes_stable = all(
+            spectral_change_stability(spectra[-i - 1], spectra[-i]) < spectral_stability_threshold
+            for i in range(1, stability_window)
+        )
+        print(f"Spectral Changes Stable: {spectral_changes_stable}")
+
+        # Degree Distribution Stability: Check if the KS distance between degree distributions is below the threshold
+        degree_dist_stable = all(
+            degree_distribution_stability(graphs[-i - 1], graphs[-i]) < degree_dist_threshold
+            for i in range(1, stability_window)
+        )
+        print(f"Degree Distribution Stable: {degree_dist_stable}")
+
+        # Final convergence check
+        is_converged = spectral_changes_stable and degree_dist_stable
+        print(f"Graph Converged: {is_converged}")
+        print('\n'*3)
+        return is_converged
+
 
     def populate_edges(self, warm_up=50, max_iterations=100):
         i = 0
@@ -90,7 +133,9 @@ class GraphModel:
             graphs.append(self.graph.copy())
 
             if i > warm_up:
-                stop_condition = self.check_convergence(graphs, tolerance=1)
+                #stop_condition = self.check_convergence(graphs, tolerance=1)
+                stop_condition = self.check_convergence(graphs, spectra)
+
 
             i += 1
 
