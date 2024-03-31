@@ -13,7 +13,7 @@ class LogisticModelEstimator:
         sum_degrees = sum_degrees_i + sum_degrees_j
 
         # Compute the logistic regression probability
-        probability = c / (1 + beta * np.exp(-sum_degrees))
+        probability = c / (1 + beta * np.exp(sum_degrees))
         return probability
 
     def loss_function(self, params):
@@ -28,15 +28,10 @@ class LogisticModelEstimator:
 
         return loss
 
-    def estimate_parameters(self):
-        # Initial guesses for parameters c and beta
-        initial_guess = [0.5, 0.1]
-
-        # Use scipy's minimize function to find the optimal parameters
+    def estimate_parameters(self, initial_guess=[0.5, 0.1]):
         result = minimize(self.loss_function, initial_guess, method='L-BFGS-B', bounds=[(0, None), (0, None)])
 
-        # Extract the estimated parameters
-        estimated_c, estimated_beta = result.x
+        estimated_c, estimated_beta = result.x # Extract the estimated parameters
         return estimated_c, estimated_beta
 
 
