@@ -76,7 +76,7 @@ class MLEGraphModelEstimator:
                 else:
                     likelihood += np.log(1 - p_ij + 1e-9)
 
-        return -likelihood  # Negative because we minimize in the optimization routine
+        return likelihood  # Negative because we minimize in the optimization routine
 
     def estimate_parameters(self, initial_guess=[0.5, 0.1]):
         # Define a callback function to print the current parameters and loss at each step
@@ -90,7 +90,8 @@ class MLEGraphModelEstimator:
         # Run the optimization with the callback function
         result = minimize(self.likelihood_function,
                         initial_guess,
-                        method='L-BFGS-B',
+                        #method='L-BFGS-B',
+                        method = 'Nelder-Mead',
                         bounds=[(0, None), (0, None)],
                         callback=callback)
 
