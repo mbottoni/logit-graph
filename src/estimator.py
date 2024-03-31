@@ -1,10 +1,53 @@
 import numpy as np
 from scipy.optimize import minimize
+import torch
+
+max_val = np.nan
+eps = 1e-5
+
+class NegativeLogLikelihoodLoss(torch.nn.Module):
+    def __init__(self, graph):
+        super(NegativeLogLikelihoodLoss, self).__init__()
+        self.graph = torch.tensor(graph, dtype=torch.float32)  # Ensure graph is a PyTorch tensor
+        self.n = graph.shape[0]
+
+    def logistic_probability(self, c, beta, sum_degrees):
+        return c / (1 + beta * torch.exp(sum_degrees))
+
+    def forward(self, params):
+        c, beta = params
+        likelihood = 0.0
+
+        # Iterate over all possible edges
+        for i in range(self.n):
+            for j in range(i, self.n):
+                sum_degrees = torch.sum(self.graph[i]) + torch.sum(self.graph[j])
+                p_ij = self.logistic_probability(c, beta, sum_degrees)
+
+                # Adding a small constant to probabilities to avoid log(0)
+                #if self.graph[i, j] == 1:
+                #    likelihood += torch.log(p_ij + eps)
+                #else:
+                #    likelihood += torch.log(1 - p_ij + eps)
+                if self.graph[i, j] == 1:
+                    try:
+                        likelihood += torch.log(p_ij + eps)  # Adding a small constant to avoid log(0)
+                    except:
+                        return torch.float(max_val)
+                else:
+                    try:
+                        likelihood += torch.log(1 - p_ij + eps)
+                    except:
+                        return torch.float(max_val)
+
+
+        return -likelihood  # Return negative likelihood
 
 class MLEGraphModelEstimator:
     def __init__(self, graph):
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
+        self.params_history = []  # History of parameters during optimization
 
     def logistic_probability(self, c, beta, sum_degrees):
         """Logistic regression probability function."""
@@ -14,10 +57,7 @@ class MLEGraphModelEstimator:
         """Negative log-likelihood function to be minimized."""
         c, beta = params
         likelihood = 0
-        eps = 1e-5
-        max_val = 1e10
 
-        # Iterate over all possible edges
         for i in range(self.n):
             for j in range(i, self.n):
                 sum_degrees = np.sum(self.graph[i]) + np.sum(self.graph[j])  # Sum of degrees of nodes i and j
@@ -39,11 +79,34 @@ class MLEGraphModelEstimator:
 
         return likelihood  # Negative because we minimize in the optimization routine
 
-    def estimate_parameters2(self, initial_guess=[0.5, 0.1]):
+    def estimate_parameters_torch(self, initial_guess=[0.5, 0.1], learning_rate=0.01, max_iter=1000):
+            c, beta = [torch.tensor(x, dtype=torch.float32, requires_grad=True) for x in initial_guess]
+            optimizer = torch.optim.SGD([c, beta], lr=learning_rate)  # Using SGD optimizer from PyTorch
+
+            # Instantiate the loss function class with the graph
+            loss_function = NegativeLogLikelihoodLoss(self.graph)
+            for _ in range(max_iter):
+                optimizer.zero_grad()  # Clear previous gradients
+                # Compute the loss by passing the parameters to the loss function instance
+                loss = loss_function([c, beta])
+                # Call backward on the loss tensor to compute gradients
+                loss.backward()
+                # Update parameters based on gradients
+                optimizer.step()
+
+                # Store parameters
+                self.params_history.append([c.item(), beta.item()])
+                print(f"Current parameters: c={c.item()}, beta={beta.item()}, Loss={loss.item()}")
+
+            print(f"Optimization completed. Estimated parameters: c={c.item()}, beta={beta.item()}")
+            return c.item(), beta.item()
+
+    def estimate_parameters(self, initial_guess=[0.5, 0.1]):
         # Define a callback function to print the current parameters and loss at each step
         def callback(params):
             c, beta = params
             loss = self.likelihood_function(params)
+            self.params_history.append([c, beta])
             print(f"Current parameters: c={c}, beta={beta}")
             print(f"Current loss: {loss}")
             print()
@@ -56,7 +119,6 @@ class MLEGraphModelEstimator:
         cons = ({'type': 'ineq', 'fun': constraint})
 
         # Run the optimization with the callback function and the constraint
-        eps = 1e-5
         result = minimize(self.likelihood_function,
                         initial_guess,
                         method='SLSQP',  ## 'BFGS', 'Nelder-Mead', 'Newton-CG', 'L-BFGS-B', 'TNC', 'COBYLA', 'SLSQP'
