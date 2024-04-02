@@ -140,3 +140,6 @@ class GraphModel:
             i += 1
 
         return graphs, spectra
+
+
+

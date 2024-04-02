@@ -31,12 +31,12 @@ class NegativeLogLikelihoodLoss(torch.nn.Module):
                 #    likelihood += torch.log(1 - p_ij + eps)
                 if self.graph[i, j] == 1:
                     try:
-                        likelihood += torch.log(p_ij + eps)  # Adding a small constant to avoid log(0)
+                        likelihood += torch.log(torch.abs(p_ij + eps))  # Adding a small constant to avoid log(0)
                     except:
                         return torch.float(max_val)
                 else:
                     try:
-                        likelihood += torch.log(1 - p_ij + eps)
+                        likelihood += torch.log(torch.abs(1 - p_ij + eps))
                     except:
                         return torch.float(max_val)
 
@@ -68,14 +68,14 @@ class MLEGraphModelEstimator:
 
                 if self.graph[i, j] == 1:
                     try:
-                        likelihood += np.log(p_ij + eps)  # Adding a small constant to avoid log(0)
+                        likelihood += np.log(abs(p_ij + eps))  # Adding a small constant to avoid log(0)
                     except:
-                        return max_val
+                        return np.float(max_val)
                 else:
                     try:
-                        likelihood += np.log(1 - p_ij + eps)
+                        likelihood += np.log(abs(1 - p_ij + eps))
                     except:
-                        return max_val
+                        return np.float(max_val)
 
         return likelihood  # Negative because we minimize in the optimization routine
 
@@ -131,4 +131,10 @@ class MLEGraphModelEstimator:
         return estimated_c, estimated_beta, result
 
 
+
+
+
+#class LogitRegEstimator
+    #def __init__(self):
+        #return 
 
