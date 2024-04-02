@@ -3,13 +3,13 @@ import networkx as nx
 from scipy.stats import ks_2samp
 
 class GraphModel:
-    def __init__(self, n, p, c, beta, threshold, sigma=1):
+    def __init__(self, n, p, alpha, beta, sigma, threshold):
         self.n = n # number of nodes
         self.p = p # number of neighbors to consider 
-        self.c = c # numerator of the logit model
-        self.beta = beta # denominator of the logit model
+        self.alpha = alpha 
+        self.beta  = beta
+        self.sigma = sigma
         self.threshold = threshold # theshold for creating and edge
-        self.sigma = sigma # stddev of noise when adding an vertex
         self.graph = self.generate_random_graph(n, p)
 
     def generate_random_graph(self, n, p):
@@ -28,8 +28,8 @@ class GraphModel:
         return np.sort(eigenvalues)
 
     def logistic_regression(self, sum_degrees):
-        num = self.c
-        denom = 1 + self.beta * np.exp(sum_degrees)
+        num = 1
+        denom = 1 + 1 * np.exp(-sum_degrees)
         return num / denom
 
     def degree_vertex(self, vertex, p):
@@ -66,11 +66,11 @@ class GraphModel:
             for j in range(self.n):
                 if i != j and self.graph[i, j] == 0:
                     normalization = self.n * (self.n - 1) / 2
-                    #noise = abs(np.random.normal(0, self.sigma))
-                    noise = 0 # deprecated
-                    sum_degrees_raw = (self.get_sum_degrees(i, p) + self.get_sum_degrees(j, p) )
-                    sum_degrees = (sum_degrees_raw + noise) / normalization
-                    #print(f"sum_degrees: {sum_degrees}  noise: {noise}  normalization: {normalization} sum_degrees_raw: {sum_degrees_raw}")
+                    normalization = 1
+                    degrees_i = self.get_sum_degrees(i, p)
+                    degrees_j = self.get_sum_degrees(j, p)
+                    sum_degrees_raw = ( self.alpha * degrees_i + self.beta * degrees_j )
+                    sum_degrees = ( sum_degrees_raw + self.sigma ) / normalization
                     self.graph[i, j] = self.get_edge_logit(sum_degrees)
 
     def check_convergence(self, graphs, spectra, stability_window=5,
@@ -85,14 +85,22 @@ class GraphModel:
             print(f"KS Statistic: {ks_stat}")
             return ks_stat
 
+        #def spectral_change_stability(spectrum1, spectrum2):
+            ## Filter out zero eigenvalues and focus on the leading non-zero eigenvalues
+            #non_zero_spectrum1 = spectrum1[spectrum1 > 1e-5][:5]  # Consider the first 5 non-zero eigenvalues
+            #non_zero_spectrum2 = spectrum2[spectrum2 > 1e-5][:5]
+            #epsilon = 1e-9
+            #relative_changes = np.abs((non_zero_spectrum1 - non_zero_spectrum2) / (non_zero_spectrum1 + epsilon))
+            #print(f"Max Relative Change in Spectrum: {np.max(relative_changes)}")
+            #return np.max(relative_changes)
+
         def spectral_change_stability(spectrum1, spectrum2):
-            # Filter out zero eigenvalues and focus on the leading non-zero eigenvalues
-            non_zero_spectrum1 = spectrum1[spectrum1 > 1e-5][:5]  # Consider the first 5 non-zero eigenvalues
-            non_zero_spectrum2 = spectrum2[spectrum2 > 1e-5][:5]
-            epsilon = 1e-9
-            relative_changes = np.abs((non_zero_spectrum1 - non_zero_spectrum2) / (non_zero_spectrum1 + epsilon))
-            print(f"Max Relative Change in Spectrum: {np.max(relative_changes)}")
-            return np.max(relative_changes)
+            relative_changes = np.abs((spectrum1 - spectrum2) / spectrum1)
+            if relative_changes.size > 0:  # Check if the array is not empty
+                print(f"Max Relative Change in Spectrum: {np.max(relative_changes)}")
+            else:
+                print("Relative changes array is empty.")
+            return np.linalg.norm(relative_changes, np.inf)
 
         if len(graphs) <= stability_window:
             print("Not enough graphs for stability check.")

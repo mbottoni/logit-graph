@@ -45,15 +45,15 @@ class GraphUtils:
         """Plot the degree distribution of the graph along with its KDE."""
         G = nx.from_numpy_array(adj_matrix)
         degrees = [G.degree(n) for n in G.nodes()]
-        kde = gaussian_kde(degrees)
+        #kde = gaussian_kde(degrees)
         x_range = np.linspace(min(degrees), max(degrees), 500)
-        kde_values = kde(x_range)
+        #kde_values = gaussian_kde(x_range)
         fig = plt.figure(figsize=size)
         # Plot the histogram
         plt.hist(degrees, bins=range(min(degrees), max(degrees) + 2), density=True,
                  align='left', alpha=0.75, color='skyblue', edgecolor='black')
         # Plot the KDE
-        plt.plot(x_range, kde_values, color='darkblue', lw=2, label='KDE')
+        #plt.plot(x_range, kde_values, color='darkblue', lw=2, label='KDE')
         # Set titles and labels
         max_degree = np.max(degrees)
         avg_degree = np.mean(degrees)
