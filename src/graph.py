@@ -29,7 +29,7 @@ class GraphModel:
 
     def logistic_regression(self, sum_degrees):
         num = 1
-        denom = 1 + 1 * np.exp(-sum_degrees)
+        denom = 1 + 1 * np.exp(sum_degrees)
         return num / denom
 
     def degree_vertex(self, vertex, p):
