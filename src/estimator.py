@@ -49,13 +49,12 @@ class NegativeLogLikelihoodLoss(torch.nn.Module):
         # Iterate over all possible edges
         for i in range(self.n):
             for j in range(i, self.n):
-                # TODO: Change
                 degrees_i = self.get_sum_degrees(i, self.p)
                 degrees_j = self.get_sum_degrees(j, self.p)
                 sum_degrees_raw = ( alpha * degrees_i + beta * degrees_j )
                 sum_degrees = ( sum_degrees_raw + sigma )
                 #sum_degrees = torch.sum(self.graph[i]) + torch.sum(self.graph[j])
-                p_ij = self.logistic_probability(c, beta, sum_degrees)
+                p_ij = self.logistic_probability(sum_degrees)
 
                 # Adding a small constant to probabilities to avoid log(0)
                 #if self.graph[i, j] == 1:
@@ -63,15 +62,9 @@ class NegativeLogLikelihoodLoss(torch.nn.Module):
                 #else:
                 #    likelihood += torch.log(1 - p_ij + eps)
                 if self.graph[i, j] == 1:
-                    try:
-                        likelihood += torch.log(torch.abs(p_ij + eps))  # Adding a small constant to avoid log(0)
-                    except:
-                        return torch.float(max_val)
+                    likelihood += torch.log(p_ij + eps)  # Adding a small constant to avoid log(0)
                 else:
-                    try:
-                        likelihood += torch.log(torch.abs(1 - p_ij + eps))
-                    except:
-                        return torch.float(max_val)
+                    likelihood += torch.log(1 - p_ij + eps)
 
 
         return -likelihood  # Return negative likelihood
@@ -128,7 +121,7 @@ class MLEGraphModelEstimator:
             for _ in range(max_iter):
                 optimizer.zero_grad()  # Clear previous gradients
                 # Compute the loss by passing the parameters to the loss function instance
-                loss = loss_function([c, beta])
+                loss = loss_function([alpha, beta, sigma])
                 # Call backward on the loss tensor to compute gradients
                 loss.backward()
                 # Update parameters based on gradients
