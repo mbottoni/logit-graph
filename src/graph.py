@@ -63,17 +63,21 @@ class GraphModel:
         val_log = self.logistic_regression(sum_degrees)
         return np.random.choice(np.arange(0, 2), p=[1 - val_log, val_log])
 
-    def add_vertex(self, p):
+    def add_remove_vertex(self, p):
         for i in range(self.n):
             for j in range(self.n):
-                if i != j and self.graph[i, j] == 0:
+                # Adding or removing vertex 
+                if i != j:
                     normalization = self.n * (self.n - 1) / 2
                     normalization = 1
+
                     degrees_i = self.get_sum_degrees(i, p)
                     degrees_j = self.get_sum_degrees(j, p)
+
                     sum_degrees_raw = ( self.alpha * degrees_i + self.beta * degrees_j )
                     sum_degrees = ( sum_degrees_raw + self.sigma ) / normalization
-                    self.graph[i, j] = self.get_edge_logit(sum_degrees)
+
+                    self.graph[i, j] = self.get_edge_logit(sum_degrees) # here we can add or remove vertex
 
     def check_convergence(self, graphs, spectra, stability_window=5,
                           spectral_stability_threshold=0.1, degree_dist_threshold=0.05):
@@ -136,7 +140,7 @@ class GraphModel:
 
         while i < max_iterations and (i < warm_up or not stop_condition):
             print(f'iteration: {i}')
-            self.add_vertex(self.p)  # add vertex
+            self.add_remove_vertex(self.p)  # add vertex
             spectrum = self.calculate_spectrum(self.graph)
 
             spectra.append(spectrum)
