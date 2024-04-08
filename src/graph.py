@@ -3,13 +3,15 @@ import networkx as nx
 from scipy.stats import ks_2samp
 
 class GraphModel:
-    def __init__(self, n, p, alpha, beta, sigma, threshold):
+    def __init__(self, n, p, alpha, beta, sigma, threshold, n_iteration, warm_up):
         self.n = n # number of nodes
         self.p = p # number of neighbors to consider 
         self.alpha = alpha 
         self.beta  = beta
         self.sigma = sigma
         self.threshold = threshold # theshold for creating and edge
+        self.n_iteration = n_iteration
+        self.warm_up = warm_up
         self.graph = self.generate_random_graph(n, p)
 
     def generate_random_graph(self, n, p):
@@ -126,7 +128,7 @@ class GraphModel:
         print('\n'*3)
         return is_converged
 
-    def populate_edges(self, warm_up=50, max_iterations=100):
+    def populate_edges(self, warm_up, max_iterations):
         i = 0
         stop_condition = False
         graphs = [self.graph.copy()]  # List to store the graphs
