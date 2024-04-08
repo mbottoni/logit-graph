@@ -91,33 +91,9 @@ class GraphModel:
             print(f"KS Statistic: {ks_stat}")
             return ks_stat
 
-        #def spectral_change_stability(spectrum1, spectrum2):
-            ## Filter out zero eigenvalues and focus on the leading non-zero eigenvalues
-            #non_zero_spectrum1 = spectrum1[spectrum1 > 1e-5][:5]  # Consider the first 5 non-zero eigenvalues
-            #non_zero_spectrum2 = spectrum2[spectrum2 > 1e-5][:5]
-            #epsilon = 1e-9
-            #relative_changes = np.abs((non_zero_spectrum1 - non_zero_spectrum2) / (non_zero_spectrum1 + epsilon))
-            #print(f"Max Relative Change in Spectrum: {np.max(relative_changes)}")
-            #return np.max(relative_changes)
-
-        def spectral_change_stability(spectrum1, spectrum2):
-            relative_changes = np.abs((spectrum1 - spectrum2) / spectrum1)
-            if relative_changes.size > 0:  # Check if the array is not empty
-                print(f"Max Relative Change in Spectrum: {np.max(relative_changes)}")
-            else:
-                print("Relative changes array is empty.")
-            return np.linalg.norm(relative_changes, np.inf)
-
         if len(graphs) <= stability_window:
             print("Not enough graphs for stability check.")
             return False
-
-        # Spectral Stability: Check if the spectral changes are below the threshold
-        spectral_changes_stable = all(
-            spectral_change_stability(spectra[-i - 1], spectra[-i]) < spectral_stability_threshold
-            for i in range(1, stability_window)
-        )
-        print(f"Spectral Changes Stable: {spectral_changes_stable}")
 
         # Degree Distribution Stability: Check if the KS distance between degree distributions is below the threshold
         degree_dist_stable = all(
@@ -127,7 +103,7 @@ class GraphModel:
         print(f"Degree Distribution Stable: {degree_dist_stable}")
 
         # Final convergence check
-        is_converged = spectral_changes_stable and degree_dist_stable
+        is_converged = degree_dist_stable and True
         print(f"Graph Converged: {is_converged}")
         print('\n'*3)
         return is_converged
