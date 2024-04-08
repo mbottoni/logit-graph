@@ -10,12 +10,12 @@ from pyvis.network import Network
 
 class GraphUtils:
     @staticmethod
-    def plot_graph_from_adjacency(adj_matrix: np.array, pos=None, title='Graph', size=(10, 10)):
+    def plot_graph_from_adjacency(adj_matrix: np.array, pos=None, title='Graph', size=(10, 10), node_size=700, font_size=10):
         """Plot the graph from an adjacency matrix and save the plot as an image."""
         G = nx.from_numpy_array(adj_matrix)
         fig = plt.figure(figsize=size)
         plt.title(title)
-        nx.draw(G, pos=pos, with_labels=True, node_size=700, node_color="skyblue", font_size=15, font_weight='bold')
+        nx.draw(G, pos=pos, with_labels=True, node_size=node_size, node_color="skyblue", font_size=font_size, font_weight='bold')
         plt.close(fig)
         return fig
 
