@@ -2,6 +2,9 @@ import numpy as np
 from scipy.optimize import minimize
 import torch
 
+from sklearn.linear_model import LogisticRegression
+import networkx as nx
+
 max_val = np.nan
 eps = 1e-5
 
@@ -134,41 +137,31 @@ class MLEGraphModelEstimator:
             print(f"Optimization completed. Estimated parameters: alpha={alpha.item()}, beta={beta.item()}, sigma={sigma.item()}")
             return alpha.item(), beta.item(), sigma.item()
 
+class LogitRegEstimator():
+    def __init__(self, graph):
+        self.graph = graph  # The observed adjacency matrix
+        self.n = graph.shape[0]  # Number of nodes in the graph
+        self.params_history = []  # History of parameters during optimization
 
-    def estimate_parameters_deprecated(self, initial_guess=[0.5, 0.5, 0.5]):
-        # Define a callback function to print the current parameters and loss at each step
-        def callback(params):
-            alpha, beta, sigma = params
-            loss = self.likelihood_function(params)
-            self.params_history.append([alpha, beta, sigma])
-            print(f"Current parameters: alpha={alpha}, beta={beta}, sigma={sigma}")
-            print(f"Current loss: {loss}")
-            print()
+    def estimate_parameters(self, penalty='l2'):
+        G = nx.Graph(self.graph)
 
-        # Define the constraint function: c should be less than beta
-        def constraint(params):
-            return params[1] - params[0]  # This should be greater than 0 to satisfy the constraint
+        edges = list(G.edges())
+        non_edges = list(nx.non_edges(G))
 
-        # Set up the constraint dictionary for scipy.optimize.minimize
-        cons = ({'type': 'ineq', 'fun': constraint})
+        data = edges + non_edges
+        labels = [1] * len(edges) + [0] * len(non_edges)
 
-        # Run the optimization with the callback function and the constraint
-        result = minimize(self.likelihood_function,
-                        initial_guess,
-                        method='SLSQP',  ## 'BFGS', 'Nelder-Mead', 'Newton-CG', 'L-BFGS-B', 'TNC', 'COBYLA', 'SLSQP'
-                        bounds=[(eps, 2), (eps, 2), (eps, 2)],
-                        constraints=cons,  # Include the constraint
-                        callback=callback)
+        # Feature extraction: degrees of the vertices
+        features = [(abs(G.degree(i)), abs(G.degree(j))) for i, j in data]
 
-        estimated_c, estimated_beta = result.x  # Extract the estimated parameters
-        print(f"Optimization completed. Estimated parameters: c={estimated_c}, beta={estimated_beta}")
-        return estimated_c, estimated_beta, result
+        # Logistic Regression Model
+        model = LogisticRegression(penalty='l2',
+                                fit_intercept=True,
+                                )
 
-
-
-
-
-#class LogitRegEstimator
-    #def __init__(self):
-        #return 
-
+        model.fit(features, labels)
+        coef_0, coef_1 = model.coef_[0]
+        intercept = model.intercept_[0]
+        print(f"coef_0: {-coef_0}, coef_1: {-coef_1}, intercept: {-intercept}")
+        return -coef_0, -coef_1, -intercept 
