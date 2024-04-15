@@ -16,7 +16,8 @@ class GraphUtils:
         fig = plt.figure(figsize=size)
         plt.title(title)
         nx.draw(G, pos=pos, with_labels=True, node_size=node_size, node_color="skyblue", font_size=font_size, font_weight='bold')
-        plt.close(fig)
+        #plt.close(fig)
+        plt.show(fig)
         return fig
 
     @staticmethod
@@ -58,6 +59,7 @@ class GraphUtils:
             plt.suptitle(title)
 
         plt.show()
+        return fig
 
     @staticmethod
     def plot_graph_and_spectrum(adj_matrix: np.array, spectrum, pos=None, title=None, size=(15, 10)):
@@ -77,7 +79,8 @@ class GraphUtils:
         axs[1].set_title('Spectrum')
         if title:
             plt.suptitle(title)
-        plt.close(fig)
+        #plt.close(fig)
+        plt.show()
         return fig
 
     @staticmethod
@@ -103,7 +106,8 @@ class GraphUtils:
         plt.ylabel('Frequency')
         plt.legend()
         # Prevent the plot from showing automatically in Jupyter notebooks
-        plt.close(fig)
+        #plt.close(fig)
+        plt.show()
         return fig
 
     @staticmethod

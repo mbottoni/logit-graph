@@ -96,7 +96,7 @@ class ModelSelectorSpectrum:
         return kl_div
 
     def model_penalty(self, model_name):
-        penalties = {'ER': 2, 'WS': 3, 'BA': 2, 'LG': 3}
+        penalties = {'ER': 1, 'WS': 2, 'BA': 1, 'LG': 3}
         return penalties.get(model_name, 0)
 
     def evaluate_model(self, model_graph, model_name):

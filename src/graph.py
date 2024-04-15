@@ -64,12 +64,12 @@ class GraphModel:
 
     def get_edge_logit(self, sum_degrees):
         val_log = self.logistic_regression(sum_degrees)
-        print('sum_degrees',sum_degrees)
-        print('val_log', val_log)
+        #print('sum_degrees',sum_degrees)
+        #print('val_log', val_log)
         #random_choice = np.random.choice(np.arange(0, 2), p=[val_log, 1 - val_log])
         random_choice = np.random.choice([1, 0], p=[val_log, 1 - val_log])
-        print('random_choice', random_choice)
-        print()
+        #print('random_choice', random_choice)
+        #print()
         return random_choice
 
     def add_remove_vertex(self, p):
@@ -88,7 +88,6 @@ class GraphModel:
                     graph_new[i, j] = self.get_edge_logit(sum_degrees) # here we can add or remove vertex
 
         self.graph= graph_new.copy() 
-
 
     def check_convergence(self, graphs, stability_window=5, degree_dist_threshold=0.05):
 
@@ -118,7 +117,8 @@ class GraphModel:
         print('\n'*3)
         return is_converged
 
-    def populate_edges(self, warm_up, max_iterations):
+    #TODO: Remove the spectra calclation for better computation
+    def populate_edges(self, warm_up, max_iterations, degree_dist_threshold=0.05, stability_window=5):
         i = 0
         stop_condition = False
         graphs = [self.graph.copy()]  # List to store the graphs
@@ -134,7 +134,7 @@ class GraphModel:
 
             if i > warm_up:
                 #stop_condition = self.check_convergence(graphs, tolerance=1)
-                stop_condition = self.check_convergence(graphs, stability_window=3)
+                stop_condition = self.check_convergence(graphs, stability_window=stability_window, degree_dist_threshold=degree_dist_threshold)
 
 
             i += 1
