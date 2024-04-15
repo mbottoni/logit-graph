@@ -114,4 +114,3 @@ class GraphUtils:
         with open(spec_filename, 'wb') as f:
             pickle.dump(spec, f)
 
-

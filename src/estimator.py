@@ -4,6 +4,7 @@ import torch
 
 from sklearn.linear_model import LogisticRegression
 import networkx as nx
+import statsmodels.api as sm
 
 max_val = np.nan
 eps = 1e-5
@@ -165,3 +166,36 @@ class LogitRegEstimator():
         intercept = model.intercept_[0]
         print(f"coef_0: {-coef_0}, coef_1: {-coef_1}, intercept: {-intercept}")
         return -coef_0, -coef_1, -intercept 
+        import numpy as np
+
+class LogitRegEstimator2:
+    def __init__(self, graph):
+        self.graph = graph  # The observed adjacency matrix
+        self.n = graph.shape[0]  # Number of nodes in the graph
+
+    def estimate_parameters(self):
+        G = nx.Graph(self.graph)
+
+        edges = list(G.edges())
+        non_edges = list(nx.non_edges(G))
+
+        # Combine edges and non-edges to form the dataset
+        data = edges + non_edges
+        labels = [1] * len(edges) + [0] * len(non_edges)
+
+        # Feature extraction: degrees of the vertices
+        features = np.array([(G.degree(i), G.degree(j)) for i, j in data])
+
+        # Add a constant term for the intercept
+        features = sm.add_constant(features)
+
+        # Logistic Regression Model using statsmodels
+        model = sm.Logit(labels, features)
+        result = model.fit(disp=0)  # disp=0 turns off the convergence message
+
+        print(result.summary())
+
+        params = result.params
+        p_values = result.pvalues
+
+        return -params, p_values
