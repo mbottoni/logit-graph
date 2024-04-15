@@ -20,6 +20,46 @@ class GraphUtils:
         return fig
 
     @staticmethod
+    def plot_spectrum_and_zoom(spectrum, zoom_scale=0.1, size=(15, 5), title=None):
+        """Plot the spectrum of a graph and a zoomed view around the mean of the spectrum."""
+        #G = nx.from_numpy_array(adj_matrix)
+        #spectrum = np.linalg.eigvalsh(nx.laplacian_matrix(G).toarray())
+
+        # Calculate the mean and standard deviation of the spectrum
+        mean_spectrum = np.mean(spectrum)
+        std_spectrum = np.std(spectrum)
+
+        # Define the zoom range around the mean
+        zoom_range = zoom_scale * std_spectrum
+        zoom_min, zoom_max = mean_spectrum - zoom_range, mean_spectrum + zoom_range
+
+        fig, axs = plt.subplots(1, 2, figsize=size)
+
+        # Plot the full spectrum histogram
+        axs[0].hist(spectrum, bins=60, density=True, alpha=0.75, color='skyblue', edgecolor='black')
+        axs[0].set_title('Full Spectrum')
+
+        # Plot the zoomed-in spectrum
+        mask = (spectrum >= zoom_min) & (spectrum <= zoom_max)
+        axs[1].hist(spectrum[mask], bins=30, density=True, alpha=0.75, color='skyblue', edgecolor='black')
+        axs[1].set_title(f'Zoom Around Mean (±{zoom_scale*100:.0f}% of Std Dev)')
+
+        # Optionally add KDE plots
+        kde = gaussian_kde(spectrum)
+        x_range_full = np.linspace(min(spectrum), max(spectrum), 500)
+        kde_values_full = kde(x_range_full)
+        axs[0].plot(x_range_full, kde_values_full, color='darkblue', lw=2, label='KDE')
+
+        x_range_zoom = np.linspace(zoom_min, zoom_max, 500)
+        kde_values_zoom = kde(x_range_zoom)
+        axs[1].plot(x_range_zoom, kde_values_zoom, color='darkblue', lw=2, label='KDE')
+
+        if title:
+            plt.suptitle(title)
+
+        plt.show()
+
+    @staticmethod
     def plot_graph_and_spectrum(adj_matrix: np.array, spectrum, pos=None, title=None, size=(15, 10)):
         """Plot the graph and its spectrum side by side, and save the plot as an image."""
         G = nx.from_numpy_array(adj_matrix)
