@@ -31,3 +31,5 @@ deprecated/
 
 .pkl
 *.pkl
+
+*.png

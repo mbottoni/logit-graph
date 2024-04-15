@@ -6,8 +6,8 @@
 ## Main equation:
 $$
 prob_of_vertex_{i,j} =
-\frac{ c }
-{ 1 + \beta \exp^( |i| + |j| )  }
+\frac{ 1 }
+{ 1 + \exp^( coef_0 |i| + coef_1 |j| + intercept)  }
 $$
 
 1. First of all initialize n (number of vertices), c (1e-3 initial prob), beta( low value )
