@@ -123,7 +123,6 @@ class GraphModel:
         stop_condition = False
         graphs = [self.graph.copy()]  # List to store the graphs
         spectra = []  # List to store the spectrum at each iteration
-        print('oiiii')
 
         while i < max_iterations and (i < warm_up or not stop_condition):
             print(f'iteration: {i}')
