@@ -121,14 +121,14 @@ class GraphModel:
         i = 0
         stop_condition = False
         graphs = [self.graph.copy()]  # List to store the graphs
-        spectra = []  # List to store the spectrum at each iteration
+        #spectra = []  # List to store the spectrum at each iteration
 
         while i < max_iterations and (i < warm_up or not stop_condition):
             print(f'iteration: {i}')
             self.add_remove_vertex(self.p)  # add or remove vertex
-            spectrum = self.calculate_spectrum(self.graph)
+            #spectrum = self.calculate_spectrum(self.graph)
 
-            spectra.append(spectrum)
+            #spectra.append(spectrum)
             graphs.append(self.graph.copy())
 
             if i > warm_up:
@@ -138,6 +138,7 @@ class GraphModel:
 
             i += 1
 
+        spectra = self.calculate_spectrum(self.graph)
         return graphs, spectra
 
 
