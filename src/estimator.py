@@ -192,12 +192,14 @@ class LogitRegEstimator:
         data = edges + non_edges
         labels = [1] * len(edges) + [0] * len(non_edges)
 
-        # Feature extraction: degrees of the vertices
-        #normalization = self.n - 1
-        normalization = 1
+        # Pre compute
+        sum_degrees = np.zeros(self.n)
+        for i in range(self.n):
+            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, p=self.p)
+
         #features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
-        features = np.array([(get_sum_degrees(self.graph, vertex = i, p = self.p) / normalization,
-                              get_sum_degrees(self.graph, vertex = j, p = self.p) / normalization) for i, j in data])
+        normalization = 1
+        features = np.array([(sum_degrees[i] / normalization,sum_degrees[j] / normalization) for i, j in data])
 
         # Add a constant term for the intercept
         features = sm.add_constant(features)
