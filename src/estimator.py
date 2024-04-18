@@ -8,7 +8,6 @@ import networkx as nx
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
-
 max_val = np.nan
 eps = 1e-5
 
@@ -141,38 +140,7 @@ class MLEGraphModelEstimator:
             print(f"Optimization completed. Estimated parameters: alpha={alpha.item()}, beta={beta.item()}, sigma={sigma.item()}")
             return alpha.item(), beta.item(), sigma.item()
 
-class LogitRegEstimator():
-    def __init__(self, graph):
-        self.graph = graph  # The observed adjacency matrix
-        self.n = graph.shape[0]  # Number of nodes in the graph
-        self.params_history = []  # History of parameters during optimization
-
-    def estimate_parameters(self, penalty='l2'):
-        G = nx.Graph(self.graph)
-
-        edges = list(G.edges())
-        non_edges = list(nx.non_edges(G))
-
-        data = edges + non_edges
-        labels = [1] * len(edges) + [0] * len(non_edges)
-
-        # Feature extraction: degrees of the vertices
-        features = [(abs(G.degree(i)), abs(G.degree(j))) for i, j in data]
-
-        # Logistic Regression Model
-        model = LogisticRegression(penalty='l2',
-                                fit_intercept=True,
-                                )
-
-        model.fit(features, labels)
-        coef_0, coef_1 = model.coef_[0]
-        intercept = model.intercept_[0]
-        print(f"coef_0: {-coef_0}, coef_1: {-coef_1}, intercept: {-intercept}")
-        return -coef_0, -coef_1, -intercept 
-        import numpy as np
-
-
-class LogitRegEstimator2:
+class LogitRegEstimator:
     def __init__(self, graph):
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
@@ -195,8 +163,8 @@ class LogitRegEstimator2:
         labels = [1] * len(edges) + [0] * len(non_edges)
 
         # Feature extraction: degrees of the vertices
-        #normalization = self.n * (self.n - 1) / 2
-        normalization = 1
+        normalization = self.n - 1
+        #normalization = 1
         features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
 
         # Add a constant term for the intercept
