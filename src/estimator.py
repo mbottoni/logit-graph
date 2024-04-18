@@ -41,41 +41,16 @@ def get_sum_degrees(graph, vertex, p):
 
 
 class NegativeLogLikelihoodLoss(torch.nn.Module):
-    def __init__(self, graph):
+    def __init__(self, graph, p):
         super(NegativeLogLikelihoodLoss, self).__init__()
         self.graph = torch.tensor(graph, dtype=torch.float32)  # Ensure graph is a PyTorch tensor
         self.n = graph.shape[0]
-        self.p = 0
+        self.p = p
 
     def logistic_probability(self, sum_degrees):
-        num = 1
+        num = torch.exp(sum_degrees)
         denom = 1 + 1 * torch.exp(sum_degrees)
         return num / denom
-
-    def degree_vertex(self, vertex, p):
-        def get_neighbors(v):
-            return [i for i, x in enumerate(self.graph[v]) if x == 1]
-
-        def get_degree(v):
-            return sum(self.graph[v])
-
-        if p == 0:
-            return [get_degree(vertex)]
-        if p == 1:
-            neighbors = get_neighbors(vertex)
-            return [get_degree(vertex)] + [get_degree(neighbor) for neighbor in neighbors]
-
-        visited, current_neighbors = set([vertex]), get_neighbors(vertex)
-        for _ in range(int(p) - 1):
-            next_neighbors = []
-            for v in current_neighbors:
-                next_neighbors.extend([nv for nv in get_neighbors(v) if nv not in visited])
-                visited.add(v)
-            current_neighbors = list(set(next_neighbors))
-        return [get_degree(vertex)] + [get_degree(neighbor) for neighbor in current_neighbors]
-
-    def get_sum_degrees(self, vertex, p=1):
-        return sum(self.degree_vertex(vertex, p))
 
     def forward(self, params):
         alpha, beta, sigma = params
@@ -84,18 +59,13 @@ class NegativeLogLikelihoodLoss(torch.nn.Module):
         # Iterate over all possible edges
         for i in range(self.n):
             for j in range(i, self.n):
-                degrees_i = self.get_sum_degrees(i, self.p)
-                degrees_j = self.get_sum_degrees(j, self.p)
+                degrees_i = get_sum_degrees(self.graph, i, self.p)
+                degrees_j = get_sum_degrees(self.graph, j, self.p)
                 sum_degrees_raw = ( alpha * degrees_i + beta * degrees_j )
                 sum_degrees = ( sum_degrees_raw + sigma )
-                #sum_degrees = torch.sum(self.graph[i]) + torch.sum(self.graph[j])
+
                 p_ij = self.logistic_probability(sum_degrees)
 
-                # Adding a small constant to probabilities to avoid log(0)
-                #if self.graph[i, j] == 1:
-                #    likelihood += torch.log(p_ij + eps)
-                #else:
-                #    likelihood += torch.log(1 - p_ij + eps)
                 if self.graph[i, j] == 1:
                     likelihood += torch.log(p_ij + eps)  # Adding a small constant to avoid log(0)
                 else:
@@ -105,13 +75,14 @@ class NegativeLogLikelihoodLoss(torch.nn.Module):
         return -likelihood  # Return negative likelihood
 
 class MLEGraphModelEstimator:
-    def __init__(self, graph):
+    def __init__(self, graph, p):
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
         self.params_history = []  # History of parameters during optimization
+        self.p = p
 
     def logistic_probability(self, sum_degrees):
-        num = 1
+        num = torch.exp(sum_degrees)
         denom = 1 + 1 * torch.exp(sum_degrees)
         return num / denom
 
@@ -124,11 +95,10 @@ class MLEGraphModelEstimator:
             for j in range(i, self.n):
                 #sum_degrees = np.sum(self.graph[i]) + np.sum(self.graph[j])  # Sum of degrees of nodes i and j
                 #p_ij = self.logistic_probability(c, beta, sum_degrees)  # Probability of edge (i, j)
-                degrees_i = self.get_sum_degrees(i, self.p)
-                degrees_j = self.get_sum_degrees(j, self.p)
+                degrees_i = get_sum_degrees(self.graph, i, self.p)
+                degrees_j = get_sum_degrees(self.graph, j, self.p)
                 sum_degrees_raw = ( alpha * degrees_i + beta * degrees_j )
                 sum_degrees = ( sum_degrees_raw + sigma )
-                #sum_degrees = torch.sum(self.graph[i]) + torch.sum(self.graph[j])
                 p_ij = self.logistic_probability(sum_degrees)
 
                 if 1-p_ij+eps <= 0:
@@ -152,7 +122,7 @@ class MLEGraphModelEstimator:
             optimizer = torch.optim.SGD([alpha, beta, sigma], lr=learning_rate)  # Using SGD optimizer from PyTorch
 
             # Instantiate the loss function class with the graph
-            loss_function = NegativeLogLikelihoodLoss(self.graph)
+            loss_function = NegativeLogLikelihoodLoss(self.graph, self.p)
             for _ in range(max_iter):
                 optimizer.zero_grad()  # Clear previous gradients
                 # Compute the loss by passing the parameters to the loss function instance
