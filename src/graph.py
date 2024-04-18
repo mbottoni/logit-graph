@@ -3,6 +3,8 @@ import networkx as nx
 from scipy.stats import ks_2samp
 from scipy.special import expit
 
+from src.degrees_counts import degree_vertex, get_sum_degrees
+
 class GraphModel:
     def __init__(self, n, p, alpha, beta, sigma, threshold, n_iteration, warm_up):
         self.n = n # number of nodes
@@ -32,34 +34,6 @@ class GraphModel:
         return expit(sum_degrees)
 
 
-    def degree_vertex(self, vertex, p):
-        def get_neighbors(v):
-            return [i for i, x in enumerate(self.graph[v]) if x == 1]
-
-        def get_degree(v):
-            return sum(self.graph[v])
-
-        if p == 0:
-            return [get_degree(vertex)]
-        if p == 1:
-            neighbors = get_neighbors(vertex)
-            return [get_degree(vertex)] + [get_degree(neighbor) for neighbor in neighbors]
-
-        visited, current_neighbors = set([vertex]), get_neighbors(vertex)
-        for _ in range(int(p) - 1):
-            next_neighbors = []
-            for v in current_neighbors:
-                next_neighbors.extend([nv for nv in get_neighbors(v) if nv not in visited])
-                visited.add(v)
-            current_neighbors = list(set(next_neighbors))
-
-        #normalization = self.n - 1
-        normalization =  1
-        return [get_degree(vertex)/normalization] + [get_degree(neighbor)/normalization for neighbor in current_neighbors]
-
-    def get_sum_degrees(self, vertex, p=1):
-        return sum(self.degree_vertex(vertex, p))
-
     def get_edge_logit(self, sum_degrees):
         val_log = self.logistic_regression(sum_degrees)
         random_choice = np.random.choice([1, 0], p=[val_log, 1 - val_log])
@@ -72,7 +46,7 @@ class GraphModel:
         # Pre compute
         sum_degrees = np.zeros(self.n)
         for i in range(self.n):
-            sum_degrees[i] = self.get_sum_degrees(i, p)
+            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, p=p)
     
         # add or remove edge
         for i in range(self.n):
