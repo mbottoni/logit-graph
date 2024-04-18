@@ -4,7 +4,10 @@ import torch
 
 from sklearn.linear_model import LogisticRegression
 import networkx as nx
+
 import statsmodels.api as sm
+import statsmodels.formula.api as smf
+
 
 max_val = np.nan
 eps = 1e-5
@@ -168,12 +171,20 @@ class LogitRegEstimator():
         return -coef_0, -coef_1, -intercept 
         import numpy as np
 
+
 class LogitRegEstimator2:
     def __init__(self, graph):
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
 
-    def estimate_parameters(self):
+    def estimate_parameters(self, l1_wt=1.0, alpha=0.1):
+        """
+        Estimate parameters using logistic regression with regularization.
+        
+        Args:
+        l1_wt (float): The L1 weight (0 for pure L2, 1 for pure L1).
+        alpha (float): Regularization strength. Larger values specify stronger regularization.
+        """
         G = nx.Graph(self.graph)
 
         edges = list(G.edges())
@@ -184,18 +195,29 @@ class LogitRegEstimator2:
         labels = [1] * len(edges) + [0] * len(non_edges)
 
         # Feature extraction: degrees of the vertices
-        features = np.array([(G.degree(i), G.degree(j)) for i, j in data])
+        #normalization = self.n * (self.n - 1) / 2
+        normalization = 1
+        features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
 
         # Add a constant term for the intercept
         features = sm.add_constant(features)
 
-        # Logistic Regression Model using statsmodels
+        # Logistic Regression Model using statsmodels with regularization
         model = sm.Logit(labels, features)
-        result = model.fit(disp=0)  # disp=0 turns off the convergence message
+        
+        # Fit the model with regularization
+        if l1_wt in [0, 1]:
+            # Pure L1 or L2 regularization
+            result = model.fit_regularized(method='l1' if l1_wt == 1 else 'l2', alpha=alpha, disp=0)
+        else:
+            # Elastic Net (combination of L1 and L2)
+            result = model.fit_regularized(L1_wt=l1_wt, alpha=alpha, disp=0)
 
-        print(result.summary())
+        # Print summary
+        print(result.summary2())
 
+        # Extract parameters and p-values
         params = result.params
-        p_values = result.pvalues
+        p_values = result.pvalues  # Note: p-values can be unreliable in regularized regressions
 
-        return -params, p_values
+        return params, p_values

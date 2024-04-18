@@ -31,7 +31,7 @@ class GraphModel:
         return np.sort(eigenvalues)
 
     def logistic_regression(self, sum_degrees):
-        num = 1
+        num = np.exp(sum_degrees)
         denom = 1 + 1 * np.exp(sum_degrees)
         return num / denom
 
@@ -90,7 +90,6 @@ class GraphModel:
         self.graph= graph_new.copy() 
 
     def check_convergence(self, graphs, stability_window=5, degree_dist_threshold=0.05):
-
         def degree_distribution_stability(graph1, graph2):
             # Calculate degree sequences
             degrees1 = np.sum(graph1, axis=1)
