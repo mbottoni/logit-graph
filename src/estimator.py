@@ -11,6 +11,35 @@ import statsmodels.formula.api as smf
 max_val = np.nan
 eps = 1e-5
 
+def degree_vertex(graph, vertex, p):
+    def get_neighbors(v):
+        return [i for i, x in enumerate(graph[v]) if x == 1]
+
+    def get_degree(v):
+        return sum(graph[v])
+
+    if p == 0:
+        return [get_degree(vertex)]
+    if p == 1:
+        neighbors = get_neighbors(vertex)
+        return [get_degree(vertex)] + [get_degree(neighbor) for neighbor in neighbors]
+
+    visited, current_neighbors = set([vertex]), get_neighbors(vertex)
+    for _ in range(int(p) - 1):
+        next_neighbors = []
+        for v in current_neighbors:
+            next_neighbors.extend([nv for nv in get_neighbors(v) if nv not in visited])
+            visited.add(v)
+        current_neighbors = list(set(next_neighbors))
+
+    #normalization = self.n - 1
+    normalization =  1
+    return [get_degree(vertex)/normalization] + [get_degree(neighbor)/normalization for neighbor in current_neighbors]
+
+def get_sum_degrees(graph, vertex, p):
+    return sum(degree_vertex(graph, vertex, p))
+
+
 class NegativeLogLikelihoodLoss(torch.nn.Module):
     def __init__(self, graph):
         super(NegativeLogLikelihoodLoss, self).__init__()
@@ -141,9 +170,10 @@ class MLEGraphModelEstimator:
             return alpha.item(), beta.item(), sigma.item()
 
 class LogitRegEstimator:
-    def __init__(self, graph):
+    def __init__(self, graph, p):
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
+        self.p = p # number of degrees to search
 
     def estimate_parameters(self, l1_wt=1.0, alpha=0.1):
         """
@@ -165,18 +195,22 @@ class LogitRegEstimator:
         # Feature extraction: degrees of the vertices
         #normalization = self.n - 1
         normalization = 1
-        features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
+        #features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
+        features = np.array([(get_sum_degrees(self.graph, vertex = i, p = self.p) / normalization,
+                              get_sum_degrees(self.graph, vertex = j, p = self.p) / normalization) for i, j in data])
 
         # Add a constant term for the intercept
         features = sm.add_constant(features)
 
         # Logistic Regression Model using statsmodels with regularization
         model = sm.Logit(labels, features)
+
+        ######################################
         
         # Fit the model with regularization
         if l1_wt in [0, 1]:
             # Pure L1 or L2 regularization
-            result = model.fit_regularized(method='l1' if l1_wt == 1 else 'l2', alpha=alpha, disp=0)
+            result = model.fit_regularized(method='l1' if l1_wt == 1 else None, alpha=alpha, disp=0)
         else:
             # Elastic Net (combination of L1 and L2)
             result = model.fit_regularized(L1_wt=l1_wt, alpha=alpha, disp=0)

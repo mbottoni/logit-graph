@@ -1,6 +1,7 @@
 import numpy as np
 import networkx as nx
 from scipy.stats import ks_2samp
+from scipy.special import expit
 
 class GraphModel:
     def __init__(self, n, p, alpha, beta, sigma, threshold, n_iteration, warm_up):
@@ -25,9 +26,11 @@ class GraphModel:
 
     def logistic_regression(self, sum_degrees):
         #TODO: It is possible to optimize putting in 1/1+exp(-sum_degrees)
-        num = np.exp(sum_degrees)
-        denom = 1 + 1 * np.exp(sum_degrees)
-        return num / denom
+        #num = np.exp(sum_degrees)
+        #denom = 1 + 1 * np.exp(sum_degrees)
+        #return num / denom
+        return expit(sum_degrees)
+
 
     def degree_vertex(self, vertex, p):
         def get_neighbors(v):
@@ -64,23 +67,24 @@ class GraphModel:
 
     def add_remove_edge(self, p):
         # Gen a new graph 
-        graph_new = self.generate_empty_graph(self.n)
+        #graph_new = self.generate_empty_graph(self.n)
 
         # Pre compute
         sum_degrees = np.zeros(self.n)
         for i in range(self.n):
             sum_degrees[i] = self.get_sum_degrees(i, p)
     
-        # add remove edge
+        # add or remove edge
         for i in range(self.n):
             for j in range(i + 1, self.n):  # Use symmetry, only compute half and mirror
                 if i != j:
                     # Calculate the edge logit only once per pair
                     total_degree = self.alpha * sum_degrees[i] + self.beta * sum_degrees[j] + self.sigma
-                    graph_new[j, i] = graph_new[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
+                    #graph_new[j, i] = graph_new[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
+                    self.graph[j, i] = self.graph[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
 
         # Update the graph directly
-        self.graph= graph_new.copy() 
+        #self.graph= graph_new.copy() 
 
     def check_convergence(self, graphs, stability_window=5, degree_dist_threshold=0.05):
         def degree_distribution_stability(graph1, graph2):
