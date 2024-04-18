@@ -33,7 +33,8 @@ class GraphModel:
     def logistic_regression(self, sum_degrees):
         num = np.exp(sum_degrees)
         denom = 1 + 1 * np.exp(sum_degrees)
-        return num / denom
+        #print(num, denom)
+        return num / (denom + 1e-7)
 
     def degree_vertex(self, vertex, p):
         def get_neighbors(v):
@@ -56,7 +57,8 @@ class GraphModel:
                 visited.add(v)
             current_neighbors = list(set(next_neighbors))
 
-        normalization = self.n - 1
+        #normalization = self.n - 1
+        normalization =  1
         return [get_degree(vertex)/normalization] + [get_degree(neighbor)/normalization for neighbor in current_neighbors]
 
     def get_sum_degrees(self, vertex, p=1):

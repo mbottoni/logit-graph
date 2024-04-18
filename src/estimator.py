@@ -163,8 +163,8 @@ class LogitRegEstimator:
         labels = [1] * len(edges) + [0] * len(non_edges)
 
         # Feature extraction: degrees of the vertices
-        normalization = self.n - 1
-        #normalization = 1
+        #normalization = self.n - 1
+        normalization = 1
         features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
 
         # Add a constant term for the intercept
