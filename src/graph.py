@@ -33,7 +33,6 @@ class GraphModel:
         #return num / denom
         return expit(sum_degrees)
 
-
     def get_edge_logit(self, sum_degrees):
         val_log = self.logistic_regression(sum_degrees)
         random_choice = np.random.choice([1, 0], p=[val_log, 1 - val_log])
