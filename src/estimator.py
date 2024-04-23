@@ -141,7 +141,6 @@ class LogitRegEstimator:
         features = sm.add_constant(features)
         return features, labels
 
-
     def estimate_parameters(self, features, labels, l1_wt=1.0, alpha=0.1):
         """
         Estimate parameters using logistic regression with regularization.

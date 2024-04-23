@@ -23,7 +23,6 @@ def degree_vertex(graph, vertex, p):
             visited.add(v)
         current_neighbors = list(set(next_neighbors))
 
-    #normalization = self.n - 1
     normalization =  1
     return [get_degree(vertex)/normalization] + [get_degree(neighbor)/normalization for neighbor in current_neighbors]
 
