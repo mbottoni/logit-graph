@@ -90,7 +90,7 @@ class MLEGraphModelEstimator:
 
         return likelihood  # Negative because we minimize in the optimization routine
 
-    def estimate_parameters_torch(self, initial_guess=[0.5, 0.1], learning_rate=0.01, max_iter=1000):
+    def estimate_parameters(self, initial_guess=[0.5, 0.1, 0.1], learning_rate=0.01, max_iter=1000):
             alpha, beta, sigma = [torch.tensor(x, dtype=torch.float32, requires_grad=True) for x in initial_guess]
             optimizer = torch.optim.SGD([alpha, beta, sigma], lr=learning_rate)  # Using SGD optimizer from PyTorch
 
@@ -118,18 +118,11 @@ class LogitRegEstimator:
         self.n = graph.shape[0]  # Number of nodes in the graph
         self.p = p # number of degrees to search
 
-    def estimate_parameters(self, l1_wt=1.0, alpha=0.1):
-        """
-        Estimate parameters using logistic regression with regularization.
-        
-        Args:
-        l1_wt (float): The L1 weight (0 for pure L2, 1 for pure L1).
-        alpha (float): Regularization strength. Larger values specify stronger regularization.
-        """
+    def get_features_labels(self):
         G = nx.Graph(self.graph)
 
-        edges = list(G.edges())
-        non_edges = list(nx.non_edges(G))
+        edges = list(set(G.edges()))
+        non_edges = list(set(nx.non_edges(G)))
 
         # Combine edges and non-edges to form the dataset
         data = edges + non_edges
@@ -142,10 +135,20 @@ class LogitRegEstimator:
 
         #features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
         normalization = 1
-        features = np.array([(sum_degrees[i] / normalization,sum_degrees[j] / normalization) for i, j in data])
+        features = np.array([(sum_degrees[i] / normalization, sum_degrees[j] / normalization) for i, j in data])
 
         # Add a constant term for the intercept
         features = sm.add_constant(features)
+        return features, labels
+
+    def estimate_parameters(self, features, labels, l1_wt=1.0, alpha=0.1):
+        """
+        Estimate parameters using logistic regression with regularization.
+        
+        Args:
+        l1_wt (float): The L1 weight (0 for pure L2, 1 for pure L1).
+        alpha (float): Regularization strength. Larger values specify stronger regularization.
+        """
 
         # Logistic Regression Model using statsmodels with regularization
         model = sm.Logit(labels, features)
