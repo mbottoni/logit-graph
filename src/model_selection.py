@@ -11,9 +11,10 @@ import sys
 sys.path.append('..')
 import src.gic as gic
 import src.param_estimator as pe
+import src.estimator as est
 
 
-
+# Initial try to implement the model selection
 class RandomGraphModelSelector:
     def __init__(self, real_graph, logit_graph):
         self.real_graph = real_graph
@@ -74,6 +75,7 @@ class RandomGraphModelSelector:
         self.best_model = min(self.model_scores, key=self.model_scores.get)
         return self.best_model, self.model_scores
 
+# Simplified way to do the model selection
 class ModelSelectorSpectrum:
     def __init__(self, real_graph, logit_graph):
         self.real_graph = real_graph
@@ -141,9 +143,12 @@ class ModelSelectorSpectrum:
         self.best_model = min(self.model_scores, key=self.model_scores.get)
         return self.best_model, self.model_scores
 
+# Class implementing the stat graph model selector
 class GraphModelSelection:
-    def __init__(self, graph, models=None, parameters=None, **kwargs):
+    def __init__(self, graph, log_graph, log_params, models=None, parameters=None, **kwargs):
         self.graph = graph
+        self.log_graph = log_graph,
+        self.log_params = log_params,
         self.models = models if models is not None else ['ER', 'WS', 'BA']
         self.parameters = parameters
         self.kwargs = kwargs
@@ -164,23 +169,32 @@ class GraphModelSelection:
             return lambda n, p, k=8: nx.watts_strogatz_graph(n, k, p)
         elif model_name == "BA":
             return lambda n, m: nx.barabasi_albert_graph(n, m)
+        elif model_name == "LG":
+            pass
         else:
             raise ValueError(f"Unknown model: {model_name}")
 
     def select_model(self):
         results = []
         for idx, model in enumerate(self.models):
-            if callable(model):
-                model_func = model
+            if model == 'LG':
+                min_gic = gic.GraphInformationCriterion(self.graph, self.log_graph, model)
+                params = self.log_params
+                result = {'param': params, 'gic': min_gic}
+
             else:
-                model_func = self.model_function(model)
+                if callable(model):
+                    model_func = model
+                else:
+                    model_func = self.model_function(model)
 
-            param = None
-            if self.parameters:
-                param = self.parameters[idx]
+                param = None
+                if self.parameters:
+                    param = self.parameters[idx]
 
-            estimator = pe.GraphParameterEstimator(self.graph, model_func, interval=param, **self.kwargs)
-            result = estimator.estimate()
+                estimator = pe.GraphParameterEstimator(self.graph, model_func, interval=param, **self.kwargs)
+                result = estimator.estimate()
+
             results.append((model, result['param'], result['gic']))
 
         # Sort results based on GIC value
