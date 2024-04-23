@@ -6,13 +6,12 @@ from scipy.special import expit
 from src.degrees_counts import degree_vertex, get_sum_degrees
 
 class GraphModel:
-    def __init__(self, n, p, alpha, beta, sigma, threshold, n_iteration, warm_up):
+    def __init__(self, n, p, alpha, beta, sigma, n_iteration, warm_up):
         self.n = n # number of nodes
         self.p = p # number of neighbors to consider 
         self.alpha = alpha 
         self.beta  = beta
         self.sigma = sigma
-        self.threshold = threshold # theshold for creating and edge
         self.n_iteration = n_iteration
         self.warm_up = warm_up
         self.graph = self.generate_empty_graph(n)
