@@ -118,7 +118,7 @@ class ModelSelectorSpectrum:
             if model_name == 'ER':
                 model_graph = model_func(n, p)
             elif model_name == 'WS':
-                model_graph = model_func(n, k, p)
+                model_graph = model_func(n, k, p) # TODO: Fix
             elif model_name == 'BA':
                 model_graph = model_func(n, m)
             elif model_name == 'LG':

@@ -4,47 +4,26 @@ import torch
 
 from sklearn.linear_model import LogisticRegression
 import networkx as nx
+
 import statsmodels.api as sm
+import statsmodels.formula.api as smf
+
+from src.degrees_counts import degree_vertex, get_sum_degrees
 
 max_val = np.nan
 eps = 1e-5
 
 class NegativeLogLikelihoodLoss(torch.nn.Module):
-    def __init__(self, graph):
+    def __init__(self, graph, p):
         super(NegativeLogLikelihoodLoss, self).__init__()
         self.graph = torch.tensor(graph, dtype=torch.float32)  # Ensure graph is a PyTorch tensor
         self.n = graph.shape[0]
-        self.p = 0
+        self.p = p
 
     def logistic_probability(self, sum_degrees):
-        num = 1
+        num = torch.exp(sum_degrees)
         denom = 1 + 1 * torch.exp(sum_degrees)
         return num / denom
-
-    def degree_vertex(self, vertex, p):
-        def get_neighbors(v):
-            return [i for i, x in enumerate(self.graph[v]) if x == 1]
-
-        def get_degree(v):
-            return sum(self.graph[v])
-
-        if p == 0:
-            return [get_degree(vertex)]
-        if p == 1:
-            neighbors = get_neighbors(vertex)
-            return [get_degree(vertex)] + [get_degree(neighbor) for neighbor in neighbors]
-
-        visited, current_neighbors = set([vertex]), get_neighbors(vertex)
-        for _ in range(int(p) - 1):
-            next_neighbors = []
-            for v in current_neighbors:
-                next_neighbors.extend([nv for nv in get_neighbors(v) if nv not in visited])
-                visited.add(v)
-            current_neighbors = list(set(next_neighbors))
-        return [get_degree(vertex)] + [get_degree(neighbor) for neighbor in current_neighbors]
-
-    def get_sum_degrees(self, vertex, p=1):
-        return sum(self.degree_vertex(vertex, p))
 
     def forward(self, params):
         alpha, beta, sigma = params
@@ -53,18 +32,13 @@ class NegativeLogLikelihoodLoss(torch.nn.Module):
         # Iterate over all possible edges
         for i in range(self.n):
             for j in range(i, self.n):
-                degrees_i = self.get_sum_degrees(i, self.p)
-                degrees_j = self.get_sum_degrees(j, self.p)
+                degrees_i = get_sum_degrees(self.graph, i, self.p)
+                degrees_j = get_sum_degrees(self.graph, j, self.p)
                 sum_degrees_raw = ( alpha * degrees_i + beta * degrees_j )
                 sum_degrees = ( sum_degrees_raw + sigma )
-                #sum_degrees = torch.sum(self.graph[i]) + torch.sum(self.graph[j])
+
                 p_ij = self.logistic_probability(sum_degrees)
 
-                # Adding a small constant to probabilities to avoid log(0)
-                #if self.graph[i, j] == 1:
-                #    likelihood += torch.log(p_ij + eps)
-                #else:
-                #    likelihood += torch.log(1 - p_ij + eps)
                 if self.graph[i, j] == 1:
                     likelihood += torch.log(p_ij + eps)  # Adding a small constant to avoid log(0)
                 else:
@@ -74,13 +48,14 @@ class NegativeLogLikelihoodLoss(torch.nn.Module):
         return -likelihood  # Return negative likelihood
 
 class MLEGraphModelEstimator:
-    def __init__(self, graph):
+    def __init__(self, graph, p):
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
         self.params_history = []  # History of parameters during optimization
+        self.p = p
 
     def logistic_probability(self, sum_degrees):
-        num = 1
+        num = torch.exp(sum_degrees)
         denom = 1 + 1 * torch.exp(sum_degrees)
         return num / denom
 
@@ -93,11 +68,10 @@ class MLEGraphModelEstimator:
             for j in range(i, self.n):
                 #sum_degrees = np.sum(self.graph[i]) + np.sum(self.graph[j])  # Sum of degrees of nodes i and j
                 #p_ij = self.logistic_probability(c, beta, sum_degrees)  # Probability of edge (i, j)
-                degrees_i = self.get_sum_degrees(i, self.p)
-                degrees_j = self.get_sum_degrees(j, self.p)
+                degrees_i = get_sum_degrees(self.graph, i, self.p)
+                degrees_j = get_sum_degrees(self.graph, j, self.p)
                 sum_degrees_raw = ( alpha * degrees_i + beta * degrees_j )
                 sum_degrees = ( sum_degrees_raw + sigma )
-                #sum_degrees = torch.sum(self.graph[i]) + torch.sum(self.graph[j])
                 p_ij = self.logistic_probability(sum_degrees)
 
                 if 1-p_ij+eps <= 0:
@@ -121,7 +95,7 @@ class MLEGraphModelEstimator:
             optimizer = torch.optim.SGD([alpha, beta, sigma], lr=learning_rate)  # Using SGD optimizer from PyTorch
 
             # Instantiate the loss function class with the graph
-            loss_function = NegativeLogLikelihoodLoss(self.graph)
+            loss_function = NegativeLogLikelihoodLoss(self.graph, self.p)
             for _ in range(max_iter):
                 optimizer.zero_grad()  # Clear previous gradients
                 # Compute the loss by passing the parameters to the loss function instance
@@ -138,42 +112,20 @@ class MLEGraphModelEstimator:
             print(f"Optimization completed. Estimated parameters: alpha={alpha.item()}, beta={beta.item()}, sigma={sigma.item()}")
             return alpha.item(), beta.item(), sigma.item()
 
-class LogitRegEstimator():
-    def __init__(self, graph):
+class LogitRegEstimator:
+    def __init__(self, graph, p):
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
-        self.params_history = []  # History of parameters during optimization
+        self.p = p # number of degrees to search
 
-    def estimate_parameters(self, penalty='l2'):
-        G = nx.Graph(self.graph)
-
-        edges = list(G.edges())
-        non_edges = list(nx.non_edges(G))
-
-        data = edges + non_edges
-        labels = [1] * len(edges) + [0] * len(non_edges)
-
-        # Feature extraction: degrees of the vertices
-        features = [(abs(G.degree(i)), abs(G.degree(j))) for i, j in data]
-
-        # Logistic Regression Model
-        model = LogisticRegression(penalty='l2',
-                                fit_intercept=True,
-                                )
-
-        model.fit(features, labels)
-        coef_0, coef_1 = model.coef_[0]
-        intercept = model.intercept_[0]
-        print(f"coef_0: {-coef_0}, coef_1: {-coef_1}, intercept: {-intercept}")
-        return -coef_0, -coef_1, -intercept 
-        import numpy as np
-
-class LogitRegEstimator2:
-    def __init__(self, graph):
-        self.graph = graph  # The observed adjacency matrix
-        self.n = graph.shape[0]  # Number of nodes in the graph
-
-    def estimate_parameters(self):
+    def estimate_parameters(self, l1_wt=1.0, alpha=0.1):
+        """
+        Estimate parameters using logistic regression with regularization.
+        
+        Args:
+        l1_wt (float): The L1 weight (0 for pure L2, 1 for pure L1).
+        alpha (float): Regularization strength. Larger values specify stronger regularization.
+        """
         G = nx.Graph(self.graph)
 
         edges = list(G.edges())
@@ -183,19 +135,36 @@ class LogitRegEstimator2:
         data = edges + non_edges
         labels = [1] * len(edges) + [0] * len(non_edges)
 
-        # Feature extraction: degrees of the vertices
-        features = np.array([(G.degree(i), G.degree(j)) for i, j in data])
+        # Pre compute
+        sum_degrees = np.zeros(self.n)
+        for i in range(self.n):
+            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, p=self.p)
+
+        #features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
+        normalization = 1
+        features = np.array([(sum_degrees[i] / normalization,sum_degrees[j] / normalization) for i, j in data])
 
         # Add a constant term for the intercept
         features = sm.add_constant(features)
 
-        # Logistic Regression Model using statsmodels
+        # Logistic Regression Model using statsmodels with regularization
         model = sm.Logit(labels, features)
-        result = model.fit(disp=0)  # disp=0 turns off the convergence message
 
-        print(result.summary())
+        ######################################
+        
+        # Fit the model with regularization
+        if l1_wt in [0, 1]:
+            # Pure L1 or L2 regularization
+            result = model.fit_regularized(method='l1' if l1_wt == 1 else None, alpha=alpha, disp=0)
+        else:
+            # Elastic Net (combination of L1 and L2)
+            result = model.fit_regularized(L1_wt=l1_wt, alpha=alpha, disp=0)
 
+        # Print summary
+        print(result.summary2())
+
+        # Extract parameters and p-values
         params = result.params
-        p_values = result.pvalues
+        p_values = result.pvalues  # Note: p-values can be unreliable in regularized regressions
 
-        return -params, p_values
+        return params, p_values
