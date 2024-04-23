@@ -6,14 +6,12 @@ from scipy.special import expit
 from src.degrees_counts import degree_vertex, get_sum_degrees
 
 class GraphModel:
-    def __init__(self, n, p, alpha, beta, sigma, n_iteration, warm_up):
+    def __init__(self, n, p, alpha, beta, sigma):
         self.n = n # number of nodes
         self.p = p # number of neighbors to consider 
         self.alpha = alpha 
         self.beta  = beta
         self.sigma = sigma
-        self.n_iteration = n_iteration
-        self.warm_up = warm_up
         self.graph = self.generate_empty_graph(n)
 
     def generate_empty_graph(self, n):
@@ -26,25 +24,19 @@ class GraphModel:
         return np.sort(eigenvalues)
 
     def logistic_regression(self, sum_degrees):
-        #TODO: It is possible to optimize putting in 1/1+exp(-sum_degrees)
-        #num = np.exp(sum_degrees)
-        #denom = 1 + 1 * np.exp(sum_degrees)
-        #return num / denom
         return expit(sum_degrees)
 
     def get_edge_logit(self, sum_degrees):
         val_log = self.logistic_regression(sum_degrees)
+        # Randomly choose 1 or 0 based on the probability
         random_choice = np.random.choice([1, 0], p=[val_log, 1 - val_log])
         return random_choice
 
-    def add_remove_edge(self, p):
-        # Gen a new graph 
-        #graph_new = self.generate_empty_graph(self.n)
-
+    def add_remove_edge(self):
         # Pre compute
         sum_degrees = np.zeros(self.n)
         for i in range(self.n):
-            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, p=p)
+            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, p = self.p)
     
         # add or remove edge
         for i in range(self.n):
@@ -52,11 +44,7 @@ class GraphModel:
                 if i != j:
                     # Calculate the edge logit only once per pair
                     total_degree = self.alpha * sum_degrees[i] + self.beta * sum_degrees[j] + self.sigma
-                    #graph_new[j, i] = graph_new[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
                     self.graph[j, i] = self.graph[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
-
-        # Update the graph directly
-        #self.graph= graph_new.copy() 
 
     def check_convergence(self, graphs, stability_window=5, degree_dist_threshold=0.05):
         def degree_distribution_stability(graph1, graph2):
@@ -93,16 +81,10 @@ class GraphModel:
 
         while i < max_iterations and (i < warm_up or not stop_condition):
             print(f'iteration: {i}')
-            self.add_remove_edge(self.p)  # add or remove vertex
-            #spectrum = self.calculate_spectrum(self.graph)
-
-            #spectra.append(spectrum)
+            self.add_remove_edge()  # add or remove vertex
             graphs.append(self.graph.copy())
-
             if i > warm_up:
-                #stop_condition = self.check_convergence(graphs, tolerance=1)
                 stop_condition = self.check_convergence(graphs, stability_window=stability_window, degree_dist_threshold=degree_dist_threshold)
-
 
             i += 1
 

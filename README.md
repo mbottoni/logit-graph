@@ -1,57 +1,35 @@
+Here's an improved version of the `README.md` for your GitHub repository. I've made edits to enhance clarity, structure, and presentation, making it easier for readers to understand the purpose and functionality of your project:
 
-# Probabilistic graph implementation
+---
 
-* Main ideia summary of a logistic graph
+# Probabilistic Graph Model
 
-## Main equation:
+## Overview
+This repository contains an implementation of a probabilistic graph model using logistic regression to predict connections between vertices based on their attributes and interconnections. The model uses a logistic function to estimate the probability that a given pair of vertices in the graph will connect.
+
+## Mathematical Model
+
+### Main Equation:
+The probability of a connection between two vertices \(i\) and \(j\) is modeled using the following logistic function:
+
 $$
-prob_of_vertex_{i,j} =
-\frac{ 1 }
-{ 1 + \exp^( coef_0 |i| + coef_1 |j| + intercept)  }
-$$
-
-1. First of all initialize n (number of vertices), c (1e-3 initial prob), beta( low value )
-2. Run with logistic regression above to check if 2 vertex are going to connect
-3. Stop with convergence. Here the convergence criterion is not well defined,
-at first.
-4. Estimate c_hat and beta_hat and check if the estimation is any good
-5. After that repeat the above with a more parameters. The parameters are any
-vertex that is conenected to i any vertex connected (including j), any vertex connected to j
-(including k) and so on. Repeat with p <= 4 whrere p i the order of the algo
-
-### Objective:
-To model the probability of a connection between two vertices in a graph using a logistic function.
-
-### Equation:
-$$
-\text{prob\_of\_vertex}_{i,j} = \frac{c}{1 + \beta \exp(|i| + |j|)}
+\text{prob\_of\_vertex}_{i,j} = \frac{1}{1 + \exp(-(\alpha*|i| + \beta*|j| + \sigma)}
 $$
 
-Where:
-- \( \text{prob\_of\_vertex}_{i,j} \) is the probability of a connection between vertices \( i \) and \( j \).
-- \( c \) is the initial probability.
-- \( \beta \) is a parameter that modulates the exponential term.
+## Workflow
 
-### Steps:
 1. **Initialization**:
-   - Set \( n \): Number of vertices.
-   - Set \( c \): Initial probability (e.g., \( 1 \times 10^{-3} \)).
-   - Set \( \beta \): A low value to start with.
-  
-2. **Logistic Regression**:
-   - Use the given logistic function to compute the probability of a connection between vertices \( i \) and \( j \).
+   - **n**: Number of vertices in the graph.
 
-3. **Convergence**:
-   - Monitor the model for convergence. The exact criterion for convergence isn't predefined.
+2. **Connection Estimation**:
+   - Utilize the logistic function defined above to determine the probability of a connection between any two vertices \(i\) and \(j\).
+
+3. **Convergence Criteria**:
+   - Monitor and define convergence criteria for the model, which might be based on changes in parameter estimates or stability of the graph's structure over iterations.
 
 4. **Parameter Estimation**:
-   - Estimate \( c_{\text{hat}} \) and \( \beta_{\text{hat}} \).
-   - Assess the goodness of fit of the estimations.
+   - Evaluate the fit of these parameters to check the model's effectiveness.
 
 5. **Iterative Refinement**:
-   - Incorporate more parameters based on the connectivity of the vertices.
-   - For instance, for a vertex \( i \), consider all vertices connected to \( i \), and for vertex \( j \), consider all vertices connected to \( j \) and so on.
-   - Repeat the logistic regression with increasing order \( p \) (up to \( p \leq 4 \)).
-
-### Note:
-The methodology seems to be an iterative approach to improve the modeling of vertex connectivity. The inclusion of more parameters based on connected vertices in step 5 suggests that the model may try to capture higher-order relationships or dependencies between vertices in the graph.
+   - Expand the model iteratively by incorporating additional parameters from connected vertices. This includes vertices directly connected to either \(i\) or \(j\), as well as their respective connections.
+   - Iterate this process, enhancing the model complexity by increasing the order \(p\) of connections considered, up to a maximum of \(p \leq 4\).
