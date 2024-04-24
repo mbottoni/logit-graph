@@ -1,6 +1,3 @@
-Here's an improved version of the `README.md` for your GitHub repository. I've made edits to enhance clarity, structure, and presentation, making it easier for readers to understand the purpose and functionality of your project:
-
----
 
 # Probabilistic Graph Model
 
