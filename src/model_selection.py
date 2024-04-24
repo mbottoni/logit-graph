@@ -11,7 +11,7 @@ import sys
 sys.path.append('..')
 import src.gic as gic
 import src.param_estimator as pe
-import src.estimator as est
+import src.logit_estimator as est
 
 
 # Initial try to implement the model selection
@@ -177,8 +177,9 @@ class GraphModelSelection:
     def select_model(self):
         results = []
         for idx, model in enumerate(self.models):
-            if model == 'LG':
-                min_gic = gic.GraphInformationCriterion(self.graph, self.log_graph, model)
+            print(f'testing the selected model for {model}')
+            if model == "LG":
+                min_gic = gic.GraphInformationCriterion(graph=self.graph, model=model, log_graph=self.log_graph)
                 params = self.log_params
                 result = {'param': params, 'gic': min_gic}
 
@@ -192,7 +193,9 @@ class GraphModelSelection:
                 if self.parameters:
                     param = self.parameters[idx]
 
-                estimator = pe.GraphParameterEstimator(self.graph, model_func, interval=param, **self.kwargs)
+                print(f"Model: {model}, Parameters: {param}")
+                print(f"model function {model_func}")
+                estimator = pe.GraphParameterEstimator(self.graph, model=model_func, interval=param, **self.kwargs)
                 result = estimator.estimate()
 
             results.append((model, result['param'], result['gic']))

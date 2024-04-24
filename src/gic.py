@@ -4,7 +4,7 @@ from scipy.stats import entropy
 from scipy.spatial.distance import euclidean, cityblock
 
 class GraphInformationCriterion:
-    def __init__(self, graph, log_graph, model, p=None, dist='KL', **kwargs):
+    def __init__(self, graph, model, log_graph=None, p=None, dist='KL', **kwargs):
         self.graph = graph
         self.log_graph =  log_graph
         self.model = model
@@ -36,7 +36,7 @@ class GraphInformationCriterion:
         elif callable(self.model):
             return self.model(self.n, self.parameter)
         else:
-            raise ValueError("Model definition is not recognized.")
+            raise ValueError(f"{self.model}: Model definition is not recognized.")
 
     def calculate_gic(self):
         graph_den, _ = self.compute_spectral_density(self.graph)

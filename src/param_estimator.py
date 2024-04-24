@@ -108,6 +108,6 @@ class GraphParameterEstimator():
     def calculate_gic(self, param):
         # Instantiate the GraphInformationCriterion with the current parameter
         gic_calculator = gic.GraphInformationCriterion(
-            self.graph, self.model_function, param, **self.kwargs
+            graph=self.graph, model=self.model_function, p=param, **self.kwargs
         )
         return gic_calculator.calculate_gic()
