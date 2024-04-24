@@ -2,7 +2,19 @@
 import networkx as nx
 import numpy as np
 from scipy.stats import ks_2samp
+import networkx as nx
+import numpy as np
+from scipy.stats import entropy
+from scipy.spatial.distance import euclidean, cityblock
 
+import sys
+sys.path.append('..')
+import src.gic as gic
+import src.param_estimator as pe
+import src.logit_estimator as est
+
+
+# Initial try to implement the model selection
 class RandomGraphModelSelector:
     def __init__(self, real_graph, logit_graph):
         self.real_graph = real_graph
@@ -63,8 +75,7 @@ class RandomGraphModelSelector:
         self.best_model = min(self.model_scores, key=self.model_scores.get)
         return self.best_model, self.model_scores
 
-
-
+# Simplified way to do the model selection
 class ModelSelectorSpectrum:
     def __init__(self, real_graph, logit_graph):
         self.real_graph = real_graph
@@ -131,4 +142,75 @@ class ModelSelectorSpectrum:
 
         self.best_model = min(self.model_scores, key=self.model_scores.get)
         return self.best_model, self.model_scores
+
+# Class implementing the stat graph model selector
+class GraphModelSelection:
+    def __init__(self, graph, log_graph, log_params, models=None, parameters=None, **kwargs):
+        self.graph = graph
+        self.log_graph = log_graph,
+        self.log_params = log_params,
+        self.models = models if models is not None else ['ER', 'WS', 'BA']
+        self.parameters = parameters
+        self.kwargs = kwargs
+        self.validate_input()
+
+    def validate_input(self):
+        if not isinstance(self.graph, nx.Graph):
+            raise ValueError("The input should be a networkx Graph object!")
+
+    def model_function(self, model_name):
+        if model_name == "ER":
+            return lambda n, p: nx.erdos_renyi_graph(n, p)
+        elif model_name == "GRG":
+            return lambda n, r: nx.random_geometric_graph(n, r)
+        elif model_name == "KR":
+            return lambda n, k: nx.random_regular_graph(k, n)
+        elif model_name == "WS":
+            return lambda n, p, k=8: nx.watts_strogatz_graph(n, k, p)
+        elif model_name == "BA":
+            return lambda n, m: nx.barabasi_albert_graph(n, m)
+        elif model_name == "LG":
+            pass
+        else:
+            raise ValueError(f"Unknown model: {model_name}")
+
+    def select_model(self):
+        results = []
+        for idx, model in enumerate(self.models):
+            print(f'testing the selected model for {model}')
+            if model == "LG":
+                min_gic = gic.GraphInformationCriterion(graph=self.graph, model=model, log_graph=self.log_graph)
+                params = self.log_params
+                result = {'param': params, 'gic': min_gic}
+
+            else:
+                if callable(model):
+                    model_func = model
+                else:
+                    model_func = self.model_function(model)
+
+                param = None
+                if self.parameters:
+                    param = self.parameters[idx]
+
+                print(f"Model: {model}, Parameters: {param}")
+                print(f"model function {model_func}")
+                estimator = pe.GraphParameterEstimator(self.graph, model=model_func, interval=param, **self.kwargs)
+                result = estimator.estimate()
+
+            results.append((model, result['param'], result['gic']))
+
+        # Sort results based on GIC value
+        results.sort(key=lambda x: x[2])
+
+        # Prepare the output
+        best_model = results[0][0]
+        estimates = np.array([(m, p, gic) for m, p, gic in results], dtype=[('model', 'U10'), ('param', 'float'), ('GIC', 'float')])
+
+        return {
+            "method": "Graph Model Selection",
+            "info": "Selects the graph model that best approximates the observed graph.",
+            "model": best_model,
+            "estimates": estimates
+        }
 

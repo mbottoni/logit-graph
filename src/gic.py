@@ -4,8 +4,9 @@ from scipy.stats import entropy
 from scipy.spatial.distance import euclidean, cityblock
 
 class GraphInformationCriterion:
-    def __init__(self, graph, model, p=None, dist='KL', **kwargs):
+    def __init__(self, graph, model, log_graph=None, p=None, dist='KL', **kwargs):
         self.graph = graph
+        self.log_graph =  log_graph
         self.model = model
         self.parameter = p
         self.dist_type = dist
@@ -30,13 +31,16 @@ class GraphInformationCriterion:
                 return nx.watts_strogatz_graph(self.n, int(np.ceil(np.sqrt(self.n))), self.parameter)
             elif self.model == "BA":
                 return nx.barabasi_albert_graph(self.n, self.parameter)
+            elif self.model == "LG":
+                return self.log_graph
         elif callable(self.model):
             return self.model(self.n, self.parameter)
         else:
-            raise ValueError("Model definition is not recognized.")
+            raise ValueError(f"{self.model}: Model definition is not recognized.")
 
     def calculate_gic(self):
         graph_den, _ = self.compute_spectral_density(self.graph)
+
         model_graph = self.generate_model_graph()
         model_den, _ = self.compute_spectral_density(model_graph)
 
