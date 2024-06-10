@@ -116,7 +116,7 @@ class LogitRegEstimator:
     def __init__(self, graph, d):
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
-        self.p = d # number of degrees to search
+        self.d = d # number of degrees to search
 
     def get_features_labels(self):
         G = nx.Graph(self.graph)
