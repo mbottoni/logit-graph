@@ -16,9 +16,9 @@ Acho que isso só complica o modelo, pelo menos por enquanto.
 para fins de explicação, p = 0, ou seja, apenas i e j sem considerar seus vizinhos).
 
 OK. Passo 0. Eu acho que tanto faz inicializar o grafo com um ER e p bem pequeno ou grafo vazio.
-Passo 1. Sorteia i e j quaisquer, com reposição.
-Passo 2. Aplica o modelo. Se der mais que 0.5, coloca aresta. Se der menos, remove aresta.
-Repete passos 1 e 2 até convergência. Para definir convergência eu usaria algo simples, como se o número de arestas totais não varia muito.
+OK Passo 1. Sorteia i e j quaisquer, com reposição.
+OK Passo 2. Aplica o modelo. Se der mais que 0.5, coloca aresta. Se der menos, remove aresta.
+OK Repete passos 1 e 2 até convergência. Para definir convergência eu usaria algo simples, como se o número de arestas totais não varia muito.
 '''
 
 class GraphModel:
@@ -51,14 +51,10 @@ class GraphModel:
         sum_degrees = np.zeros(self.n)
         for i in range(self.n):
             sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, d = self.d)
-    
-        # add or remove edge
-        for i in range(self.n):
-            for j in range(i + 1, self.n):  # Use symmetry, only compute half and mirror
-                if i != j:
-                    # Calculate the edge logit only once per pair
-                    total_degree = (sum_degrees[i] + sum_degrees[j]) + self.sigma
-                    self.graph[j, i] = self.graph[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
+
+        i, j = np.random.choice(self.n, 2, replace=False)
+        total_degree = (sum_degrees[i] + sum_degrees[j]) + self.sigma
+        self.graph[j, i] = self.graph[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
 
     def check_convergence_hist(self, graphs, stability_window=5, degree_dist_threshold=0.05):
         def degree_distribution_stability(graph1, graph2):
@@ -87,19 +83,20 @@ class GraphModel:
         print('\n'*3)
         return is_converged
 
-    def check_convergence(graphs, threshold, stability_window):
-        # Check only the last n graphs
+    def check_convergence(self, graphs, threshold_edges, stability_window):
+        # Check only the last stability_window graphs
         graphs_to_check = graphs[-stability_window:]
+        
         prev_total_edges = None
         for graph in graphs_to_check:
-            total_edges = sum(len(neighbors) for neighbors in graph.values()) // 2
+            total_edges = np.sum(np.triu(graph))
             if prev_total_edges is not None:
-                if abs(total_edges - prev_total_edges) > threshold:
+                if abs(total_edges - prev_total_edges) > threshold_edges:
                     return False
             prev_total_edges = total_edges
         return True
 
-    def populate_edges(self, warm_up, max_iterations, degree_dist_threshold=0.05, stability_window=5):
+    def populate_edges(self, warm_up, max_iterations, threshold, stability_window):
         i = 0
         stop_condition = False
         graphs = [self.graph.copy()]  # List to store the graphs
@@ -111,7 +108,7 @@ class GraphModel:
             graphs.append(self.graph.copy())
             if i > warm_up:
                 #stop_condition = self.check_convergence(graphs, stability_window=stability_window, degree_dist_threshold=degree_dist_threshold)
-                stop_condition = self.check_convergence(graphs, threshold=2, stability_window=5)
+                stop_condition = self.check_convergence(graphs, threshold_edges=threshold, stability_window=stability_window)
 
             i += 1
 
