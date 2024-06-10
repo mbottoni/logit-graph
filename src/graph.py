@@ -44,16 +44,24 @@ class GraphModel:
         val_log = self.logistic_regression(sum_degrees)
         # Randomly choose 1 or 0 based on the probability
         random_choice = np.random.choice([1, 0], p=[val_log, 1 - val_log])
+
+        #if val_log > 0.5:
+        #    random_choice = 1
+        #else:
+        #    random_choice = 0
+
         return random_choice
 
     def add_remove_edge(self):
         # Pre compute
-        sum_degrees = np.zeros(self.n)
-        for i in range(self.n):
-            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, d = self.d)
+        # TODO: I dont need to pick every node
+        #sum_degrees = np.zeros(self.n)
+        #for i in range(self.n):
+        #    sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, d = self.d)
 
         i, j = np.random.choice(self.n, 2, replace=False)
-        total_degree = (sum_degrees[i] + sum_degrees[j]) + self.sigma
+        #total_degree = (sum_degrees[i] + sum_degrees[j]) + self.sigma
+        total_degree = ( get_sum_degrees(self.graph, vertex=i, d=self.d) + get_sum_degrees(self.graph, vertex=j, d=self.d) ) + self.sigma
         self.graph[j, i] = self.graph[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
 
     def check_convergence_hist(self, graphs, stability_window=5, degree_dist_threshold=0.05):
@@ -106,6 +114,10 @@ class GraphModel:
             print(f'iteration: {i}')
             self.add_remove_edge()  # add or remove vertex
             graphs.append(self.graph.copy())
+
+            if len(graphs) > 1000:
+                graphs.pop(0)
+
             if i > warm_up:
                 #stop_condition = self.check_convergence(graphs, stability_window=stability_window, degree_dist_threshold=degree_dist_threshold)
                 stop_condition = self.check_convergence(graphs, threshold_edges=threshold, stability_window=stability_window)
