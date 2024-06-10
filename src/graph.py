@@ -60,7 +60,7 @@ class GraphModel:
                     total_degree = (sum_degrees[i] + sum_degrees[j]) + self.sigma
                     self.graph[j, i] = self.graph[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
 
-    def check_convergence(self, graphs, stability_window=5, degree_dist_threshold=0.05):
+    def check_convergence_hist(self, graphs, stability_window=5, degree_dist_threshold=0.05):
         def degree_distribution_stability(graph1, graph2):
             # Calculate degree sequences
             degrees1 = np.sum(graph1, axis=1)
@@ -87,6 +87,18 @@ class GraphModel:
         print('\n'*3)
         return is_converged
 
+    def check_convergence(graphs, threshold, stability_window):
+        # Check only the last n graphs
+        graphs_to_check = graphs[-stability_window:]
+        prev_total_edges = None
+        for graph in graphs_to_check:
+            total_edges = sum(len(neighbors) for neighbors in graph.values()) // 2
+            if prev_total_edges is not None:
+                if abs(total_edges - prev_total_edges) > threshold:
+                    return False
+            prev_total_edges = total_edges
+        return True
+
     def populate_edges(self, warm_up, max_iterations, degree_dist_threshold=0.05, stability_window=5):
         i = 0
         stop_condition = False
@@ -98,7 +110,8 @@ class GraphModel:
             self.add_remove_edge()  # add or remove vertex
             graphs.append(self.graph.copy())
             if i > warm_up:
-                stop_condition = self.check_convergence(graphs, stability_window=stability_window, degree_dist_threshold=degree_dist_threshold)
+                #stop_condition = self.check_convergence(graphs, stability_window=stability_window, degree_dist_threshold=degree_dist_threshold)
+                stop_condition = self.check_convergence(graphs, threshold=2, stability_window=5)
 
             i += 1
 
