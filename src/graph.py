@@ -5,12 +5,26 @@ from scipy.special import expit
 
 from src.degrees_counts import degree_vertex, get_sum_degrees
 
+'''
+1. Sigma é o parâmetro para definir a probabilidade de colocar aresta quando os graus de i e j são ambos zero, certo?
+
+2. Para que você precisa de alpha e beta? Aliás, por que alpha pode ser diferente de beta. Se for diferente, 
+dependendo de como você escolhe i e j pode dar diferença (não é simétrico). Eu deixaria alfa=beta=1.
+Acho que isso só complica o modelo, pelo menos por enquanto.
+
+3. O algoritmo como um todo está estranho. Acho que basta definir o modelo como 1/(1 + exp( - ( sigma + |i| + |j|) ) ) (estou considerando
+para fins de explicação, p = 0, ou seja, apenas i e j sem considerar seus vizinhos).
+
+OK. Passo 0. Eu acho que tanto faz inicializar o grafo com um ER e p bem pequeno ou grafo vazio.
+Passo 1. Sorteia i e j quaisquer, com reposição.
+Passo 2. Aplica o modelo. Se der mais que 0.5, coloca aresta. Se der menos, remove aresta.
+Repete passos 1 e 2 até convergência. Para definir convergência eu usaria algo simples, como se o número de arestas totais não varia muito.
+'''
+
 class GraphModel:
-    def __init__(self, n, p, alpha, beta, sigma):
+    def __init__(self, n, d, sigma):
         self.n = n # number of nodes
-        self.p = p # number of neighbors to consider 
-        self.alpha = alpha 
-        self.beta  = beta
+        self.d = d # number of neighbors to consider 
         self.sigma = sigma
         self.graph = self.generate_empty_graph(n)
 
@@ -36,14 +50,14 @@ class GraphModel:
         # Pre compute
         sum_degrees = np.zeros(self.n)
         for i in range(self.n):
-            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, p = self.p)
+            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, d = self.d)
     
         # add or remove edge
         for i in range(self.n):
             for j in range(i + 1, self.n):  # Use symmetry, only compute half and mirror
                 if i != j:
                     # Calculate the edge logit only once per pair
-                    total_degree = self.alpha * sum_degrees[i] + self.beta * sum_degrees[j] + self.sigma
+                    total_degree = (sum_degrees[i] + sum_degrees[j]) + self.sigma
                     self.graph[j, i] = self.graph[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
 
     def check_convergence(self, graphs, stability_window=5, degree_dist_threshold=0.05):
@@ -90,5 +104,9 @@ class GraphModel:
 
         spectra = self.calculate_spectrum(self.graph)
         return graphs, spectra
+
+
+
+
 
 
