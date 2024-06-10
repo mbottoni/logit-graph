@@ -170,4 +170,4 @@ class LogitRegEstimator:
         params = result.params
         p_values = result.pvalues  # Note: p-values can be unreliable in regularized regressions
 
-        return params, p_values
+        return result, params, p_values
