@@ -14,11 +14,11 @@ max_val = np.nan
 eps = 1e-5
 
 class NegativeLogLikelihoodLoss(torch.nn.Module):
-    def __init__(self, graph, p):
+    def __init__(self, graph, d):
         super(NegativeLogLikelihoodLoss, self).__init__()
         self.graph = torch.tensor(graph, dtype=torch.float32)  # Ensure graph is a PyTorch tensor
         self.n = graph.shape[0]
-        self.p = p
+        self.d = d
 
     def logistic_probability(self, sum_degrees):
         num = torch.exp(sum_degrees)
@@ -32,8 +32,8 @@ class NegativeLogLikelihoodLoss(torch.nn.Module):
         # Iterate over all possible edges
         for i in range(self.n):
             for j in range(i, self.n):
-                degrees_i = get_sum_degrees(self.graph, i, self.p)
-                degrees_j = get_sum_degrees(self.graph, j, self.p)
+                degrees_i = get_sum_degrees(self.graph, i, self.d)
+                degrees_j = get_sum_degrees(self.graph, j, self.d)
                 sum_degrees_raw = ( alpha * degrees_i + beta * degrees_j )
                 sum_degrees = ( sum_degrees_raw + sigma )
 
@@ -48,7 +48,7 @@ class NegativeLogLikelihoodLoss(torch.nn.Module):
         return -likelihood  # Return negative likelihood
 
 class MLEGraphModelEstimator:
-    def __init__(self, graph, p):
+    def __init__(self, graph, d):
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
         self.params_history = []  # History of parameters during optimization
@@ -113,10 +113,10 @@ class MLEGraphModelEstimator:
             return alpha.item(), beta.item(), sigma.item()
 
 class LogitRegEstimator:
-    def __init__(self, graph, p):
+    def __init__(self, graph, d):
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
-        self.p = p # number of degrees to search
+        self.d = d # number of degrees to search
 
     def get_features_labels(self):
         G = nx.Graph(self.graph)
@@ -131,7 +131,7 @@ class LogitRegEstimator:
         # Pre compute
         sum_degrees = np.zeros(self.n)
         for i in range(self.n):
-            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, p=self.p)
+            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, d=self.d)
 
         #features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
         normalization = 1
@@ -170,4 +170,4 @@ class LogitRegEstimator:
         params = result.params
         p_values = result.pvalues  # Note: p-values can be unreliable in regularized regressions
 
-        return params, p_values
+        return result, params, p_values
