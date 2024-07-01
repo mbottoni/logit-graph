@@ -15,6 +15,7 @@ import src.logit_estimator as est
 
 
 # Initial try to implement the model selection
+# Baseline
 class RandomGraphModelSelector:
     def __init__(self, real_graph, logit_graph):
         self.real_graph = real_graph
@@ -76,6 +77,7 @@ class RandomGraphModelSelector:
         return self.best_model, self.model_scores
 
 # Simplified way to do the model selection
+# Baseline for kl div
 class ModelSelectorSpectrum:
     def __init__(self, real_graph, logit_graph):
         self.real_graph = real_graph
@@ -143,6 +145,12 @@ class ModelSelectorSpectrum:
         self.best_model = min(self.model_scores, key=self.model_scores.get)
         return self.best_model, self.model_scores
 
+
+
+
+##################################################
+##################################################
+
 # Class implementing the stat graph model selector
 class GraphModelSelection:
     def __init__(self, graph, log_graph, log_params, models=None, parameters=None, **kwargs):
@@ -179,9 +187,12 @@ class GraphModelSelection:
         for idx, model in enumerate(self.models):
             print(f'testing the selected model for {model}')
             if model == "LG":
-                min_gic = gic.GraphInformationCriterion(graph=self.graph, model=model, log_graph=self.log_graph)
+                min_gic = gic.GraphInformationCriterion(graph=self.graph, model=model, log_graph=self.log_graph).calculate_gic()
                 params = self.log_params
-                result = {'param': params, 'gic': min_gic}
+                result = {'param': params, 'gic': min_gic} # TODO: Generatlize for  a logit grpah with mor than 1 parameter
+                print()
+                print('LG result:', result)
+                print()
 
             else:
                 if callable(model):
@@ -197,6 +208,9 @@ class GraphModelSelection:
                 print(f"model function {model_func}")
                 estimator = pe.GraphParameterEstimator(self.graph, model=model_func, interval=param, **self.kwargs)
                 result = estimator.estimate()
+                print()
+                print(f'{model} result: ', result)
+                print()
 
             results.append((model, result['param'], result['gic']))
 
@@ -205,7 +219,8 @@ class GraphModelSelection:
 
         # Prepare the output
         best_model = results[0][0]
-        estimates = np.array([(m, p, gic) for m, p, gic in results], dtype=[('model', 'U10'), ('param', 'float'), ('GIC', 'float')])
+        #estimates = np.array([(m, p, gic) for m, p, gic in results], dtype=[('model', 'U10'), ('param', 'float'), ('GIC', 'float')])
+        estimates = np.array([(m, str(p), gic) for m, p, gic in results], dtype=[('model', 'U10'), ('param', 'U20'), ('GIC', 'float')])
 
         return {
             "method": "Graph Model Selection",
