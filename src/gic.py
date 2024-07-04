@@ -32,7 +32,8 @@ class GraphInformationCriterion:
             elif self.model == "BA":
                 return nx.barabasi_albert_graph(self.n, self.parameter)
             elif self.model == "LG":
-                return self.log_graph
+                return self.log_graph[0]
+
         elif callable(self.model):
             return self.model(self.n, self.parameter)
         else:
@@ -42,6 +43,8 @@ class GraphInformationCriterion:
         graph_den, _ = self.compute_spectral_density(self.graph)
 
         model_graph = self.generate_model_graph()
+        if self.model == "LG":
+            print(type(model_graph), model_graph)
         model_den, _ = self.compute_spectral_density(model_graph)
 
         if self.dist_type == 'KL':
