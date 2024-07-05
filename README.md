@@ -8,10 +8,7 @@ This repository contains an implementation of a probabilistic graph model using 
 
 ### Main Equation:
 The probability of a connection between two vertices \(i\) and \(j\) is modeled using the following logistic function:
-
-$$
-\text{prob\_of\_vertex}_{i,j} = \frac{1}{1 + \exp(-(\alpha*|i| + \beta*|j| + \sigma)}
-$$
+\text{prob\_of\_vertex}_{i,j} = \frac{1}{1 + \exp(-(|i|_d + |j|_d + \sigma)}
 
 ## Workflow
 
