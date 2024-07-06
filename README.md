@@ -24,6 +24,10 @@ The probability of a connection between two vertices \(i\) and \(j\) is modeled 
 4. **Parameter Estimation**:
    - Evaluate the fit of these parameters to check the model's effectiveness.
 
-5. **Iterative Refinement**:
+1. **Iterative Refinement**:
    - Expand the model iteratively by incorporating additional parameters from connected vertices. This includes vertices directly connected to either \(i\) or \(j\), as well as their respective connections.
    - Iterate this process, enhancing the model complexity by increasing the order \(p\) of connections considered, up to a maximum of \(p \leq 4\).
+
+## Datasets
+
+1. Most datasets were extracted from this database https://neurodata.io/project/connectomes/ or generated with random graphs on networkx
