@@ -172,11 +172,11 @@ class GraphModelSelection:
         elif model_name == "GRG":
             return lambda n, r: nx.random_geometric_graph(n, r)
         elif model_name == "KR":
-            return lambda n, k: nx.random_regular_graph(k, n)
+            return lambda n, k: nx.random_regular_graph(d=2*int(k), n=n)
         elif model_name == "WS":
             return lambda n, p, k=8: nx.watts_strogatz_graph(n, k, p)
         elif model_name == "BA":
-            return lambda n, m: nx.barabasi_albert_graph(n, m)
+            return lambda n, m: nx.barabasi_albert_graph(n, int(m))
         elif model_name == "LG":
             pass
         else:
