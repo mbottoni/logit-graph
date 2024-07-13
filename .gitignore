@@ -34,3 +34,6 @@ deprecated/
 *.pkl
 
 #*.png
+
+statGraph/
+*.tar.gz
