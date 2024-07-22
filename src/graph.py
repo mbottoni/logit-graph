@@ -4,6 +4,7 @@ from scipy.stats import ks_2samp
 from scipy.special import expit
 
 from src.degrees_counts import degree_vertex, get_sum_degrees
+import src.gic as gic
 
 '''
 1. Sigma é o parâmetro para definir a probabilidade de colocar aresta quando os graus de i e j são ambos zero, certo?
@@ -127,8 +128,38 @@ class GraphModel:
         spectra = self.calculate_spectrum(self.graph)
         return graphs, spectra
 
+    def populate_edges_optimal(self, warm_up, max_iterations, threshold, stability_window, real_graph):
+        i = 0
+        stop_condition = False
+        graphs = [self.graph.copy()]  # List to store the graphs
+        gic_values = []
 
+        while i < max_iterations and (i < warm_up or not stop_condition):
+            print(f'iteration: {i}')
+            print(type(real_graph))
+            log_graph = nx.from_numpy_array(self.graph)
+            print(type(log_graph))
+            gic_value = gic.GraphInformationCriterion(graph=real_graph,
+                                                    log_graph=log_graph,
+                                                    model='LG'
+                                                    ).calculate_gic()
+            print(f'GIC: {gic_value}')
+            gic_values.append(gic_value)
 
+            self.add_remove_edge()  # add or remove vertex
+            graphs.append(self.graph.copy())
+
+            if len(graphs) > 1000:
+                graphs.pop(0)
+
+            if i > warm_up:
+                #stop_condition = self.check_convergence(graphs, stability_window=stability_window, degree_dist_threshold=degree_dist_threshold)
+                stop_condition = self.check_convergence(graphs, threshold_edges=threshold, stability_window=stability_window)
+
+            i += 1
+
+        spectra = self.calculate_spectrum(self.graph)
+        return graphs, spectra, gic_values
 
 
 

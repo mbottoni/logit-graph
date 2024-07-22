@@ -115,7 +115,12 @@ class MLEGraphModelEstimator:
 class LogitRegEstimator:
     def __init__(self, graph, d):
         self.graph = graph  # The observed adjacency matrix
-        self.n = graph.shape[0]  # Number of nodes in the graph
+        if isinstance(graph, np.ndarray):
+            self.n = graph.shape[0]  # Number of nodes in the graph
+        elif isinstance(graph, nx.Graph):
+            self.n = graph.number_of_nodes()
+        else:
+            raise ValueError("Unsupported graph type. Please provide a NumPy array or NetworkX graph.")
         self.d = d # number of degrees to search
 
     def get_features_labels(self):
