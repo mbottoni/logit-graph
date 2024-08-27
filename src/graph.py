@@ -159,7 +159,9 @@ class GraphModel:
         # Continue the iteration: until the patience is reached or the max_iterations is reached or if the graph
         # does not have a simlar number of edges as the real graph
         while (no_improvement_count < patience) or (i < warm_up) or (np.sum(self.graph) <= np.sum(real_graph) // 2):
-            print(f'iteration: {i}')
+            if i % 1000 == 0:
+                print(f'iteration: {i}')
+
             if i > max_iterations:
                 print('Max iterations reached')
                 break
@@ -168,7 +170,9 @@ class GraphModel:
             current_spectrum = self.calculate_spectrum(self.graph)
             spectrum_diff = np.linalg.norm(current_spectrum - real_spectrum)
             spectrum_diffs.append(spectrum_diff)
-            print(f'\t Spectrum difference: {spectrum_diff}')
+
+            if i % 1000 == 0:
+                print(f'\t Spectrum difference: {spectrum_diff}')
             
             graphs.append(self.graph.copy())
 
