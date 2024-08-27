@@ -1,4 +1,3 @@
-
 import networkx as nx
 import numpy as np
 from scipy.stats import entropy
@@ -27,11 +26,13 @@ class GraphInformationCriterion:
             elif self.model == "GRG":
                 return nx.random_geometric_graph(self.n, self.parameter)
             elif self.model == "KR":
-                return nx.random_regular_graph(self.parameter, self.n)
+                return nx.random_regular_graph(int(self.parameter), self.n)
             elif self.model == "WS":
-                return nx.watts_strogatz_graph(self.n, int(np.ceil(np.sqrt(self.n))), self.parameter)
+                k = int(np.ceil(np.sqrt(self.n)))
+                return nx.watts_strogatz_graph(self.n, k, self.parameter)
             elif self.model == "BA":
-                return nx.barabasi_albert_graph(self.n, self.parameter)
+                m = max(1, int(self.parameter))  # Ensure m is at least 1
+                return nx.barabasi_albert_graph(self.n, m)
             elif self.model == "LG":
                 if isinstance(self.log_graph, tuple):
                     return self.log_graph[0]

@@ -1,6 +1,6 @@
-
 import networkx as nx
 import numpy as np
+import random
 from scipy.stats import ks_2samp
 import networkx as nx
 import numpy as np
@@ -151,18 +151,21 @@ class ModelSelectorSpectrum:
 
 # Class implementing the stat graph model selector
 class GraphModelSelection:
-    def __init__(self, graph, log_graph, log_params, models=None, parameters=None, **kwargs):
+    def __init__(self, graph, log_graphs, log_params, models=None, parameters=None, n_runs=10, **kwargs):
         self.graph = graph
-        self.log_graph = log_graph,
-        self.log_params = log_params,
+        self.log_graphs = log_graphs
+        self.log_params = log_params
         self.models = models if models is not None else ['ER', 'WS', 'BA']
         self.parameters = parameters
+        self.n_runs = n_runs
         self.kwargs = kwargs
         self.validate_input()
 
     def validate_input(self):
         if not isinstance(self.graph, nx.Graph):
             raise ValueError("The input should be a networkx Graph object!")
+        if not isinstance(self.log_graphs, list) or len(self.log_graphs) == 0:
+            raise ValueError("log_graphs should be a non-empty list of networkx Graph objects!")
 
     def model_function(self, model_name):
         if model_name == "ER":
@@ -180,18 +183,50 @@ class GraphModelSelection:
         else:
             raise ValueError(f"Unknown model: {model_name}")
 
+    def calculate_average_gic(self, model, params):
+        gic_values = []
+        for _ in range(self.n_runs):
+            if model == "LG":
+                log_graph = random.choice(self.log_graphs)
+                gic_calculator = gic.GraphInformationCriterion(
+                    graph=self.graph,
+                    model=model,
+                    log_graph=log_graph
+                )
+            else:
+                model_func = self.model_function(model)
+                # Convert params to appropriate type based on the model
+                if model in ["BA", "WS"]:
+                    # BA and WS models require integer parameters
+                    model_params = int(params)
+                elif model in ["ER", "GRG"]:
+                    # ER and GRG models use float parameters
+                    model_params = float(params)
+                else:
+                    model_params = params
+
+                generated_graph = model_func(self.graph.number_of_nodes(), model_params)
+                gic_calculator = gic.GraphInformationCriterion(
+                    graph=self.graph,
+                    model=model,
+                    log_graph=generated_graph,
+                    p=params
+                )
+            
+            gic_value = gic_calculator.calculate_gic()
+            gic_values.append(gic_value)
+        
+        return np.mean(gic_values)
+
     def select_model(self):
         results = []
         for idx, model in enumerate(self.models):
-            print(f'testing the selected model for {model}')
+            print(f'Testing the selected model for {model}')
             if model == "LG":
-                min_gic = gic.GraphInformationCriterion(graph=self.graph, model=model, log_graph=self.log_graph).calculate_gic()
+                avg_gic = self.calculate_average_gic(model, None)
                 params = self.log_params
-                result = {'param': params, 'gic': min_gic} # TODO: Generatlize for  a logit grpah with mor than 1 parameter
-                print()
+                result = {'param': params, 'gic': avg_gic}
                 print('LG result:', result)
-                print()
-
             else:
                 if callable(model):
                     model_func = model
@@ -203,12 +238,15 @@ class GraphModelSelection:
                     param = self.parameters[idx]
 
                 print(f"Model: {model}, Parameters: {param}")
-                print(f"model function {model_func}")
+                print(f"Model function: {model_func}")
                 estimator = pe.GraphParameterEstimator(self.graph, model=model_func, interval=param, **self.kwargs)
                 result = estimator.estimate()
-                print()
+                
+                # Calculate average GIC over n_runs
+                avg_gic = self.calculate_average_gic(model, result['param'])
+                result['gic'] = avg_gic
+                
                 print(f'{model} result: ', result)
-                print()
 
             results.append((model, result['param'], result['gic']))
 
@@ -217,19 +255,11 @@ class GraphModelSelection:
 
         # Prepare the output
         best_model = results[0][0]
-        #estimates = np.array([(m, p, gic) for m, p, gic in results], dtype=[('model', 'U10'), ('param', 'float'), ('GIC', 'float')])
         estimates = np.array([(m, str(p), gic) for m, p, gic in results], dtype=[('model', 'U10'), ('param', 'U20'), ('GIC', 'float')])
 
         return {
             "method": "Graph Model Selection",
-            "info": "Selects the graph model that best approximates the observed graph.",
+            "info": "Selects the graph model that best approximates the observed graph based on average GIC over multiple runs.",
             "model": best_model,
             "estimates": estimates
         }
-
-
-
-
-
-
-
