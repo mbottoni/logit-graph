@@ -156,8 +156,13 @@ class GraphModel:
 
         real_spectrum = self.calculate_spectrum(real_graph)
 
-        while (i < max_iterations and no_improvement_count < patience) or i < warm_up:
+        # Continue the iteration: until the patience is reached or the max_iterations is reached or if the graph
+        # does not have a simlar number of edges as the real graph
+        while (no_improvement_count < patience) or (i < warm_up) or (np.sum(self.graph) <= np.sum(real_graph) // 2):
             print(f'iteration: {i}')
+            if i > max_iterations:
+                print('Max iterations reached')
+                break
             
             self.add_remove_edge()
             current_spectrum = self.calculate_spectrum(self.graph)
