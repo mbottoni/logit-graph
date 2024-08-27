@@ -6,22 +6,6 @@ from scipy.special import expit
 from src.degrees_counts import degree_vertex, get_sum_degrees
 import src.gic as gic
 
-'''
-1. Sigma é o parâmetro para definir a probabilidade de colocar aresta quando os graus de i e j são ambos zero, certo?
-
-2. Para que você precisa de alpha e beta? Aliás, por que alpha pode ser diferente de beta. Se for diferente, 
-dependendo de como você escolhe i e j pode dar diferença (não é simétrico). Eu deixaria alfa=beta=1.
-Acho que isso só complica o modelo, pelo menos por enquanto.
-
-3. O algoritmo como um todo está estranho. Acho que basta definir o modelo como 1/(1 + exp( - ( sigma + |i| + |j|) ) ) (estou considerando
-para fins de explicação, p = 0, ou seja, apenas i e j sem considerar seus vizinhos).
-
-OK. Passo 0. Eu acho que tanto faz inicializar o grafo com um ER e p bem pequeno ou grafo vazio.
-OK Passo 1. Sorteia i e j quaisquer, com reposição.
-OK Passo 2. Aplica o modelo. Se der mais que 0.5, coloca aresta. Se der menos, remove aresta.
-OK Repete passos 1 e 2 até convergência. Para definir convergência eu usaria algo simples, como se o número de arestas totais não varia muito.
-'''
-
 class GraphModel:
     def __init__(self, n, d, sigma):
         self.n = n # number of nodes
@@ -128,7 +112,7 @@ class GraphModel:
         spectra = self.calculate_spectrum(self.graph)
         return graphs, spectra
 
-    def populate_edges_optimal(self, warm_up, max_iterations, threshold, stability_window, real_graph):
+    def populate_edges_baseline(self, warm_up, max_iterations, threshold, stability_window, real_graph):
         i = 0
         stop_condition = False
         graphs = [self.graph.copy()]  # List to store the graphs
@@ -161,5 +145,44 @@ class GraphModel:
         spectra = self.calculate_spectrum(self.graph)
         return graphs, spectra, gic_values
 
+    def populate_edges_spectrum(self, warm_up, max_iterations, patience, real_graph):
+        i = 0
+        best_spectrum_diff = float('inf')
+        best_graph = self.graph.copy()  # Initialize with the starting graph
+        best_iteration = 0
+        no_improvement_count = 0
+        graphs = [self.graph.copy()]
+        spectrum_diffs = []
+
+        real_spectrum = self.calculate_spectrum(real_graph)
+
+        while (i < max_iterations and no_improvement_count < patience) or i < warm_up:
+            print(f'iteration: {i}')
+            
+            self.add_remove_edge()
+            current_spectrum = self.calculate_spectrum(self.graph)
+            spectrum_diff = np.linalg.norm(current_spectrum - real_spectrum)
+            spectrum_diffs.append(spectrum_diff)
+            print(f'\t Spectrum difference: {spectrum_diff}')
+            
+            graphs.append(self.graph.copy())
+
+            if spectrum_diff < best_spectrum_diff:
+                best_spectrum_diff = spectrum_diff
+                best_graph = self.graph.copy()
+                best_iteration = i
+                no_improvement_count = 0
+            else:
+                no_improvement_count += 1
+
+            i += 1
+
+        print(f'\t Best iteration: {best_iteration}')
+        print(f'\t Best spectrum difference: {best_spectrum_diff}')
+        
+        self.graph = best_graph
+        spectra = self.calculate_spectrum(self.graph)
+
+        return graphs, spectra, spectrum_diffs, best_iteration
 
 
