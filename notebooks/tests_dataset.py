@@ -33,13 +33,16 @@ import math
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
-
 np.random.seed(42)
 datasets = f'../data/connectomes/'
 connectomes = os.listdir(datasets)
+# Ensure the necessary directories exist
+os.makedirs('../images/imgs_connectomes/', exist_ok=True)
+os.makedirs('../images/imgs_spectra/', exist_ok=True)
+os.makedirs('../images/search_neighbors/', exist_ok=True)
 
-#########################
-#########################
+
+
 def get_logit_graph(real_graph, d, n_iteration, warm_up, patience, dist_type='KL'):
    # Ensure real_graph is a NumPy array
    if isinstance(real_graph, nx.Graph):
@@ -157,7 +160,6 @@ def plot_graphs_in_matrix(sim_graphs_dict, result_dict, global_title, save_path=
     plt.show()
     return fig
 
-
 def plot_spectra_in_matrix(sim_graphs_dict, result_dict, global_title, bins=120, save_path=None):
     num_graphs = len(sim_graphs_dict)
     cols = min(4, num_graphs)  # Limit to 4 columns max
@@ -211,140 +213,136 @@ def plot_spectra_in_matrix(sim_graphs_dict, result_dict, global_title, bins=120,
     return fig
 
 
-#########################
-#########################
 
-# Ensure the necessary directories exist
-os.makedirs('../images/imgs_connectomes/', exist_ok=True)
-os.makedirs('../images/imgs_spectra/', exist_ok=True)
-os.makedirs('../images/search_neighbors/', exist_ok=True)
 
-#########################
 
-for i in range(len(connectomes)):
-    print(f"Processing connectome {i+1}/{len(connectomes)}: {connectomes[i]}")
-    try:
-        real_graph = nx.read_graphml(datasets + connectomes[i])
-        real_graph = nx.to_numpy_array(real_graph)
 
-        print(f"Graph shape: {real_graph.shape}")
 
-        dist_types = ['KL']
-        results_dict = {}
+if __name__ == "__main__":
+    for i in range(len(connectomes)):
+        print(f"Processing connectome {i+1}/{len(connectomes)}: {connectomes[i]}")
+        try:
+            real_graph = nx.read_graphml(datasets + connectomes[i])
+            real_graph = nx.to_numpy_array(real_graph)
 
-        for d in range(4):
-            results_dict[d] = {}
+            print(f"Graph shape: {real_graph.shape}")
+
+            dist_types = ['KL']
+            results_dict = {}
+
+            for d in range(4):
+                results_dict[d] = {}
+                for dist_type in dist_types:
+                    logit_graph, sigma, gic_values, spectrum_diffs, best_iteration, all_graphs = get_logit_graph(
+                        real_graph=nx.from_numpy_array(real_graph),
+                        d=d,
+                        warm_up=1000,
+                        n_iteration=20000,
+                        patience=100,
+                        dist_type=dist_type
+                    )
+                    
+                    results_dict[d][dist_type] = {
+                        'logit_graph': logit_graph,
+                        'sigma': sigma,
+                        'gic_values': gic_values,
+                        'spectrum_diffs': spectrum_diffs,
+                        'best_iteration': best_iteration,
+                        'all_graphs': all_graphs,
+                    }
+
+            # Plot and save the spectrum evolution
+            fig, axes = plt.subplots(1, len(results_dict), figsize=(20, 5))
+            fig.suptitle(f'{connectomes[i]}: Spectrum distance generated vs real graph for different dimensions')
+
+            for d in range(len(results_dict)):
+                ax = axes[d] if len(results_dict) > 1 else axes
+                for dist_type in dist_types:
+                    spectrum_diffs = results_dict[d][dist_type]['spectrum_diffs']
+                    ax.plot(spectrum_diffs, label=dist_type)
+                ax.set_title(f'Neighbors: {d}')
+                ax.set_xlabel('Iteration')
+                ax.set_ylabel('Spectrum distance')
+                ax.legend()
+
+            plt.tight_layout()
+            plt.savefig(f'../images/search_neighbors/{connectomes[i]}.png', dpi=300, bbox_inches='tight')
+            plt.close()
+
             for dist_type in dist_types:
-                logit_graph, sigma, gic_values, spectrum_diffs, best_iteration, all_graphs = get_logit_graph(
-                    real_graph=nx.from_numpy_array(real_graph),
-                    d=d,
-                    warm_up=1000,
-                    n_iteration=20000,
-                    patience=100,
-                    dist_type=dist_type
-                )
-                
-                results_dict[d][dist_type] = {
-                    'logit_graph': logit_graph,
-                    'sigma': sigma,
-                    'gic_values': gic_values,
-                    'spectrum_diffs': spectrum_diffs,
-                    'best_iteration': best_iteration,
-                    'all_graphs': all_graphs,
-                }
+                print(f"\nDistance type: {dist_type}")
+                for d in results_dict:
+                    print(f"Best iteration for d = {d}: {results_dict[d][dist_type]['best_iteration']}")
 
-        # Plot and save the spectrum evolution
-        fig, axes = plt.subplots(1, len(results_dict), figsize=(20, 5))
-        fig.suptitle(f'{connectomes[i]}: Spectrum distance generated vs real graph for different dimensions')
+            best_d = {}
+            best_final_diff = {}
 
-        for d in range(len(results_dict)):
-            ax = axes[d] if len(results_dict) > 1 else axes
             for dist_type in dist_types:
-                spectrum_diffs = results_dict[d][dist_type]['spectrum_diffs']
-                ax.plot(spectrum_diffs, label=dist_type)
-            ax.set_title(f'Neighbors: {d}')
-            ax.set_xlabel('Iteration')
-            ax.set_ylabel('Spectrum distance')
-            ax.legend()
+                best_d[dist_type] = min(results_dict, key=lambda d: results_dict[d][dist_type]['spectrum_diffs'][-1])
+                best_final_diff[dist_type] = results_dict[best_d[dist_type]][dist_type]['spectrum_diffs'][-1]
+                print(f"For {dist_type}, the best dimension d is {best_d[dist_type]} with a final spectrum difference of {best_final_diff[dist_type]:.6f}")
 
-        plt.tight_layout()
-        plt.savefig(f'../images/search_neighbors/{connectomes[i]}.png', dpi=300, bbox_inches='tight')
-        plt.close()
+            dist_type = 'KL'
+            d = best_d[dist_type]
+            logit_graph = results_dict[d][dist_type]['logit_graph']
+            sigma = results_dict[d][dist_type]['sigma']
+            gic_values = results_dict[d][dist_type]['gic_values']
+            spectrum_diffs = results_dict[d][dist_type]['spectrum_diffs']
+            best_iteration = results_dict[d][dist_type]['best_iteration']
 
-        for dist_type in dist_types:
-            print(f"\nDistance type: {dist_type}")
-            for d in results_dict:
-                print(f"Best iteration for d = {d}: {results_dict[d][dist_type]['best_iteration']}")
+            n_runs_graphs = 10
+            all_graphs_lg = results_dict[d][dist_type]['all_graphs']
+            all_graphs_lg = all_graphs_lg[-n_runs_graphs-1:-1] 
+            all_graphs_lg = [nx.from_numpy_array(graph) for graph in all_graphs_lg]
 
-        best_d = {}
-        best_final_diff = {}
+            log_params = [sigma]*len(all_graphs_lg)
 
-        for dist_type in dist_types:
-            best_d[dist_type] = min(results_dict, key=lambda d: results_dict[d][dist_type]['spectrum_diffs'][-1])
-            best_final_diff[dist_type] = results_dict[best_d[dist_type]][dist_type]['spectrum_diffs'][-1]
-            print(f"For {dist_type}, the best dimension d is {best_d[dist_type]} with a final spectrum difference of {best_final_diff[dist_type]:.6f}")
+            selector = ms.GraphModelSelection(graph=nx.from_numpy_array(real_graph),
+                                            log_graphs=all_graphs_lg,
+                                            log_params=log_params,
+                                            models=["ER", "WS", "GRG", "BA", "LG"],
+                                            n_runs=n_runs_graphs,
+                                            parameters=[{'lo': 0.01, 'hi': 1},  # ER
+                                                        {'lo': 0.01, 'hi': 1},  # WS k=8
+                                                        {'lo': 1, 'hi': 3},     # GRG
+                                                        {'lo': 1, 'hi': 5},     # BA
+                                                    ]
+                                            )
 
-        dist_type = 'KL'
-        d = best_d[dist_type]
-        logit_graph = results_dict[d][dist_type]['logit_graph']
-        sigma = results_dict[d][dist_type]['sigma']
-        gic_values = results_dict[d][dist_type]['gic_values']
-        spectrum_diffs = results_dict[d][dist_type]['spectrum_diffs']
-        best_iteration = results_dict[d][dist_type]['best_iteration']
+            result = selector.select_model()
+            result_dict = {item['model']: {'param': clean_and_convert(item['param']), 'GIC': item['GIC']} for item in result['estimates']}
+            min_gic_key = min(result_dict, key=lambda k: result_dict[k]['GIC'])
+            model_names = result_dict.keys()
 
-        n_runs_graphs = 10
-        all_graphs_lg = results_dict[d][dist_type]['all_graphs']
-        all_graphs_lg = all_graphs_lg[-n_runs_graphs-1:-1] 
-        all_graphs_lg = [nx.from_numpy_array(graph) for graph in all_graphs_lg]
+            sim_graphs_dict = {}
+            for model in model_names:
+                if model != 'LG':
+                    func = selector.model_function(model_name=model)
+                    graph_sim = func(real_graph.shape[0], float(result_dict[model]['param']))
+                    sim_graphs_dict[model] = graph_sim
+                elif model == 'LG':
+                    sim_graphs_dict[model] = nx.from_numpy_array(logit_graph)
 
-        log_params = [sigma]*len(all_graphs_lg)
+            sim_graphs_dict['Real'] = nx.from_numpy_array(real_graph)
 
-        selector = ms.GraphModelSelection(graph=nx.from_numpy_array(real_graph),
-                                        log_graphs=all_graphs_lg,
-                                        log_params=log_params,
-                                        models=["ER", "WS", "GRG", "BA", "LG"],
-                                        n_runs=n_runs_graphs,
-                                        parameters=[{'lo': 0.01, 'hi': 1},  # ER
-                                                    {'lo': 0.01, 'hi': 1},  # WS k=8
-                                                    {'lo': 1, 'hi': 3},     # GRG
-                                                    {'lo': 1, 'hi': 5},     # BA
-                                                ]
-                                        )
+            # Plot and save graph visualizations
+            fig = plot_graphs_in_matrix(sim_graphs_dict,
+                                        result_dict,
+                                        global_title=f'./{connectomes[i]}, \n Best fit: {min_gic_key}',
+                                        save_path=f'../images/imgs_connectomes/{connectomes[i]}.png')
+            plt.close()
 
-        result = selector.select_model()
-        result_dict = {item['model']: {'param': clean_and_convert(item['param']), 'GIC': item['GIC']} for item in result['estimates']}
-        min_gic_key = min(result_dict, key=lambda k: result_dict[k]['GIC'])
-        model_names = result_dict.keys()
+            # Plot and save spectrum visualizations
+            fig = plot_spectra_in_matrix(sim_graphs_dict,
+                                        result_dict,
+                                        global_title=f'./{connectomes[i]} , \n best fit {min_gic_key}',
+                                        bins=50,
+                                        save_path=f'../images/imgs_spectra/spectra_{connectomes[i]}.png')
+            plt.close()
 
-        sim_graphs_dict = {}
-        for model in model_names:
-            if model != 'LG':
-                func = selector.model_function(model_name=model)
-                graph_sim = func(real_graph.shape[0], float(result_dict[model]['param']))
-                sim_graphs_dict[model] = graph_sim
-            elif model == 'LG':
-                sim_graphs_dict[model] = nx.from_numpy_array(logit_graph)
+            print(f"Completed processing for {connectomes[i]}")
+            print("--------------------")
+        except Exception as e:
+            print(f"Error processing {connectomes[i]}: {e}")
 
-        sim_graphs_dict['Real'] = nx.from_numpy_array(real_graph)
-
-        # Plot and save graph visualizations
-        fig = plot_graphs_in_matrix(sim_graphs_dict,
-                                    result_dict,
-                                    global_title=f'./{connectomes[i]}, \n Best fit: {min_gic_key}',
-                                    save_path=f'../images/imgs_connectomes/{connectomes[i]}.png')
-        plt.close()
-
-        # Plot and save spectrum visualizations
-        fig = plot_spectra_in_matrix(sim_graphs_dict,
-                                    result_dict,
-                                    global_title=f'./{connectomes[i]} , \n best fit {min_gic_key}',
-                                    bins=50,
-                                    save_path=f'../images/imgs_spectra/spectra_{connectomes[i]}.png')
-        plt.close()
-
-        print(f"Completed processing for {connectomes[i]}")
-        print("--------------------")
-    except Exception as e:
-        print(f"Error processing {connectomes[i]}: {e}")
-
-print("All connectomes processed.")
+    print("All connectomes processed.")
