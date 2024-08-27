@@ -146,8 +146,6 @@ class ModelSelectorSpectrum:
         return self.best_model, self.model_scores
 
 
-
-
 ##################################################
 ##################################################
 
