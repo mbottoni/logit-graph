@@ -232,9 +232,7 @@ if __name__ == "__main__":
     sampled_indices = random.sample(range(len(connectomes)), len(connectomes))
     print(sampled_indices)
 
-    #for i in sampled_indices:
-    for i in range(1):
-        i = 1 
+    for i in sampled_indices:
         print(f"Processing connectome {i+1}/{len(connectomes)}: {connectomes[i]}")
 
         try:
