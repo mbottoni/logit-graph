@@ -16,6 +16,9 @@ import src.model_selection as ms
 
 # usual imports import matplotlib.pyplot as plt
 import math
+import matplotlib.pyplot as plt
+from scipy import stats
+from scipy.stats import gaussian_kde
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -24,6 +27,7 @@ import random
 import networkx as nx
 
 from IPython.display import display
+
 from pyvis.network import Network
 
 import pickle
@@ -75,6 +79,12 @@ def get_logit_graph(real_graph, d, n_iteration, warm_up, patience, dist_type='KL
        patience=patience,  # You may want to adjust this value
        real_graph=real_graph
    )
+
+   # Add early stopping condition
+   if len(spectrum_diffs) > 10000 and all(abs(spectrum_diffs[-1] - sd) < 1e-6 for sd in spectrum_diffs[-10000:]):
+       print("Early stopping: No significant improvement in the last 1000 iterations.")
+       best_iteration = len(spectrum_diffs) - 10000
+
    # Use the best graph found
    best_graph = graphs[best_iteration]
    # Calculate GIC for the best graph
@@ -219,8 +229,14 @@ def plot_spectra_in_matrix(sim_graphs_dict, result_dict, global_title, bins=120,
 
 
 if __name__ == "__main__":
-    for i in range(len(connectomes)):
+    sampled_indices = random.sample(range(len(connectomes)), len(connectomes))
+    print(sampled_indices)
+
+    #for i in sampled_indices:
+    for i in range(1):
+        i = 1 
         print(f"Processing connectome {i+1}/{len(connectomes)}: {connectomes[i]}")
+
         try:
             real_graph = nx.read_graphml(datasets + connectomes[i])
             real_graph = nx.to_numpy_array(real_graph)
@@ -233,23 +249,27 @@ if __name__ == "__main__":
             for d in range(4):
                 results_dict[d] = {}
                 for dist_type in dist_types:
-                    logit_graph, sigma, gic_values, spectrum_diffs, best_iteration, all_graphs = get_logit_graph(
-                        real_graph=nx.from_numpy_array(real_graph),
-                        d=d,
-                        warm_up=1000,
-                        n_iteration=20000,
-                        patience=100,
-                        dist_type=dist_type
-                    )
-                    
-                    results_dict[d][dist_type] = {
-                        'logit_graph': logit_graph,
-                        'sigma': sigma,
-                        'gic_values': gic_values,
-                        'spectrum_diffs': spectrum_diffs,
-                        'best_iteration': best_iteration,
-                        'all_graphs': all_graphs,
-                    }
+                    try:
+                        logit_graph, sigma, gic_values, spectrum_diffs, best_iteration, all_graphs = get_logit_graph(
+                            real_graph=nx.from_numpy_array(real_graph),
+                            d=d,
+                            warm_up=1000,
+                            n_iteration=20000,
+                            patience=100,
+                            dist_type=dist_type
+                        )
+                        
+                        results_dict[d][dist_type] = {
+                            'logit_graph': logit_graph,
+                            'sigma': sigma,
+                            'gic_values': gic_values,
+                            'spectrum_diffs': spectrum_diffs,
+                            'best_iteration': best_iteration,
+                            'all_graphs': all_graphs,
+                        }
+                    except Exception as e:
+                        print(f"Error processing d={d}, dist_type={dist_type}: {e}")
+                        results_dict[d][dist_type] = None
 
             # Plot and save the spectrum evolution
             fig, axes = plt.subplots(1, len(results_dict), figsize=(20, 5))
@@ -258,8 +278,9 @@ if __name__ == "__main__":
             for d in range(len(results_dict)):
                 ax = axes[d] if len(results_dict) > 1 else axes
                 for dist_type in dist_types:
-                    spectrum_diffs = results_dict[d][dist_type]['spectrum_diffs']
-                    ax.plot(spectrum_diffs, label=dist_type)
+                    if results_dict[d][dist_type] is not None:
+                        spectrum_diffs = results_dict[d][dist_type]['spectrum_diffs']
+                        ax.plot(spectrum_diffs, label=dist_type)
                 ax.set_title(f'Neighbors: {d}')
                 ax.set_xlabel('Iteration')
                 ax.set_ylabel('Spectrum distance')
@@ -272,15 +293,18 @@ if __name__ == "__main__":
             for dist_type in dist_types:
                 print(f"\nDistance type: {dist_type}")
                 for d in results_dict:
-                    print(f"Best iteration for d = {d}: {results_dict[d][dist_type]['best_iteration']}")
+                    if results_dict[d][dist_type] is not None:
+                        print(f"Best iteration for d = {d}: {results_dict[d][dist_type]['best_iteration']}")
 
             best_d = {}
             best_final_diff = {}
 
             for dist_type in dist_types:
-                best_d[dist_type] = min(results_dict, key=lambda d: results_dict[d][dist_type]['spectrum_diffs'][-1])
-                best_final_diff[dist_type] = results_dict[best_d[dist_type]][dist_type]['spectrum_diffs'][-1]
-                print(f"For {dist_type}, the best dimension d is {best_d[dist_type]} with a final spectrum difference of {best_final_diff[dist_type]:.6f}")
+                valid_results = {d: results_dict[d][dist_type] for d in results_dict if results_dict[d][dist_type] is not None}
+                if valid_results:
+                    best_d[dist_type] = min(valid_results, key=lambda d: valid_results[d]['spectrum_diffs'][-1])
+                    best_final_diff[dist_type] = valid_results[best_d[dist_type]]['spectrum_diffs'][-1]
+                    print(f"For {dist_type}, the best dimension d is {best_d[dist_type]} with a final spectrum difference of {best_final_diff[dist_type]:.6f}")
 
             dist_type = 'KL'
             d = best_d[dist_type]
@@ -309,11 +333,15 @@ if __name__ == "__main__":
                                                     ]
                                             )
 
-            result = selector.select_model()
-            result_dict = {item['model']: {'param': clean_and_convert(item['param']), 'GIC': item['GIC']} for item in result['estimates']}
-            min_gic_key = min(result_dict, key=lambda k: result_dict[k]['GIC'])
+            result = selector.select_model_avg_spectrum()
+
+            # For the average spectrum
+            result_dict = {item['model']: {'param': clean_and_convert(item['param']), 'distance': item['distance'], 'GIC': item['distance']} for item in result['estimates']}
+            min_distance_key = min(result_dict, key=lambda k: result_dict[k]['distance']) # Get best fit
+            min_gic_key = min(result_dict, key=lambda k: result_dict[k]['GIC']) # Get best fit based on GIC
             model_names = result_dict.keys()
 
+            # Plotting the analysis
             sim_graphs_dict = {}
             for model in model_names:
                 if model != 'LG':
@@ -342,7 +370,11 @@ if __name__ == "__main__":
 
             print(f"Completed processing for {connectomes[i]}")
             print("--------------------")
+
         except Exception as e:
             print(f"Error processing {connectomes[i]}: {e}")
+        
+        # Add a garbage collection call to free up memory
+        gc.collect()
 
     print("All connectomes processed.")
