@@ -183,6 +183,92 @@ class GraphModelSelection:
         else:
             raise ValueError(f"Unknown model: {model_name}")
 
+    def calculate_average_spectrum(self, model, params):
+        spectrum_values = []
+        if model == "LG":
+            # For LG model, we already have n_runs graphs
+            for log_graph in self.log_graphs:
+                gic_calculator = gic.GraphInformationCriterion(
+                    graph=self.graph,
+                    model=model,
+                    log_graph=log_graph
+                )
+                spectrum, _ = gic_calculator.compute_spectral_density(log_graph)
+                spectrum_values.append(spectrum)
+        else:
+            model_func = self.model_function(model)
+            for _ in range(self.n_runs):
+                # Convert params to appropriate type based on the model
+                if model in ["BA", "WS"]:
+                    model_params = int(params)
+                elif model in ["ER", "GRG"]:
+                    model_params = float(params)
+                else:
+                    model_params = params
+
+                generated_graph = model_func(self.graph.number_of_nodes(), model_params)
+                gic_calculator = gic.GraphInformationCriterion(
+                    graph=self.graph,
+                    model=model,
+                    log_graph=generated_graph,
+                    p=params
+                )
+                spectrum, _ = gic_calculator.compute_spectral_density(generated_graph)
+                spectrum_values.append(spectrum)
+        
+        # Calculate the mean of the spectral densities
+        mean_spectrum = np.mean(spectrum_values, axis=0)
+        return mean_spectrum
+
+    def select_model_avg_spectrum(self):
+        results = []
+        for idx, model in enumerate(self.models):
+            print(f'Testing the selected model for {model}')
+            if model == "LG":
+                avg_spectrum = self.calculate_average_spectrum(model, None)
+                params = self.log_params
+                result = {'param': params, 'spectrum': avg_spectrum}
+                print('LG result:', result)
+            else:
+                if callable(model):
+                    model_func = model
+                else:
+                    model_func = self.model_function(model)
+                
+                param_range = self.parameters[idx]
+                best_param = None
+                best_spectrum = None
+                best_distance = float('inf')
+                
+                for param in np.linspace(param_range['lo'], param_range['hi'], num=10):
+                    avg_spectrum = self.calculate_average_spectrum(model, param)
+                    real_spectrum, _ = gic.GraphInformationCriterion(self.graph, model).compute_spectral_density(self.graph)
+                    distance = np.linalg.norm(real_spectrum - avg_spectrum)
+                    
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_param = param
+                        best_spectrum = avg_spectrum
+                
+                result = {'param': best_param, 'spectrum': best_spectrum}
+                print(f'{model} result:', result)
+            
+            results.append((model, result['param'], best_distance))
+
+        # Sort results based on spectral distance
+        results.sort(key=lambda x: x[2])
+
+        # Prepare the output
+        best_model = results[0][0]
+        estimates = np.array([(m, str(p), d) for m, p, d in results], dtype=[('model', 'U10'), ('param', 'U20'), ('distance', 'float')])
+
+        return {
+            "method": "Graph Model Selection",
+            "info": "Selects the graph model that best approximates the observed graph based on average spectral distance over multiple runs.",
+            "model": best_model,
+            "estimates": estimates
+        }
+
     def calculate_average_gic(self, model, params):
         gic_values = []
         for _ in range(self.n_runs):
@@ -218,7 +304,7 @@ class GraphModelSelection:
         
         return np.mean(gic_values)
 
-    def select_model(self):
+    def select_model_avg_gic(self):
         results = []
         for idx, model in enumerate(self.models):
             print(f'Testing the selected model for {model}')
