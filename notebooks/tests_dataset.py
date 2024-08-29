@@ -16,6 +16,9 @@ import src.model_selection as ms
 
 # usual imports import matplotlib.pyplot as plt
 import math
+import matplotlib.pyplot as plt
+from scipy import stats
+from scipy.stats import gaussian_kde
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -228,8 +231,12 @@ def plot_spectra_in_matrix(sim_graphs_dict, result_dict, global_title, bins=120,
 if __name__ == "__main__":
     sampled_indices = random.sample(range(len(connectomes)), len(connectomes))
     print(sampled_indices)
-    for i in sampled_indices:
+
+    #for i in sampled_indices:
+    for i in range(1):
+        i = 1 
         print(f"Processing connectome {i+1}/{len(connectomes)}: {connectomes[i]}")
+
         try:
             real_graph = nx.read_graphml(datasets + connectomes[i])
             real_graph = nx.to_numpy_array(real_graph)
@@ -326,11 +333,15 @@ if __name__ == "__main__":
                                                     ]
                                             )
 
-            result = selector.select_model()
-            result_dict = {item['model']: {'param': clean_and_convert(item['param']), 'GIC': item['GIC']} for item in result['estimates']}
-            min_gic_key = min(result_dict, key=lambda k: result_dict[k]['GIC'])
+            result = selector.select_model_avg_spectrum()
+
+            # For the average spectrum
+            result_dict = {item['model']: {'param': clean_and_convert(item['param']), 'distance': item['distance'], 'GIC': item['distance']} for item in result['estimates']}
+            min_distance_key = min(result_dict, key=lambda k: result_dict[k]['distance']) # Get best fit
+            min_gic_key = min(result_dict, key=lambda k: result_dict[k]['GIC']) # Get best fit based on GIC
             model_names = result_dict.keys()
 
+            # Plotting the analysis
             sim_graphs_dict = {}
             for model in model_names:
                 if model != 'LG':
@@ -359,6 +370,7 @@ if __name__ == "__main__":
 
             print(f"Completed processing for {connectomes[i]}")
             print("--------------------")
+
         except Exception as e:
             print(f"Error processing {connectomes[i]}: {e}")
         
