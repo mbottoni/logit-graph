@@ -223,11 +223,6 @@ def plot_spectra_in_matrix(sim_graphs_dict, result_dict, global_title, bins=120,
     return fig
 
 
-
-
-
-
-
 if __name__ == "__main__":
     sampled_indices = random.sample(range(len(connectomes)), len(connectomes))
     print(sampled_indices)
