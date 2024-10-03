@@ -224,15 +224,8 @@ def plot_spectra_in_matrix(sim_graphs_dict, result_dict, global_title, bins=120,
 
 
 if __name__ == "__main__":
-    sampled_indices = random.sample(range(len(connectomes)), len(connectomes))
-    print(sampled_indices)
-
-    #for i in sampled_indices:
-    for i in range(1):
+    for i in range(len(connectomes)):
         print(f"Processing connectome {i+1}/{len(connectomes)}: {connectomes[i]}")
-        # Not ok: 2
-        i=4
-
         try:
             real_graph = nx.read_graphml(datasets + connectomes[i])
             real_graph = nx.to_numpy_array(real_graph)
@@ -349,17 +342,19 @@ if __name__ == "__main__":
 
             sim_graphs_dict['Real'] = nx.from_numpy_array(real_graph)
 
-            # Plot and save graph visualizations
+            clean_title = os.path.splitext(connectomes[i])[0].replace('_', ' ')
+            clean_title = clean_title.replace('.', ' ')
+            clean_title = ' '.join(word.capitalize() for word in clean_title.split())
             fig = plot_graphs_in_matrix(sim_graphs_dict,
                                         result_dict,
-                                        global_title=f'./{connectomes[i]}, \n Best fit: {min_gic_key}',
+                                        global_title=f'{clean_title}, \n Best fit: {min_gic_key}',
                                         save_path=f'../images/imgs_connectomes/{connectomes[i]}.png')
             plt.close()
 
             # Plot and save spectrum visualizations
             fig = plot_spectra_in_matrix(sim_graphs_dict,
                                         result_dict,
-                                        global_title=f'./{connectomes[i]} , \n best fit {min_gic_key}',
+                                        global_title=f'{clean_title} , \n Best fit {min_gic_key}',
                                         bins=50,
                                         save_path=f'../images/imgs_spectra/spectra_{connectomes[i]}.png')
             plt.close()
