@@ -227,8 +227,11 @@ if __name__ == "__main__":
     sampled_indices = random.sample(range(len(connectomes)), len(connectomes))
     print(sampled_indices)
 
-    for i in sampled_indices:
+    #for i in sampled_indices:
+    for i in range(1):
         print(f"Processing connectome {i+1}/{len(connectomes)}: {connectomes[i]}")
+        # Not ok: 2
+        i=4
 
         try:
             real_graph = nx.read_graphml(datasets + connectomes[i])
