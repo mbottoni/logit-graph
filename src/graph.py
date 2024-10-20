@@ -76,7 +76,7 @@ class GraphModel:
         print('\n'*3)
         return is_converged
 
-    def check_convergence(self, graphs, threshold_edges, stability_window):
+    def check_convergence_number_of_edges(self, graphs, threshold_edges, stability_window):
         # Check only the last stability_window graphs
         graphs_to_check = graphs[-stability_window:]
         
@@ -89,11 +89,24 @@ class GraphModel:
             prev_total_edges = total_edges
         return True
 
-    def populate_edges_baseline(self, warm_up, max_iterations, threshold, patience):
+    def check_convergence_spectrum(self, graphs, threshold_spectrum, stability_window):
+        # Check only the last stability_window graphs
+        graphs_to_check = graphs[-stability_window:]
+        
+        prev_spectrum = None
+        for graph in graphs_to_check:
+            current_spectrum = self.calculate_spectrum(graph)
+            if prev_spectrum is not None:
+                spectrum_diff = np.linalg.norm(current_spectrum - prev_spectrum)
+                if spectrum_diff > threshold_spectrum:
+                    return False
+            prev_spectrum = current_spectrum
+        return True
+
+    def populate_edges_baseline(self, warm_up, max_iterations, patience):
         i = 0
         stop_condition = False
         graphs = [self.graph.copy()]  # List to store the graphs
-        #gic_values = []
 
         while i < max_iterations and (i < warm_up or not stop_condition):
             print(f'iteration: {i}')
@@ -104,8 +117,9 @@ class GraphModel:
                 graphs.pop(0)
 
             if i > warm_up:
-                #stop_condition = self.check_convergence(graphs, stability_window=stability_window, degree_dist_threshold=degree_dist_threshold)
-                stop_condition = self.check_convergence(graphs, threshold_edges=threshold, stability_window=patience)
+                stop_condition_n_edges = self.check_convergence_number_of_edges(graphs, threshold_edges=10, stability_window=patience)
+                stop_condition_spectrum = self.check_convergence_spectrum(graphs, threshold_spectrum=100, stability_window=patience)
+                stop_condition = stop_condition_n_edges and stop_condition_spectrum
 
             i += 1
 
