@@ -39,13 +39,12 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 np.random.seed(42)
 datasets = f'../data/connectomes/'
-already_done = os.listdir('../images/imgs_connectomes/') 
-# Remove the .png from the name
-excluded = ['c.elegans.herm_pharynx_1.graphml']
-already_done = [os.path.splitext(file)[0] for file in already_done] + excluded
+#already_done = os.listdir('../images/imgs_connectomes/') 
+#excluded = ['c.elegans.herm_pharynx_1.graphml']
+#already_done = [os.path.splitext(file)[0] for file in already_done] + excluded
 
 connectomes = sorted(os.listdir(datasets)) 
-connectomes = [connectome for connectome in connectomes if connectome not in already_done]
+#connectomes = [connectome for connectome in connectomes if connectome not in already_done]
 print(connectomes)
 
 # Ensure the necessary directories exist
@@ -153,7 +152,7 @@ def plot_graphs_in_matrix(sim_graphs_dict, result_dict, global_title, save_path=
 
         # Set plot details
         if name != 'Real':
-            ax.set_title(f'{name} Graph\nGIC: {result_dict[name]["GIC"]:.2f}', fontsize=10)
+            ax.set_title(f'{name} Graph\nGIC: {result_dict[name]["GIC"]:.4f}', fontsize=10)
         else:
             ax.set_title(f'{name} Graph', fontsize=10)
         ax.axis('off')
@@ -204,7 +203,7 @@ def plot_spectra_in_matrix(sim_graphs_dict, result_dict, global_title, bins=120,
 
         # Set plot details
         if name != 'Real':
-            ax.set_title(f'{name} Graph Spectrum\nGIC: {result_dict[name]["GIC"]:.2f}', fontsize=15)
+            ax.set_title(f'{name} Graph Spectrum\nGIC: {result_dict[name]["GIC"]:.4f}', fontsize=15)
         else:
             ax.set_title(f'{name} Graph Spectrum', fontsize=15)
         ax.set_xlabel('Eigenvalue', fontsize=8)
@@ -232,7 +231,9 @@ def plot_spectra_in_matrix(sim_graphs_dict, result_dict, global_title, bins=120,
 
 
 if __name__ == "__main__":
-    for i in range(len(connectomes)):
+    #for i in range(len(connectomes)):
+    for i in range(1):  
+        i = 5
         # Problem on connectome 10
         print(f"Processing connectome {i+1}/{len(connectomes)}: {connectomes[i]}")
         real_graph = nx.read_graphml(datasets + connectomes[i])
@@ -243,16 +244,16 @@ if __name__ == "__main__":
         dist_types = ['KL']
         results_dict = {}
 
-        for d in range(4):
+        for d in range(3):
             results_dict[d] = {}
             for dist_type in dist_types:
                 try:
                     logit_graph, sigma, gic_values, spectrum_diffs, best_iteration, all_graphs = get_logit_graph(
                         real_graph=nx.from_numpy_array(real_graph),
                         d=d,
-                        warm_up=1000,
+                        warm_up=5000,
                         n_iteration=5000,
-                        patience=100,
+                        patience=10,
                         dist_type=dist_type
                     )
                     
@@ -311,7 +312,7 @@ if __name__ == "__main__":
         spectrum_diffs = results_dict[d][dist_type]['spectrum_diffs']
         best_iteration = results_dict[d][dist_type]['best_iteration']
 
-        n_runs_graphs = 10
+        n_runs_graphs = 5
         all_graphs_lg = results_dict[d][dist_type]['all_graphs']
         all_graphs_lg = all_graphs_lg[-n_runs_graphs-1:-1] 
         all_graphs_lg = [nx.from_numpy_array(graph) for graph in all_graphs_lg]
@@ -333,7 +334,7 @@ if __name__ == "__main__":
         result = selector.select_model_avg_spectrum()
 
         # For the average spectrum
-        result_dict = {item['model']: {'param': clean_and_convert(item['param']), 'distance': item['distance'], 'GIC': item['distance']} for item in result['estimates']}
+        result_dict = {item['model']: {'param': clean_and_convert(item['param']), 'distance': item['distance'], 'GIC': item['GIC']} for item in result['estimates']}
         min_distance_key = min(result_dict, key=lambda k: result_dict[k]['distance']) # Get best fit
         min_gic_key = min(result_dict, key=lambda k: result_dict[k]['GIC']) # Get best fit based on GIC
         model_names = result_dict.keys()
@@ -357,6 +358,7 @@ if __name__ == "__main__":
                                     result_dict,
                                     global_title=f'{clean_title}, \n Best fit: {min_gic_key}',
                                     save_path=f'../images/imgs_connectomes/{connectomes[i]}.png')
+        plt.show()
         plt.close()
 
         # Plot and save spectrum visualizations
@@ -365,6 +367,7 @@ if __name__ == "__main__":
                                     global_title=f'{clean_title} , \n Best fit {min_gic_key}',
                                     bins=50,
                                     save_path=f'../images/imgs_spectra/spectra_{connectomes[i]}.png')
+        plt.show()
         plt.close()
 
         print(f"Completed processing for {connectomes[i]}")

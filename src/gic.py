@@ -44,13 +44,15 @@ class GraphInformationCriterion:
         else:
             raise ValueError(f"{self.model}: Model definition is not recognized.")
 
-    def calculate_gic(self):
+    def calculate_gic(self, model_den=None):
         graph_den, _ = self.compute_spectral_density(self.graph)
-
-        model_graph = self.generate_model_graph()
-        if self.model == "LG":
-            print('gic module : ', type(model_graph), model_graph)
-        model_den, _ = self.compute_spectral_density(model_graph)
+        if model_den is None:
+            model_graph = self.generate_model_graph()
+            if self.model == "LG":
+                print('gic module : ', type(model_graph), model_graph)
+            model_den, _ = self.compute_spectral_density(model_graph)
+        else:
+            model_den = model_den # for getting the avg spectrum
 
         if self.dist_type == 'KL':
             distance = entropy(graph_den + 1e-10, model_den + 1e-10)  # KL divergence
