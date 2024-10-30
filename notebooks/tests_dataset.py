@@ -19,6 +19,7 @@ import math
 import matplotlib.pyplot as plt
 from scipy import stats
 from scipy.stats import gaussian_kde
+from numpy import errstate
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -233,9 +234,10 @@ def plot_spectra_in_matrix(sim_graphs_dict, result_dict, global_title, bins=120,
 if __name__ == "__main__":
     #for i in range(len(connectomes)):
     for i in range(1):  
-        # Not done: 2,3,6
-        i = 8
+        # Not done: 2,3,6,11,12,14
         # Problem on connectome 10
+        # 18 total
+        i = 18
         print(f"Processing connectome {i+1}/{len(connectomes)}: {connectomes[i]}")
         real_graph = nx.read_graphml(datasets + connectomes[i])
         real_graph = nx.to_numpy_array(real_graph)
@@ -252,8 +254,8 @@ if __name__ == "__main__":
                     logit_graph, sigma, gic_values, spectrum_diffs, best_iteration, all_graphs = get_logit_graph(
                         real_graph=nx.from_numpy_array(real_graph),
                         d=d,
-                        warm_up=50000,
-                        n_iteration=50000,
+                        warm_up=10000,
+                        n_iteration=10000,
                         patience=10,
                         dist_type=dist_type
                     )
