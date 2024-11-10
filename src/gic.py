@@ -2,6 +2,7 @@ import networkx as nx
 import numpy as np
 from scipy.stats import entropy
 from scipy.spatial.distance import euclidean, cityblock
+from numpy import errstate
 
 class GraphInformationCriterion:
     def __init__(self, graph, model, log_graph=None, p=None, dist='KL', **kwargs):
