@@ -30,6 +30,9 @@ deprecated/
 .pickle
 *.pickle
 
+*.parquet
+*.png
+
 .pkl
 *.pkl
 
