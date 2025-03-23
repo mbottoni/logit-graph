@@ -12,10 +12,12 @@
 
 ## p.pacificus_neural.synaptic_2.graphml
 - iter = 1150
+- d=0
 
 
 ## rhesus_brain_2.graphml
-- iter = 
+- iter = 5000
+- d=0
 
 
 
