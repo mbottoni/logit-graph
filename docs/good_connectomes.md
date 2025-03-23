@@ -11,7 +11,7 @@
 
 
 ## p.pacificus_neural.synaptic_2.graphml
-- iter = 1150
+- iter = 5000
 - d=0
 
 
