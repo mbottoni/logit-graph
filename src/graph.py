@@ -7,10 +7,12 @@ from src.degrees_counts import degree_vertex, get_sum_degrees
 import src.gic as gic
 
 class GraphModel:
-    def __init__(self, n, d, sigma):
+    def __init__(self, n, d, sigma, alpha=1, beta=1):
         self.n = n # number of nodes
         self.d = d # number of neighbors to consider 
-        self.sigma = sigma
+        self.sigma = sigma # Offset weights
+        self.alpha = alpha # weights on i node
+        self.beta = beta   # weights on j node
         self.graph = self.generate_empty_graph(n)
 
     def generate_empty_graph(self, n):
