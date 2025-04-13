@@ -18,6 +18,7 @@ data/*
 *.Rhistory
 */.Rhistory
 .Rproj.user
+*.csv
 
 # c
 *.pyc

@@ -112,8 +112,11 @@ class MLEGraphModelEstimator:
             print(f"Optimization completed. Estimated parameters: alpha={alpha.item()}, beta={beta.item()}, sigma={sigma.item()}")
             return alpha.item(), beta.item(), sigma.item()
 
+
+
+# Main estimator for the LG graph
 class LogitRegEstimator:
-    def __init__(self, graph, d):
+    def __init__(self, graph, d, verbose=False):
         self.graph = graph  # The observed adjacency matrix
         if isinstance(graph, np.ndarray):
             self.n = graph.shape[0]  # Number of nodes in the graph
@@ -122,8 +125,12 @@ class LogitRegEstimator:
         else:
             raise ValueError("Unsupported graph type. Please provide a NumPy array or NetworkX graph.")
         self.d = d # number of degrees to search
+        self.verbose = verbose
 
     def get_features_labels(self):
+        if self.verbose:
+            print("Extracting features and labels...")
+            
         G = nx.Graph(self.graph)
 
         edges = list(set(G.edges()))
@@ -132,6 +139,10 @@ class LogitRegEstimator:
         # Combine edges and non-edges to form the dataset
         data = edges + non_edges
         labels = [1] * len(edges) + [0] * len(non_edges)
+
+        if self.verbose:
+            print(f"Found {len(edges)} edges and {len(non_edges)} non-edges")
+            print("Computing sum of degrees for each vertex...")
 
         # Pre compute
         sum_degrees = np.zeros(self.n)
@@ -144,6 +155,11 @@ class LogitRegEstimator:
 
         # Add a constant term for the intercept
         features = sm.add_constant(features)
+        
+        if self.verbose:
+            print("Feature extraction complete")
+            print(f"Feature matrix shape: {features.shape}")
+            
         return features, labels
 
     def estimate_parameters(self, features, labels, l1_wt=1.0, alpha=0.1):
@@ -154,6 +170,9 @@ class LogitRegEstimator:
         l1_wt (float): The L1 weight (0 for pure L2, 1 for pure L1).
         alpha (float): Regularization strength. Larger values specify stronger regularization.
         """
+        if self.verbose:
+            print("\nStarting parameter estimation...")
+            print(f"Regularization parameters: l1_weight={l1_wt}, alpha={alpha}")
 
         # Logistic Regression Model using statsmodels with regularization
         model = sm.Logit(labels, features)
@@ -163,16 +182,29 @@ class LogitRegEstimator:
         # Fit the model with regularization
         if l1_wt in [0, 1]:
             # Pure L1 or L2 regularization
-            result = model.fit_regularized(method='l1' if l1_wt == 1 else None, alpha=alpha, disp=0)
+            if self.verbose:
+                print(f"Using pure {'L1' if l1_wt == 1 else 'L2'} regularization")
+            result = model.fit_regularized(method='l1' if l1_wt == 1 else None, alpha=alpha, disp=self.verbose)
         else:
             # Elastic Net (combination of L1 and L2)
-            result = model.fit_regularized(L1_wt=l1_wt, alpha=alpha, disp=0)
+            if self.verbose:
+                print(f"Using Elastic Net regularization")
+            result = model.fit_regularized(L1_wt=l1_wt, alpha=alpha, disp=self.verbose)
 
         # Print summary
-        print(result.summary2())
+        if self.verbose:
+            print("\nModel fitting complete. Summary:")
+            print(result.summary2())
+        else:
+            pass
 
         # Extract parameters and p-values
         params = result.params
         p_values = result.pvalues  # Note: p-values can be unreliable in regularized regressions
+
+        if self.verbose:
+            print("\nEstimated parameters:")
+            for param, value in params.items():
+                print(f"{param}: {value:.4f}")
 
         return result, params, p_values

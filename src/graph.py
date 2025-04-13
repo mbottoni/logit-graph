@@ -48,7 +48,7 @@ class GraphModel:
 
         i, j = np.random.choice(self.n, 2, replace=False)
         #total_degree = (sum_degrees[i] + sum_degrees[j]) + self.sigma
-        total_degree = ( get_sum_degrees(self.graph, vertex=i, d=self.d) + get_sum_degrees(self.graph, vertex=j, d=self.d) ) + self.sigma
+        total_degree = self.alpha * ( get_sum_degrees(self.graph, vertex=i, d=self.d) + self.beta * get_sum_degrees(self.graph, vertex=j, d=self.d) ) + self.sigma
         self.graph[j, i] = self.graph[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
 
     def check_convergence_hist(self, graphs, stability_window=5, degree_dist_threshold=0.05):
@@ -128,33 +128,51 @@ class GraphModel:
         spectra = self.calculate_spectrum(self.graph)
         return graphs, spectra
 
-    def populate_edges_spectrum(self, warm_up, max_iterations, patience, real_graph):
+    
+    def populate_edges_spectrum(self, warm_up, max_iterations, patience, real_graph, edge_delta=None, verbose=True):
         i = 0
-        best_spectrum_diff = float('inf')
-        best_graph = self.graph.copy()  # Initialize with the starting graph
         best_iteration = 0
-        no_improvement_count = 0
-        graphs = [self.graph.copy()]
+
+        # Spectrum variables
         spectrum_diffs = []
-
         real_spectrum = self.calculate_spectrum(real_graph)
+        real_edges = np.sum(real_graph)
+        no_improvement_count = 0
+        best_spectrum_diff = float('inf')
 
-        # Continue the iteration: until the patience is reached or the max_iterations is reached or if the graph
-        # does not have a simlar number of edges as the real graph
-        while (no_improvement_count < patience) or (i < warm_up) or (np.sum(self.graph) <= np.sum(real_graph) // 2):
-            if i % 1000 == 0:
+        # Graph variables
+        graphs = [self.graph.copy()]
+        current_edges = np.sum(self.graph)
+        best_graph = self.graph.copy()  # Initialize with the starting graph
+
+        while ((no_improvement_count < patience) or 
+               (i < warm_up)):
+
+            current_edges = np.sum(self.graph)
+
+            if verbose and i % 1000 == 0:
                 print(f'iteration: {i}')
 
             if i > max_iterations:
-                print('Max iterations reached')
+                print('Max iterations reached. Convergence reached')
                 break
-            
+
+            # Check edge criteria only if edge_delta is provided
+            if edge_delta is not None:
+                if current_edges < real_edges - edge_delta:
+                    continue
+                if current_edges > real_edges + edge_delta:
+                    print('Too many edges. Convergence reached')
+                    break
+
+            # Main add remove step
             self.add_remove_edge()
+
             current_spectrum = self.calculate_spectrum(self.graph)
             spectrum_diff = np.linalg.norm(current_spectrum - real_spectrum)
             spectrum_diffs.append(spectrum_diff)
 
-            if i % 1000 == 0:
+            if verbose and i % 1000 == 0:
                 print(f'\t Spectrum difference: {spectrum_diff}')
             
             graphs.append(self.graph.copy())
@@ -171,10 +189,10 @@ class GraphModel:
 
         print(f'\t Best iteration: {best_iteration}')
         print(f'\t Best spectrum difference: {best_spectrum_diff}')
-        
+        print(f'\t Number of edges: {np.sum(self.graph)}, Number of edges real graph: {real_edges}')
+
         self.graph = best_graph
         spectra = self.calculate_spectrum(self.graph)
 
         return graphs, spectra, spectrum_diffs, best_iteration
-
 
