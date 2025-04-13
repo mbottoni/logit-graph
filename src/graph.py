@@ -160,7 +160,7 @@ class GraphModel:
             # Check edge criteria only if edge_delta is provided
             if edge_delta is not None:
                 if current_edges < real_edges - edge_delta:
-                    continue
+                    pass
                 if current_edges > real_edges + edge_delta:
                     print('Too many edges. Convergence reached')
                     break
