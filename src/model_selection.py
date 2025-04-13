@@ -149,7 +149,7 @@ class ModelSelectorSpectrum:
 ##################################################
 ##################################################
 
-# Class implementing the stat graph model selector
+# Class implementing the MAIN stat graph model selector
 class GraphModelSelection:
     def __init__(self, graph, log_graphs, log_params, models=None, parameters=None, n_runs=10, **kwargs):
         self.graph = graph
