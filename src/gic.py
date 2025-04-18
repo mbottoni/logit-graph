@@ -50,7 +50,8 @@ class GraphInformationCriterion:
         if model_den is None:
             model_graph = self.generate_model_graph()
             if self.model == "LG":
-                print('gic module : ', type(model_graph), model_graph)
+                #print('gic module : ', type(model_graph), model_graph)
+                pass
             model_den, _ = self.compute_spectral_density(model_graph)
         else:
             model_den = model_den # for getting the avg spectrum
