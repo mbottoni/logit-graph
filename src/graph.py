@@ -197,3 +197,113 @@ class GraphModel:
 
         return graphs, spectra, spectrum_diffs, best_iteration
 
+
+    def populate_edges_spectrum_min_gic(self, min_gic_threshold, max_iterations, patience, real_graph, edge_delta=None, verbose=True):
+        """
+        Populates edges by iteratively adding/removing edges until the GIC 
+        between the generated graph and the real_graph reaches a minimum threshold 
+        or the improvement stalls.
+
+        Args:
+            min_gic_threshold (float): The target GIC value. Iteration stops if GIC falls below this.
+            max_iterations (int): Maximum number of iterations allowed.
+            patience (int): Number of iterations to wait for GIC improvement before stopping.
+            real_graph (np.ndarray): The target graph to compare against using GIC.
+            edge_delta (int, optional): If provided, stops if the number of edges deviates 
+                                        too much from the real graph's edges. Defaults to None.
+            verbose (bool, optional): Whether to print progress information. Defaults to True.
+
+        Returns:
+            tuple: Contains the best graph found, its spectrum, a list of GIC values per iteration, 
+                   and the iteration number where the best GIC was found.
+        """
+        i = 0
+        best_iteration = 0
+        no_improvement_count = 0
+        
+        # GIC variables
+        gic_values = []
+        real_edges = np.sum(np.triu(real_graph)) # Calculate only once
+        best_gic = float('inf')
+        current_gic = float('inf')
+
+        # Graph variables
+        best_graph = self.graph.copy()  # Initialize with the starting graph
+
+        while i < max_iterations:
+            current_edges = np.sum(np.triu(self.graph)) # Use triu to count edges correctly for undirected graph
+
+            if verbose and i % 1000 == 0:
+                print(f'Iteration: {i}, Current GIC: {current_gic:.4f}, Best GIC: {best_gic:.4f}, Edges: {current_edges}')
+
+            # --- Stopping Conditions ---
+            # 1. Max iterations
+            if i >= max_iterations:
+                print('Max iterations reached.')
+                break
+                
+            # 2. GIC threshold reached
+            # Check *before* potentially breaking due to patience or edge delta
+            if current_gic <= min_gic_threshold:
+                 print(f'Minimum GIC threshold ({min_gic_threshold}) reached at iteration {i}.')
+                 # Update best graph one last time if the current one is the best
+                 if current_gic < best_gic:
+                     best_gic = current_gic
+                     best_graph = self.graph.copy()
+                     best_iteration = i
+                 break # Exit loop as target is met
+
+            # 3. Patience exceeded (no improvement)
+            if no_improvement_count >= patience:
+                print(f'No GIC improvement for {patience} iterations. Stopping.')
+                break
+
+            # 4. Edge delta exceeded (optional)
+            if edge_delta is not None:
+                if current_edges > real_edges + edge_delta:
+                    print(f'Too many edges ({current_edges} > {real_edges + edge_delta}). Stopping.')
+                    break
+                # Optional: Add a condition for too few edges if needed
+                # if current_edges < real_edges - edge_delta:
+                #     print(f'Too few edges ({current_edges} < {real_edges - edge_delta}). Stopping.')
+                #     break 
+
+            # --- Main Step ---
+            self.add_remove_edge()
+
+            # --- Evaluation ---
+            # Calculate GIC (ensure gic.calculate_gic exists and takes these args)
+            try:
+                # Assuming gic.calculate_gic needs the two graphs, n, and d
+                current_gic = gic.calculate_gic(self.graph, real_graph, self.n, self.d) 
+                gic_values.append(current_gic)
+            except Exception as e:
+                print(f"Error calculating GIC: {e}")
+                # Decide how to handle GIC calculation errors (e.g., skip iteration, stop)
+                # For now, let's stop if GIC fails
+                break 
+
+            # --- Update Best ---
+            if current_gic < best_gic:
+                best_gic = current_gic
+                best_graph = self.graph.copy()
+                best_iteration = i
+                no_improvement_count = 0 # Reset patience counter
+                if verbose and i % 1000 == 0:
+                     print(f'\t New best GIC found: {best_gic:.4f} at iteration {i}')
+            else:
+                no_improvement_count += 1
+
+            i += 1
+        # --- End of Loop ---
+
+        print(f'\n--- GIC Optimization Summary ---')
+        print(f'\tStopped at iteration: {i}')
+        print(f'\tBest GIC found: {best_gic:.4f} at iteration {best_iteration}')
+        final_edges_best = np.sum(np.triu(best_graph))
+        print(f'\tEdges in best graph: {final_edges_best}, Edges in real graph: {real_edges}')
+
+        self.graph = best_graph # Set the model's graph to the best one found
+        spectra = self.calculate_spectrum(self.graph)
+
+        return best_graph, spectra, gic_values, best_iteration
