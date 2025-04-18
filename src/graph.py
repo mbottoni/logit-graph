@@ -255,6 +255,7 @@ class GraphModel:
                     print(f'\t Current GIC ({gic_dist_type}): {current_gic:.4f} (Threshold: {min_gic_threshold})')
                 print(f'\t Best Spectrum Diff: {best_spectrum_diff:.4f}')
                 print(f'\t Patience: {no_improvement_count}/{patience}')
+                print(f'\t Current edges: {current_edges} (Real edges: {real_edges})')
 
 
             if i >= max_iterations:
@@ -263,12 +264,11 @@ class GraphModel:
 
             # Check edge criteria only if edge_delta is provided
             if edge_delta is not None:
-                edge_diff = abs(current_edges - real_edges)
-                if edge_diff > edge_delta:
-                     # Decide whether to stop or just note. Let's stop for now.
-                     print(f'Edge count difference ({edge_diff}) exceeds delta ({edge_delta}). Stopping.')
-                     break
-                     # Alternative: could try to bias add/remove based on this difference
+                if current_edges < real_edges - edge_delta:
+                    pass
+                if current_edges > real_edges + edge_delta:
+                    print('Too many edges. Convergence reached')
+                    break
 
             # Main add remove step
             self.add_remove_edge()
@@ -323,9 +323,10 @@ class GraphModel:
 
             # --- Iteration Increment ---
             i += 1
-            # Optional: Limit stored graphs to save memory
-            # if len(graphs) > 2 * patience + 100: # Keep slightly more than patience window
-            #    graphs.pop(0)
+
+            # Save mem
+            if len(graphs) > 2 * patience + 100: # Keep slightly more than patience window
+               graphs.pop(0)
 
 
         print(f'\n--- Stopping Condition Met ---')
@@ -336,7 +337,7 @@ class GraphModel:
              print(f'- Final GIC: {current_gic:.4f}')
         elif no_improvement_count >= patience:
              print(f'- Reason: No improvement in spectrum difference for {patience} iterations after GIC threshold was met.')
-        elif edge_delta is not None and abs(current_edges - real_edges) > edge_delta:
+        elif edge_delta is not None and current_edges > real_edges + edge_delta:
              print(f'- Reason: Edge count difference exceeded delta ({edge_delta}).')
         else:
              print(f'- Reason: Unknown (Loop condition terminated unexpectedly).')
