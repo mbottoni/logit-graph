@@ -130,6 +130,7 @@ class GraphModel:
 
     
     def populate_edges_spectrum(self, warm_up, max_iterations, patience, real_graph, edge_delta=None, verbose=True):
+        #TODO Addnstead of warm up something related to minimum gic that i want comparing with the real graph 
         i = 0
         best_iteration = 0
 
