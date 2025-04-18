@@ -324,9 +324,11 @@ class GraphModel:
             # --- Iteration Increment ---
             i += 1
 
-            # Save mem
+            # Save mem - This part makes returning best_graph crucial
             if len(graphs) > 2 * patience + 100: # Keep slightly more than patience window
                graphs.pop(0)
+               # IMPORTANT: If pop(0) is used, best_iteration index becomes unreliable
+               # for accessing the graphs list later.
 
 
         print(f'\n--- Stopping Condition Met ---')
@@ -349,7 +351,6 @@ class GraphModel:
         final_edges = np.sum(np.triu(best_graph))
         print(f'- Edges in best graph: {final_edges} (Real graph edges: {real_edges})')
 
-        self.graph = best_graph # Set the model's graph to the best one found
-        spectra = self.calculate_spectrum(self.graph) # Calculate spectrum of the best graph
+        spectra = self.calculate_spectrum(best_graph)
 
-        return graphs, spectra, spectrum_diffs, best_iteration
+        return graphs, spectra, spectrum_diffs, best_iteration, best_graph
