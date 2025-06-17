@@ -1,4 +1,3 @@
-
 import networkx as nx
 import numpy as np
 import sys
@@ -22,6 +21,7 @@ class GraphParameterEstimator():
             self.model_function = self.model
 
         self.search_interval = self.get_search_interval()
+        self.is_multi_param = self.is_multi_parameter_model()
 
     def get_model_function(self, model_name):
         if model_name == "ER":
@@ -31,22 +31,41 @@ class GraphParameterEstimator():
         elif model_name == "KR":
             return lambda n, k: nx.random_regular_graph(k, n)
         elif model_name == "WS":
-            return lambda n, p: nx.watts_strogatz_graph(n, k=int(np.ceil(np.sqrt(n))), p=p)
+            return lambda n, params: nx.watts_strogatz_graph(n, int(params[0]), params[1])
         elif model_name == "BA":
             return lambda n, m: nx.barabasi_albert_graph(n, m)
         else:
             raise ValueError(f"Unknown model: {model_name}")
 
+    def is_multi_parameter_model(self):
+        return self.model == "WS" or (isinstance(self.model, str) and self.model == "WS")
+
     def get_search_interval(self):
         if self.interval is not None:
-            return np.arange(self.interval['lo'], self.interval['hi'], self.eps)
+            if self.is_multi_param and isinstance(self.interval, dict) and 'k' in self.interval and 'p' in self.interval:
+                # Multi-parameter case (e.g., WS model)
+                k_range = np.arange(self.interval['k']['lo'], self.interval['k']['hi'], 
+                                  max(1, int(self.interval['k'].get('step', self.n * self.eps))))
+                p_range = np.arange(self.interval['p']['lo'], self.interval['p']['hi'], self.eps)
+                return {'k': k_range, 'p': p_range}
+            else:
+                # Single parameter case
+                return np.arange(self.interval['lo'], self.interval['hi'], self.eps)
         elif isinstance(self.model, str):
-            if self.model == "ER" or self.model == "WS":
+            if self.model == "ER":
                 return np.arange(0, 1, self.eps)
             elif self.model == "GRG":
                 return np.arange(0, np.sqrt(2), self.eps)
             elif self.model == "KR":
                 return np.arange(0, self.n, int(self.n * self.eps))
+            elif self.model == "WS":
+                # Default ranges for WS model
+                avg_degree = np.mean([d for n, d in self.graph.degree()])
+                max_k = min(self.n - 1, int(avg_degree * 2))
+                # Ensure k is even
+                k_range = [k for k in range(2, max_k + 1, 2)]
+                p_range = np.arange(0, 1, self.eps)
+                return {'k': k_range, 'p': p_range}
             elif self.model == "BA":
                 return np.arange(0, 3, self.eps)
         else:
@@ -56,11 +75,20 @@ class GraphParameterEstimator():
         if self.search == "grid":
             return self.grid_search()
         elif self.search == "ternary":
-            return self.ternary_search()
+            if self.is_multi_param:
+                return self.grid_search()  # Fall back to grid search for multi-param
+            else:
+                return self.ternary_search()
         else:
             raise ValueError(f"Unknown search method: {self.search}")
 
     def grid_search(self):
+        if self.is_multi_param:
+            return self.grid_search_multi_param()
+        else:
+            return self.grid_search_single_param()
+
+    def grid_search_single_param(self):
         min_param = None
         min_gic = float('inf')
         for param in self.search_interval:
@@ -69,6 +97,20 @@ class GraphParameterEstimator():
                 min_gic = gic
                 min_param = param
         return {'param': min_param, 'gic': min_gic}
+
+    def grid_search_multi_param(self):
+        min_params = None
+        min_gic = float('inf')
+        
+        for k in self.search_interval['k']:
+            for p in self.search_interval['p']:
+                params = [k, p]
+                gic = self.calculate_gic(params)
+                if gic < min_gic:
+                    min_gic = gic
+                    min_params = params
+        
+        return {'param': min_params, 'gic': min_gic}
 
     def ternary_search(self):
         min_param = None
