@@ -2,6 +2,7 @@ import numpy as np
 import networkx as nx
 from scipy.stats import ks_2samp
 from scipy.special import expit
+from tqdm import tqdm
 
 from src.degrees_counts import degree_vertex, get_sum_degrees
 import src.gic as gic
@@ -245,6 +246,16 @@ class GraphModel:
         # Convert real_graph_np to NetworkX for GIC once
         real_nx_graph = nx.from_numpy_array(real_graph_np)
 
+        # Progress bar setup
+        if verbose:
+            pbar = tqdm(total=max_iterations, desc="Optimizing Graph", leave=True)
+            pbar.set_postfix({
+                'GIC': f'{current_gic:.4f}',
+                'Spectrum Diff': f'{best_spectrum_diff:.4f}',
+                'Patience': f'{no_improvement_count}/{patience}',
+                'Edges': f'{np.sum(np.triu(self.graph))}/{real_edges}'
+            })
+
         while (not gic_threshold_reached or no_improvement_count < patience):
 
             current_edges = np.sum(np.triu(self.graph)) # Use triu for undirected edges count
@@ -320,6 +331,15 @@ class GraphModel:
                 # Increment patience counter only if GIC threshold is met AND no improvement was found
                 no_improvement_count += 1
 
+            # Update progress bar
+            if verbose:
+                pbar.update(1)
+                pbar.set_postfix({
+                    'GIC': f'{current_gic:.4f}',
+                    'Spectrum Diff': f'{best_spectrum_diff:.4f}',
+                    'Patience': f'{no_improvement_count}/{patience}',
+                    'Edges': f'{current_edges}/{real_edges}'
+                })
 
             # --- Iteration Increment ---
             i += 1
@@ -330,6 +350,8 @@ class GraphModel:
                # IMPORTANT: If pop(0) is used, best_iteration index becomes unreliable
                # for accessing the graphs list later.
 
+        if verbose:
+            pbar.close()
 
         print(f'\n--- Stopping Condition Met ---')
         if i >= max_iterations:
