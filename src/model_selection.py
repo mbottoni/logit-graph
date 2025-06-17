@@ -175,7 +175,18 @@ class GraphModelSelection:
         elif model_name == "KR":
             return lambda n, k: nx.random_regular_graph(d=2*int(k), n=n)
         elif model_name == "WS":
-            return lambda n, p, k=8: nx.watts_strogatz_graph(n, k, p)
+            def ws_wrapper(n, params):
+                if isinstance(params, (list, tuple, np.ndarray)) and len(params) >= 2:
+                    # Multi-parameter case: [k, p]
+                    return nx.watts_strogatz_graph(n, int(params[0]), params[1])
+                else:
+                    # Single parameter case (fallback) - assume it's p and use default k
+                    avg_degree = 2 * self.graph.number_of_edges() / self.graph.number_of_nodes()
+                    k = max(2, int(avg_degree))
+                    if k % 2 != 0:  # Ensure k is even
+                        k += 1
+                    return nx.watts_strogatz_graph(n, k, float(params))
+            return ws_wrapper
         elif model_name == "BA":
             return lambda n, m: nx.barabasi_albert_graph(n, int(m))
         elif model_name == "LG":
@@ -198,20 +209,28 @@ class GraphModelSelection:
         else:
             model_func = self.model_function(model)
             for _ in range(self.n_runs):
-                # Convert params to appropriate type based on the model
-                if model in ["BA", "WS"]:
-                    model_params = int(params)
-                elif model in ["ER", "GRG"]:
-                    model_params = float(params)
+                # Handle both single and multi-parameter models
+                if model == "WS" and isinstance(params, list):
+                    # Multi-parameter case
+                    generated_graph = model_func(self.graph.number_of_nodes(), params)
+                    param_for_gic = params
                 else:
-                    model_params = params
+                    # Single parameter case
+                    if model in ["BA"]:
+                        model_params = int(params)
+                    elif model in ["ER", "GRG"]:
+                        model_params = float(params)
+                    else:
+                        model_params = params
 
-                generated_graph = model_func(self.graph.number_of_nodes(), model_params)
+                    generated_graph = model_func(self.graph.number_of_nodes(), model_params)
+                    param_for_gic = params
+
                 gic_calculator = gic.GraphInformationCriterion(
                     graph=self.graph,
                     model=model,
                     log_graph=generated_graph,
-                    p=params
+                    p=param_for_gic
                 )
                 spectrum, _ = gic_calculator.compute_spectral_density(generated_graph)
                 spectrum_values.append(spectrum)
@@ -254,24 +273,53 @@ class GraphModelSelection:
                 best_distance = float('inf')
                 best_gic = float('inf')
                 
-                for param in np.linspace(param_range['lo'], param_range['hi'], num=10):
-                    avg_spectrum = self.calculate_average_spectrum(model, param)
-                    real_spectrum, _ = gic.GraphInformationCriterion(self.graph, model).compute_spectral_density(self.graph)
-                    distance = np.linalg.norm(real_spectrum - avg_spectrum)
+                # Handle multi-parameter models (like WS)
+                if model == "WS" and isinstance(param_range, dict) and 'k' in param_range and 'p' in param_range:
+                    # Multi-parameter case for WS
+                    k_values = np.arange(param_range['k']['lo'], param_range['k']['hi'], 
+                                       param_range['k'].get('step', 2))
+                    p_values = np.linspace(param_range['p']['lo'], param_range['p']['hi'], num=10)
                     
-                    # Calculate GIC
-                    gic_calculator = gic.GraphInformationCriterion(
-                        graph=self.graph,
-                        model=model,
-                        p=param
-                    )
-                    current_gic = gic_calculator.calculate_gic(model_den=avg_spectrum)
-                    
-                    if distance < best_distance:
-                        best_distance = distance
-                        best_param = param
-                        best_spectrum = avg_spectrum
-                        best_gic = current_gic
+                    for k in k_values:
+                        for p in p_values:
+                            params = [int(k), float(p)]
+                            avg_spectrum = self.calculate_average_spectrum(model, params)
+                            real_spectrum, _ = gic.GraphInformationCriterion(self.graph, model).compute_spectral_density(self.graph)
+                            distance = np.linalg.norm(real_spectrum - avg_spectrum)
+                            
+                            # Calculate GIC
+                            gic_calculator = gic.GraphInformationCriterion(
+                                graph=self.graph,
+                                model=model,
+                                p=params
+                            )
+                            current_gic = gic_calculator.calculate_gic(model_den=avg_spectrum)
+                            
+                            if distance < best_distance:
+                                best_distance = distance
+                                best_param = params
+                                best_spectrum = avg_spectrum
+                                best_gic = current_gic
+                else:
+                    # Single parameter case
+                    for param in np.linspace(param_range['lo'], param_range['hi'], num=10):
+                        avg_spectrum = self.calculate_average_spectrum(model, param)
+                        real_spectrum, _ = gic.GraphInformationCriterion(self.graph, model).compute_spectral_density(self.graph)
+                        distance = np.linalg.norm(real_spectrum - avg_spectrum)
+                        
+                        # Calculate GIC
+                        gic_calculator = gic.GraphInformationCriterion(
+                            graph=self.graph,
+                            model=model,
+                            p=param
+                        )
+                        current_gic = gic_calculator.calculate_gic(model_den=avg_spectrum)
+                        
+                        if distance < best_distance:
+                            best_distance = distance
+                            best_param = param
+                            best_spectrum = avg_spectrum
+                            best_gic = current_gic
                 
                 result = {'param': best_param, 'spectrum': best_spectrum, 'gic': best_gic}
                 print(f'{model} result:', result)
@@ -305,17 +353,21 @@ class GraphModelSelection:
                 )
             else:
                 model_func = self.model_function(model)
-                # Convert params to appropriate type based on the model
-                if model in ["BA", "WS"]:
-                    # BA and WS models require integer parameters
-                    model_params = int(params)
-                elif model in ["ER", "GRG"]:
-                    # ER and GRG models use float parameters
-                    model_params = float(params)
+                # Handle both single and multi-parameter models
+                if model == "WS" and isinstance(params, list):
+                    # Multi-parameter case
+                    generated_graph = model_func(self.graph.number_of_nodes(), params)
                 else:
-                    model_params = params
+                    # Single parameter case
+                    if model in ["BA"]:
+                        model_params = int(params)
+                    elif model in ["ER", "GRG"]:
+                        model_params = float(params)
+                    else:
+                        model_params = params
 
-                generated_graph = model_func(self.graph.number_of_nodes(), model_params)
+                    generated_graph = model_func(self.graph.number_of_nodes(), model_params)
+
                 gic_calculator = gic.GraphInformationCriterion(
                     graph=self.graph,
                     model=model,
@@ -350,7 +402,14 @@ class GraphModelSelection:
 
                 print(f"Model: {model}, Parameters: {param}")
                 print(f"Model function: {model_func}")
-                estimator = pe.GraphParameterEstimator(self.graph, model=model_func, interval=param, **self.kwargs)
+                
+                # Handle multi-parameter models differently
+                if model == "WS":
+                    # Use custom parameter estimation for WS
+                    estimator = pe.GraphParameterEstimator(self.graph, model=model, interval=param, **self.kwargs)
+                else:
+                    estimator = pe.GraphParameterEstimator(self.graph, model=model_func, interval=param, **self.kwargs)
+                
                 result = estimator.estimate()
                 
                 # Calculate average GIC over n_runs
