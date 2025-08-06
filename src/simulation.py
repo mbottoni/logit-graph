@@ -225,7 +225,15 @@ class GraphModelComparator:
         self.d_list = d_list
         self.lg_params = lg_params
         self.other_model_n_runs = other_model_n_runs
-        self.other_model_params = other_model_params if other_model_params is not None else []
+        if other_model_params is None:
+            self.other_model_params = [
+                {'lo': 0.01, 'hi': 0.25},  # ER: p
+                {'k': {'lo': 2, 'hi': 10, 'step': 2}, 'p': {'lo': 0.01, 'hi': 0.5}},  # WS: k, p
+                {'lo': 0.05, 'hi': 0.3},   # GRG: r
+                {'lo': 1, 'hi': 8}         # BA: m
+            ]
+        else:
+            self.other_model_params = other_model_params
         self.dist_type = dist_type
         self.verbose = verbose
         
@@ -312,11 +320,13 @@ class GraphModelComparator:
         if self.verbose:
             print(f"Running LG generation for d={d}...")
         
+        lg_params = self.lg_params.copy()
+
         _, _, _, best_iteration, best_graph_arr = graph_model.populate_edges_spectrum_min_gic(
             real_graph=real_graph,
             gic_dist_type=self.dist_type,
             verbose=self.verbose,
-            **self.lg_params
+            **lg_params
         )
         
         best_graph_nx = nx.from_numpy_array(best_graph_arr)
