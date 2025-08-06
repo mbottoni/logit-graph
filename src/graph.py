@@ -2,6 +2,7 @@ import numpy as np
 import networkx as nx
 from scipy.stats import ks_2samp
 from scipy.special import expit
+
 from tqdm import tqdm
 
 from src.degrees_counts import degree_vertex, get_sum_degrees
