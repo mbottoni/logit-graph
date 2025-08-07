@@ -259,7 +259,7 @@ class GraphModelSelection:
                 distance = np.linalg.norm(real_spectrum - avg_spectrum)
                 
                 result = {'param': params, 'spectrum': avg_spectrum, 'gic': lg_gic}
-                print('LG result:', result)
+                print(f'LG gic: {lg_gic}')
                 results.append((model, params, distance, lg_gic))
             else:
                 if callable(model):
@@ -322,7 +322,8 @@ class GraphModelSelection:
                             best_gic = current_gic
                 
                 result = {'param': best_param, 'spectrum': best_spectrum, 'gic': best_gic}
-                print(f'{model} result:', result)
+                print(f'{model} gic: {best_gic}')
+                #print(f'{model} result:', result)
                 results.append((model, best_param, best_distance, best_gic))
 
         # Sort results based on GIC

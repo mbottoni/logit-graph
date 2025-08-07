@@ -1,7 +1,6 @@
 
 import sys
 import os
-sys.path.append('../')
 
 #Graph imports
 import src.graph as graph
@@ -138,7 +137,7 @@ class LogitGraphFitter:
         try:
             adj_matrix = nx.to_numpy_array(original_graph)
             
-            best_graph_arr, sigma, gic_val, spectrum_diffs, edge_diffs, best_iter, all_graphs = self._generate_graph(adj_matrix)
+            best_graph_arr, sigma, gic_val, spectrum_diffs, edge_diffs, best_iter, all_graphs, gic_values = self._generate_graph(adj_matrix)
             
             self.fitted_graph = nx.from_numpy_array(best_graph_arr)
             
@@ -151,6 +150,7 @@ class LogitGraphFitter:
                 'fitted_edges': self.fitted_graph.number_of_edges(),
                 'spectrum_diffs': spectrum_diffs,
                 'edge_diffs': edge_diffs,
+                'gic_values': gic_values,
             })
             
             if self.verbose:
@@ -182,7 +182,7 @@ class LogitGraphFitter:
         if self.verbose:
             print(f"Running LG generation for d={self.d}...")
 
-        graphs, _, spectrum_diffs, best_iteration, best_graph_arr = graph_model.populate_edges_spectrum_min_gic(
+        graphs, _, spectrum_diffs, best_iteration, best_graph_arr, gic_values = graph_model.populate_edges_spectrum_min_gic(
             max_iterations=self.n_iteration,
             patience=self.patience,
             real_graph=real_graph_arr,
@@ -203,7 +203,7 @@ class LogitGraphFitter:
         real_edges = np.sum(real_graph_arr) / 2
         edge_diffs = [abs(np.sum(g) / 2 - real_edges) for g in graphs]
 
-        return best_graph_arr, sigma, gic_value, spectrum_diffs, edge_diffs, best_iteration, graphs
+        return best_graph_arr, sigma, gic_value, spectrum_diffs, edge_diffs, best_iteration, graphs, gic_values
 
 
 class GraphModelComparator:
@@ -278,15 +278,24 @@ class GraphModelComparator:
             print("\n--- Fitting Logit Graph (LG) model ---")
         
         best_lg_fit = {'gic': np.inf}
+        #TODO: Add multithread
         for d in self.d_list:
             try:
-                lg_arr, sigma, gic_val, _ = self._get_logit_graph_for_d(adj_matrix, d)
+                lg_arr, sigma, gic_val, _, gic_values, spectrum_diffs, edge_diffs = self._get_logit_graph_for_d(adj_matrix, d)
                 if self.verbose:
                     print(f"d={d}: GIC={gic_val:.4f}, sigma={sigma:.4f}")
                 if gic_val < best_lg_fit['gic']:
                     best_lg_fit = {
-                        'gic': gic_val, 'graph': nx.from_numpy_array(lg_arr),
-                        'param': f"d={d}, sigma={sigma:.4f}", 'sigma': sigma
+                        'gic': gic_val,
+                        'graph': nx.from_numpy_array(lg_arr),
+                        'param': f"d={d}, sigma={sigma:.4f}",
+                        'sigma': sigma,
+                        'd': d,
+                        'min_gic_value': min(gic_values) if gic_values else np.nan,
+                        'min_gic_iteration': gic_values.index(min(gic_values)) if gic_values else -1,
+                        'spectrum_diffs': spectrum_diffs,
+                        'edge_diffs': edge_diffs,
+                        'gic_values': gic_values
                     }
             except Exception as e:
                 if self.verbose:
@@ -295,7 +304,18 @@ class GraphModelComparator:
         if 'graph' in best_lg_fit:
             self.fitted_graphs_data['LG'] = {
                 'graph': best_lg_fit['graph'],
-                'metadata': {'fit_success': True, 'param': best_lg_fit['param'], 'gic_value': best_lg_fit['gic']}
+                'metadata': {
+                    'fit_success': True,
+                    'param': best_lg_fit['param'],
+                    'gic_value': best_lg_fit['gic'],
+                    'd': best_lg_fit['d'],
+                    'sigma': best_lg_fit['sigma'],
+                    'min_gic_value': best_lg_fit['min_gic_value'],
+                    'min_gic_iteration': best_lg_fit['min_gic_iteration'],
+                    'spectrum_diffs': best_lg_fit['spectrum_diffs'],
+                    'edge_diffs': best_lg_fit['edge_diffs'],
+                    'gic_values': best_lg_fit['gic_values'],
+                }
             }
             if self.verbose:
                 print(f"Best LG fit found with GIC: {best_lg_fit['gic']:.4f}")
@@ -322,10 +342,13 @@ class GraphModelComparator:
         
         lg_params = self.lg_params.copy()
 
-        _, _, _, best_iteration, best_graph_arr = graph_model.populate_edges_spectrum_min_gic(
+        # Ensure that gic_dist_type and verbose are not passed twice.
+        # The values from the comparator instance are given priority.
+        lg_params['gic_dist_type'] = self.dist_type
+        lg_params['verbose'] = self.verbose
+
+        graphs, _, spectrum_diffs, best_iteration, best_graph_arr, gic_values = graph_model.populate_edges_spectrum_min_gic(
             real_graph=real_graph,
-            gic_dist_type=self.dist_type,
-            verbose=self.verbose,
             **lg_params
         )
         
@@ -337,7 +360,10 @@ class GraphModelComparator:
             dist_type=self.dist_type
         ).calculate_gic()
 
-        return best_graph_arr, sigma, gic_value, best_iteration
+        real_edges = np.sum(real_graph) / 2
+        edge_diffs = [abs(np.sum(g) / 2 - real_edges) for g in graphs]
+
+        return best_graph_arr, sigma, gic_value, best_iteration, gic_values, spectrum_diffs, edge_diffs
 
     def _fit_other_models(self, original_graph):
         if self.verbose:

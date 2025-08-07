@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.optimize import minimize
 import torch
+import warnings
 
 from sklearn.linear_model import LogisticRegression
 import networkx as nx
@@ -162,10 +163,10 @@ class LogitRegEstimator:
             
         return features, labels
 
-    def estimate_parameters(self, features, labels, l1_wt=1.0, alpha=0.1):
+    def estimate_parameters(self, l1_wt=1, alpha=0, features=None, labels=None):
         """
-        Estimate parameters using logistic regression with regularization.
-        
+        Fits the logistic regression model using the extracted features and labels.
+
         Args:
         l1_wt (float): The L1 weight (0 for pure L2, 1 for pure L1).
         alpha (float): Regularization strength. Larger values specify stronger regularization.
@@ -174,37 +175,40 @@ class LogitRegEstimator:
             print("\nStarting parameter estimation...")
             print(f"Regularization parameters: l1_weight={l1_wt}, alpha={alpha}")
 
-        # Logistic Regression Model using statsmodels with regularization
-        model = sm.Logit(labels, features)
+        # Suppress statsmodels warnings for overflow and divide by zero
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="overflow encountered in exp")
+            warnings.filterwarnings("ignore", message="divide by zero encountered in log")
+            warnings.filterwarnings("ignore", category=RuntimeWarning, module="statsmodels")
+            
+            # Logistic Regression Model using statsmodels with regularization
+            model = sm.Logit(labels, features)
+
+            ######################################
+            
+            # Fit the model with regularization
+            if l1_wt in [0, 1]:
+                # Pure L1 or L2 regularization
+                if self.verbose:
+                    print(f"Using pure {'L1' if l1_wt == 1 else 'L2'} regularization")
+                result = model.fit_regularized(method='l1' if l1_wt == 1 else None, alpha=alpha, disp=self.verbose)
+            else:
+                # Elastic Net (combination of L1 and L2)
+                if self.verbose:
+                    print("Using Elastic Net regularization")
+                result = model.fit_regularized(method='elastic_net', alpha=alpha, L1_wt=l1_wt, disp=self.verbose)
 
         ######################################
-        
-        # Fit the model with regularization
-        if l1_wt in [0, 1]:
-            # Pure L1 or L2 regularization
-            if self.verbose:
-                print(f"Using pure {'L1' if l1_wt == 1 else 'L2'} regularization")
-            result = model.fit_regularized(method='l1' if l1_wt == 1 else None, alpha=alpha, disp=self.verbose)
-        else:
-            # Elastic Net (combination of L1 and L2)
-            if self.verbose:
-                print(f"Using Elastic Net regularization")
-            result = model.fit_regularized(L1_wt=l1_wt, alpha=alpha, disp=self.verbose)
 
-        # Print summary
-        if self.verbose:
-            print("\nModel fitting complete. Summary:")
-            print(result.summary2())
-        else:
-            pass
-
-        # Extract parameters and p-values
+        # Extract model parameters
         params = result.params
-        p_values = result.pvalues  # Note: p-values can be unreliable in regularized regressions
-
+        
         if self.verbose:
-            print("\nEstimated parameters:")
-            for param, value in params.items():
-                print(f"{param}: {value:.4f}")
+            # Handle both pandas Series and numpy array formats
+            if hasattr(params, 'values'):
+                print(f"Estimated parameters: {params.values}")
+            else:
+                print(f"Estimated parameters: {params}")
+            print(f"Logistic regression converged: {result.mle_retvals.get('converged', 'N/A')}")
 
-        return result, params, p_values
+        return result, params, features
