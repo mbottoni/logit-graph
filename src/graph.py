@@ -3,7 +3,8 @@ import networkx as nx
 from scipy.stats import ks_2samp
 from scipy.special import expit
 
-from tqdm import tqdm
+#from tqdm import tqdm
+from tqdm.notebook import tqdm
 
 from src.degrees_counts import degree_vertex, get_sum_degrees
 import src.gic as gic
@@ -226,6 +227,7 @@ class GraphModel:
         # GIC variables
         gic_threshold_reached = False
         current_gic = float('inf')
+        gic_values = []
 
         # Spectrum variables
         spectrum_diffs = []
@@ -248,30 +250,27 @@ class GraphModel:
         real_nx_graph = nx.from_numpy_array(real_graph_np)
 
         # Progress bar setup
+        pbar = None
         if verbose:
-            pbar = tqdm(total=max_iterations, desc="Optimizing Graph", leave=True)
+            pbar = tqdm(total=max_iterations, desc="🔄 Optimizing Graph", leave=True, 
+                       bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}')
             pbar.set_postfix({
                 'GIC': f'{current_gic:.4f}',
-                'Spectrum Diff': f'{best_spectrum_diff:.4f}',
-                'Patience': f'{no_improvement_count}/{patience}',
-                'Edges': f'{np.sum(np.triu(self.graph))}/{real_edges}'
+                'Spec': f'{best_spectrum_diff:.4f}',
+                'Pat': f'{no_improvement_count}/{patience}',
+                'Edges': f'{np.sum(np.triu(self.graph)):.0f}/{real_edges:.0f}'
             })
 
         while (not gic_threshold_reached or no_improvement_count < patience):
 
             current_edges = np.sum(np.triu(self.graph)) # Use triu for undirected edges count
 
-            if verbose and i % 1000 == 0:
-                print(f'iteration: {i}')
-                if not gic_threshold_reached:
-                    print(f'\t Current GIC ({gic_dist_type}): {current_gic:.4f} (Threshold: {min_gic_threshold})')
-                print(f'\t Best Spectrum Diff: {best_spectrum_diff:.4f}')
-                print(f'\t Patience: {no_improvement_count}/{patience}')
-                print(f'\t Current edges: {current_edges} (Real edges: {real_edges})')
-
+            if verbose and i % 1000 == 0 and pbar and i != 0 :
+                pbar.write(f"📊 Iteration {i:,}: 🎯 GIC ({gic_dist_type}): {current_gic:.4f} (Target: ≤{min_gic_threshold}) 📈 Best Spectrum Diff: {best_spectrum_diff:.4f} ⏱️  Patience: {no_improvement_count}/{patience} 🔗 Edges: {current_edges:.0f} (Target: {real_edges:.0f})")
 
             if i >= max_iterations:
-                print(f'Max iterations ({max_iterations}) reached. Stopping.')
+                if verbose and pbar:
+                    pbar.write(f'⏰ Max iterations ({max_iterations:,}) reached. Stopping.')
                 break
 
             # Check edge criteria only if edge_delta is provided
@@ -279,7 +278,8 @@ class GraphModel:
                 if current_edges < real_edges - edge_delta:
                     pass
                 if current_edges > real_edges + edge_delta:
-                    print('Too many edges. Convergence reached')
+                    if verbose and pbar:
+                        pbar.write('🚫 Too many edges. Convergence reached')
                     break
 
             # Main add remove step
@@ -311,15 +311,16 @@ class GraphModel:
                      gic_calculator = gic.GraphInformationCriterion(real_nx_graph, model='LG', log_graph=current_nx_graph, dist=gic_dist_type)
                      current_gic = gic_calculator.calculate_gic()
                  except Exception as e:
-                     print(f"Warning: GIC calculation failed at iteration {i}: {e}")
+                     if verbose and pbar:
+                         pbar.write(f'⚠️  Warning: GIC calculation failed at iteration {i:,}: {e}')
                      # Decide how to handle error: continue, break, assign high GIC?
                      # Let's assign high GIC and continue for now.
                      current_gic = float('inf')
 
-
                  if current_gic <= min_gic_threshold:
-                     print(f'\n*** GIC threshold {min_gic_threshold} reached at iteration {i} (GIC: {current_gic:.4f}) ***')
-                     print(f'*** Starting convergence check based on spectrum difference (Patience: {patience}) ***\n')
+                     if verbose and pbar:
+                         pbar.write(f'🎉 GIC threshold {min_gic_threshold} reached at iteration {i:,} (GIC: {current_gic:.4f})')
+                         pbar.write(f'🔍 Starting convergence check based on spectrum difference (Patience: {patience})')
                      gic_threshold_reached = True
                      no_improvement_count = 0 # Reset patience counter when threshold is first met
                  else:
@@ -333,17 +334,18 @@ class GraphModel:
                 no_improvement_count += 1
 
             # Update progress bar
-            if verbose:
+            if verbose and pbar:
                 pbar.update(1)
                 pbar.set_postfix({
                     'GIC': f'{current_gic:.4f}',
-                    'Spectrum Diff': f'{best_spectrum_diff:.4f}',
-                    'Patience': f'{no_improvement_count}/{patience}',
-                    'Edges': f'{current_edges}/{real_edges}'
+                    'Spec': f'{best_spectrum_diff:.4f}',
+                    'Pat': f'{no_improvement_count}/{patience}',
+                    'Edges': f'{current_edges:.0f}/{real_edges:.0f}'
                 })
 
             # --- Iteration Increment ---
             i += 1
+            gic_values.append(current_gic)
 
             # Save mem - This part makes returning best_graph crucial
             if len(graphs) > 2 * patience + 100: # Keep slightly more than patience window
@@ -351,29 +353,28 @@ class GraphModel:
                # IMPORTANT: If pop(0) is used, best_iteration index becomes unreliable
                # for accessing the graphs list later.
 
-        if verbose:
+        if verbose and pbar:
             pbar.close()
 
-        print(f'\n--- Stopping Condition Met ---')
-        if i >= max_iterations:
-             print(f'- Reason: Max iterations ({max_iterations}) reached.')
-        elif not gic_threshold_reached:
-             print(f'- Reason: Stopped before GIC threshold ({min_gic_threshold}) was reached.')
-             print(f'- Final GIC: {current_gic:.4f}')
-        elif no_improvement_count >= patience:
-             print(f'- Reason: No improvement in spectrum difference for {patience} iterations after GIC threshold was met.')
-        elif edge_delta is not None and current_edges > real_edges + edge_delta:
-             print(f'- Reason: Edge count difference exceeded delta ({edge_delta}).')
-        else:
-             print(f'- Reason: Unknown (Loop condition terminated unexpectedly).')
-
-
-        print(f'\n--- Results ---')
-        print(f'- Best iteration found: {best_iteration}')
-        print(f'- Best spectrum difference: {best_spectrum_diff:.4f}')
-        final_edges = np.sum(np.triu(best_graph))
-        print(f'- Edges in best graph: {final_edges} (Real graph edges: {real_edges})')
+        if verbose and pbar:
+            pbar.write(f'\n🏁 Stopping Condition Met')
+            if i >= max_iterations:
+                 pbar.write(f'   📍 Reason: Max iterations ({max_iterations:,}) reached.')
+            elif not gic_threshold_reached:
+                 pbar.write(f'   📍 Reason: Stopped before GIC threshold ({min_gic_threshold}) was reached.')
+                 pbar.write(f'   📊 Final GIC: {current_gic:.4f}')
+            elif no_improvement_count >= patience:
+                 pbar.write(f'   📍 Reason: No improvement in spectrum difference for {patience:,} iterations after GIC threshold was met.')
+            elif edge_delta is not None and current_edges > real_edges + edge_delta:
+                 pbar.write(f'   📍 Reason: Edge count difference exceeded delta ({edge_delta}).')
+            else:
+                 pbar.write(f'   📍 Reason: Unknown (Loop condition terminated unexpectedly).')
+            pbar.write(f'   📈 Results Summary')
+            pbar.write(f'   🏆 Best iteration found: {best_iteration:,}')
+            pbar.write(f'   📊 Best spectrum difference: {best_spectrum_diff:.4f}')
+            final_edges = np.sum(np.triu(best_graph))
+            pbar.write(f'   🔗 Edges in best graph: {final_edges:.0f} (Real graph edges: {real_edges:.0f})')
 
         spectra = self.calculate_spectrum(best_graph)
 
-        return graphs, spectra, spectrum_diffs, best_iteration, best_graph
+        return graphs, spectra, spectrum_diffs, best_iteration, best_graph, gic_values
