@@ -87,7 +87,7 @@ class LogitGraphFitter:
     Fits a single Logit Graph model to a real graph, following a scikit-learn-like API.
     """
     def __init__(self, d=0, n_iteration=10000, warm_up=500, patience=2000,
-                 dist_type='KL', edge_delta=None, min_gic_threshold=5, verbose=True):
+                 dist_type='KL', edge_delta=None, min_gic_threshold=5, verbose=True, er_p=0.05):
         """
         Initializes the LogitGraphFitter with model parameters.
 
@@ -104,6 +104,7 @@ class LogitGraphFitter:
         self.d = d
         self.n_iteration = n_iteration
         self.warm_up = warm_up
+        self.er_p = er_p
         self.patience = patience
         self.dist_type = dist_type
         self.edge_delta = edge_delta
@@ -335,7 +336,7 @@ class GraphModelComparator:
         sigma = params[0]
 
         n = real_graph.shape[0]
-        graph_model = graph.GraphModel(n=n, d=d, sigma=sigma)
+        graph_model = graph.GraphModel(n=n, d=d, sigma=sigma, er_p=self.lg_params['er_p'])
 
         if self.verbose:
             print(f"Running LG generation for d={d}...")
