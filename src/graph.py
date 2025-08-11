@@ -10,17 +10,23 @@ from src.degrees_counts import degree_vertex, get_sum_degrees
 import src.gic as gic
 
 class GraphModel:
-    def __init__(self, n, d, sigma, alpha=1, beta=1):
+    def __init__(self, n, d, sigma, alpha=1, beta=1, er_p=0.05):
         self.n = n # number of nodes
         self.d = d # number of neighbors to consider 
         self.sigma = sigma # Offset weights
         self.alpha = alpha # weights on i node
         self.beta = beta   # weights on j node
-        self.graph = self.generate_empty_graph(n)
+        #self.graph = self.generate_empty_graph(n)
+        self.er_p = er_p
+        self.graph = self.generate_small_er_graph(n, p=er_p)
 
     def generate_empty_graph(self, n):
         return np.zeros((n, n))
-
+    
+    def generate_small_er_graph(self, n, p):
+        # return the numpy array of the graph
+        return nx.to_numpy_array(nx.erdos_renyi_graph(n, p))
+    
     @classmethod
     def calculate_spectrum(cls, graph):
         G = nx.from_numpy_array(graph)
@@ -200,7 +206,7 @@ class GraphModel:
 
         return graphs, spectra, spectrum_diffs, best_iteration
 
-    def populate_edges_spectrum_min_gic(self, max_iterations, patience, real_graph, min_gic_threshold, gic_dist_type='KL', edge_delta=None, verbose=True):
+    def populate_edges_spectrum_min_gic(self, max_iterations, patience, real_graph, min_gic_threshold, gic_dist_type='KL', edge_delta=None, verbose=True, er_p=0.05):
         """
         Populates edges by iteratively adding/removing edges, aiming to minimize
         the spectral difference to a real graph, using GIC as an initial threshold.
