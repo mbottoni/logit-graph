@@ -1,0 +1,1 @@
+2025-06-17 12:54:12,083 - INFO - Starting graph fitting with parameters: {'n_iteration': 10000, 'd_range': 3, 'patience': 1000, 'edge_delta': 50, 'dist_type': 'KL', 'min_gic_threshold': 2, 'verbose': True}
