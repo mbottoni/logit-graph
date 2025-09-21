@@ -9,9 +9,9 @@ from scipy.spatial.distance import euclidean, cityblock
 
 import sys
 sys.path.append('..')
-import src.gic as gic
-import src.param_estimator as pe
-import src.logit_estimator as est
+from . import gic
+from . import param_estimator as pe
+from . import logit_estimator as est
 
 
 # Initial try to implement the model selection

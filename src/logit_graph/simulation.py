@@ -2,15 +2,15 @@
 import sys
 import os
 
-#Graph imports
-import src.graph as graph
-import src.logit_estimator as estimator
-import src.utils as utils
-import src.model_selection as model_selection
-import src.gic as gic
-import src.param_estimator as pe
-import src.graph as graph
-import src.model_selection as ms
+# Graph imports (relative within package)
+from . import graph
+from . import logit_estimator as estimator
+from . import utils
+from . import model_selection
+from . import gic
+from . import param_estimator as pe
+from . import graph
+from . import model_selection as ms
 
 # usual imports
 import matplotlib.pyplot as plt

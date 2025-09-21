@@ -1,0 +1,139 @@
+Metadata-Version: 2.4
+Name: logit-graph
+Version: 0.1.0
+Summary: Probabilistic logit-based graph model and utilities
+Author: Maruan Ottoni
+License: MIT
+Project-URL: Homepage, https://github.com/maruanottoni/logit-graph
+Project-URL: Repository, https://github.com/maruanottoni/logit-graph
+Project-URL: Issues, https://github.com/maruanottoni/logit-graph/issues
+Classifier: Development Status :: 3 - Alpha
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Topic :: Scientific/Engineering :: Information Analysis
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: asttokens==2.0.5
+Requires-Dist: certifi==2024.2.2
+Requires-Dist: cffi==1.15.1
+Requires-Dist: comm==0.1.4
+Requires-Dist: contourpy==1.1.1
+Requires-Dist: cycler==0.11.0
+Requires-Dist: debugpy==1.8.0
+Requires-Dist: decorator==5.1.1
+Requires-Dist: exceptiongroup==1.1.3
+Requires-Dist: executing==0.8.3
+Requires-Dist: filelock==3.13.3
+Requires-Dist: fonttools==4.49.0
+Requires-Dist: fsspec==2024.3.1
+Requires-Dist: igraph==0.11.4
+Requires-Dist: imageio==2.34.0
+Requires-Dist: imbalanced-learn==0.12.2
+Requires-Dist: imblearn==0.0
+Requires-Dist: importlib_metadata==7.0.2
+Requires-Dist: ipykernel==6.29.3
+Requires-Dist: ipython==8.22.2
+Requires-Dist: jedi==0.19.1
+Requires-Dist: Jinja2==3.1.3
+Requires-Dist: joblib==1.3.2
+Requires-Dist: jsonpickle==3.0.3
+Requires-Dist: jupyter_client==8.6.1
+Requires-Dist: jupyter_core==5.7.2
+Requires-Dist: kiwisolver==1.4.5
+Requires-Dist: lxml==5.2.2
+Requires-Dist: MarkupSafe==2.1.5
+Requires-Dist: matplotlib==3.8.3
+Requires-Dist: matplotlib-inline==0.1.6
+Requires-Dist: mpmath==1.3.0
+Requires-Dist: munkres==1.1.4
+Requires-Dist: nest_asyncio==1.6.0
+Requires-Dist: networkx==3.2.1
+Requires-Dist: numpy==1.26.4
+Requires-Dist: packaging==24.0
+Requires-Dist: pandas==2.2.1
+Requires-Dist: parso==0.8.3
+Requires-Dist: patsy==0.5.6
+Requires-Dist: pexpect==4.9.0
+Requires-Dist: pickleshare==0.7.5
+Requires-Dist: pillow==10.2.0
+Requires-Dist: platformdirs==4.2.0
+Requires-Dist: prompt-toolkit==3.0.42
+Requires-Dist: psutil==5.9.8
+Requires-Dist: ptyprocess==0.7.0
+Requires-Dist: pure-eval==0.2.2
+Requires-Dist: pycairo==1.26.0
+Requires-Dist: pycparser==2.21
+Requires-Dist: Pygments==2.17.2
+Requires-Dist: PyGObject==3.48.1
+Requires-Dist: pyintergraph==1.3.3
+Requires-Dist: pyparsing==3.1.2
+Requires-Dist: python-dateutil==2.9.0
+Requires-Dist: pytz==2024.1
+Requires-Dist: pyvis==0.3.2
+Requires-Dist: pyzmq==25.1.2
+Requires-Dist: scikit-learn==1.4.1.post1
+Requires-Dist: scipy==1.12.0
+Requires-Dist: seaborn==0.13.2
+Requires-Dist: setuptools==69.2.0
+Requires-Dist: six==1.16.0
+Requires-Dist: stack-data==0.2.0
+Requires-Dist: statsmodels==0.14.1
+Requires-Dist: sympy==1.12
+Requires-Dist: texttable==1.7.0
+Requires-Dist: threadpoolctl==3.4.0
+Requires-Dist: torch==2.2.2
+Requires-Dist: tornado==6.4
+Requires-Dist: traitlets==5.14.2
+Requires-Dist: typing_extensions==4.10.0
+Requires-Dist: tzdata==2024.1
+Requires-Dist: wcwidth==0.2.6
+Requires-Dist: wheel==0.43.0
+Requires-Dist: zipp==3.17.0
+Requires-Dist: zstandard==0.22.0
+
+
+# Probabilistic Graph Model
+
+## Overview
+This repository contains an implementation of a probabilistic graph model using logistic regression to predict connections between vertices based on their attributes and interconnections. The model employs a logistic function to estimate the probability of connection between any given pair of vertices in the graph.
+
+## Repository Structure
+
+- `notebooks/`: Contains the notebooks used to generate the results in the paper.
+- `src/`: Contains the source code of the model.
+- `data/`: Contains the datasets used in the experiments.
+
+## Key Features
+
+- Logistic regression-based graph modeling
+- Vertex attribute and interconnection analysis
+- Probability estimation for vertex connections
+
+## Installation
+
+To set up the project environment:
+
+1. Clone this repository
+2. Install the required dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+
+## Usage
+
+1. Prepare your graph data in the appropriate format (see `data/` for examples).
+2. Use the scripts in `src/` to run the model on your data.
+3. Explore the Jupyter notebooks in `notebooks/` for detailed analysis and visualization.
+
+## Contributing
+
+Contributions to this project are welcome. Please fork the repository and submit a pull request with your changes.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

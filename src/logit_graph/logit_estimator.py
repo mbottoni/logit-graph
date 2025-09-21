@@ -9,7 +9,7 @@ import networkx as nx
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
-from src.degrees_counts import degree_vertex, get_sum_degrees
+from .degrees_counts import degree_vertex, get_sum_degrees
 
 max_val = np.nan
 eps = 1e-5
