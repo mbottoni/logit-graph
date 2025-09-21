@@ -6,8 +6,8 @@ from scipy.special import expit
 #from tqdm import tqdm
 from tqdm.notebook import tqdm
 
-from src.degrees_counts import degree_vertex, get_sum_degrees
-import src.gic as gic
+from .degrees_counts import degree_vertex, get_sum_degrees
+from . import gic
 
 class GraphModel:
     def __init__(self, n, d, sigma, alpha=1, beta=1, er_p=0.05):

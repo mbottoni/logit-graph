@@ -2,7 +2,7 @@ import networkx as nx
 import numpy as np
 import sys
 sys.path.append('..')
-import src.gic as gic
+from . import gic
 
 class GraphParameterEstimator():
     def __init__(self, graph, model, interval=None, eps=0.01, search='grid', **kwargs):
