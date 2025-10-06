@@ -211,7 +211,7 @@ class GraphModelComparator:
     """
     Compares Logit Graph with other random graph models, with a scikit-learn-like API.
     """
-    def __init__(self, d_list, lg_params, other_model_n_runs=5, other_model_params=None, dist_type='KL', verbose=True):
+    def __init__(self, d_list, lg_params, other_model_n_runs=2, other_model_params=None, dist_type='KL', verbose=True, other_models=None, other_model_grid_points=5):
         """
         Initializes the GraphModelComparator.
 
@@ -237,6 +237,10 @@ class GraphModelComparator:
             self.other_model_params = other_model_params
         self.dist_type = dist_type
         self.verbose = verbose
+        # Allow selecting which other models to evaluate and how dense the parameter grid should be
+        # Default excludes GRG for speed; user can include it by passing other_models.
+        self.other_models = other_models if other_models is not None else ["ER", "WS", "BA"]
+        self.other_model_grid_points = other_model_grid_points
         
         self.summary_df = None
         self.fitted_graphs_data = {}
@@ -388,13 +392,29 @@ class GraphModelComparator:
                 if self.verbose:
                     print("Could not parse sigma from LG metadata, defaulting to 1.0")
         
+        # TODO: Remove from here
+        default_params = {
+            'ER': {'lo': 0.01, 'hi': 0.25},
+            'WS': {'k': {'lo': 2, 'hi': 10, 'step': 2}, 'p': {'lo': 0.01, 'hi': 0.5}},
+            'GRG': {'lo': 0.05, 'hi': 0.3},
+            'BA': {'lo': 1, 'hi': 8}
+        }
+        default_param_map = {}
+        for i, model in enumerate(self.other_models):
+            if i < len(self.other_model_params):
+                default_param_map[model] = self.other_model_params[i]
+            elif model in default_params:
+                default_param_map[model] = default_params[model]
+        filtered_params = [default_param_map[m] for m in self.other_models if m in default_param_map]
+
         selector = ms.GraphModelSelection(
             graph=original_graph,
             log_graphs=[lg_graph_for_selection],
             log_params=[sigma],
-            models=["ER", "WS", "GRG", "BA"],
+            models=self.other_models,
             n_runs=self.other_model_n_runs,
-            parameters=self.other_model_params
+            parameters=filtered_params,
+            grid_points=self.other_model_grid_points
         )
         
         model_results = selector.select_model_avg_spectrum()
