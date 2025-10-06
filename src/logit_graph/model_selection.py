@@ -151,13 +151,14 @@ class ModelSelectorSpectrum:
 
 # Class implementing the MAIN stat graph model selector
 class GraphModelSelection:
-    def __init__(self, graph, log_graphs, log_params, models=None, parameters=None, n_runs=10, **kwargs):
+    def __init__(self, graph, log_graphs, log_params, models=None, parameters=None, n_runs=10, grid_points=10, **kwargs):
         self.graph = graph
         self.log_graphs = log_graphs
         self.log_params = log_params
         self.models = models if models is not None else ['ER', 'WS', 'BA']
         self.parameters = parameters
         self.n_runs = n_runs
+        self.grid_points = grid_points
         self.kwargs = kwargs
         self.validate_input()
 
@@ -278,7 +279,7 @@ class GraphModelSelection:
                     # Multi-parameter case for WS
                     k_values = np.arange(param_range['k']['lo'], param_range['k']['hi'], 
                                        param_range['k'].get('step', 2))
-                    p_values = np.linspace(param_range['p']['lo'], param_range['p']['hi'], num=10)
+                    p_values = np.linspace(param_range['p']['lo'], param_range['p']['hi'], num=self.grid_points)
                     
                     for k in k_values:
                         for p in p_values:
@@ -302,7 +303,7 @@ class GraphModelSelection:
                                 best_gic = current_gic
                 else:
                     # Single parameter case
-                    for param in np.linspace(param_range['lo'], param_range['hi'], num=10):
+                    for param in np.linspace(param_range['lo'], param_range['hi'], num=self.grid_points):
                         avg_spectrum = self.calculate_average_spectrum(model, param)
                         real_spectrum, _ = gic.GraphInformationCriterion(self.graph, model).compute_spectral_density(self.graph)
                         distance = np.linalg.norm(real_spectrum - avg_spectrum)
@@ -323,7 +324,6 @@ class GraphModelSelection:
                 
                 result = {'param': best_param, 'spectrum': best_spectrum, 'gic': best_gic}
                 print(f'{model} gic: {best_gic}')
-                #print(f'{model} result:', result)
                 results.append((model, best_param, best_distance, best_gic))
 
         # Sort results based on GIC
