@@ -1,6 +1,9 @@
 import numpy as np
 from scipy.optimize import minimize
-import torch
+try:
+    import torch
+except Exception:  # Make torch optional
+    torch = None
 import warnings
 
 from sklearn.linear_model import LogisticRegression
@@ -14,9 +17,12 @@ from .degrees_counts import degree_vertex, get_sum_degrees
 max_val = np.nan
 eps = 1e-5
 
-class NegativeLogLikelihoodLoss(torch.nn.Module):
+class NegativeLogLikelihoodLoss(torch.nn.Module if torch is not None else object):
     def __init__(self, graph, d):
         super(NegativeLogLikelihoodLoss, self).__init__()
+        if torch is None:
+            raise ImportError("PyTorch is required for NegativeLogLikelihoodLoss. Install with `pip install torch`.\n"
+                              "Alternatively, use LogitRegEstimator which does not require torch.")
         self.graph = torch.tensor(graph, dtype=torch.float32)  # Ensure graph is a PyTorch tensor
         self.n = graph.shape[0]
         self.d = d
@@ -92,6 +98,8 @@ class MLEGraphModelEstimator:
         return likelihood  # Negative because we minimize in the optimization routine
 
     def estimate_parameters(self, initial_guess=[0.5, 0.1, 0.1], learning_rate=0.01, max_iter=1000):
+            if torch is None:
+                raise ImportError("PyTorch is required for MLEGraphModelEstimator. Install with `pip install torch`.")
             alpha, beta, sigma = [torch.tensor(x, dtype=torch.float32, requires_grad=True) for x in initial_guess]
             optimizer = torch.optim.SGD([alpha, beta, sigma], lr=learning_rate)  # Using SGD optimizer from PyTorch
 

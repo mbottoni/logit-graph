@@ -5,7 +5,7 @@ import os
 # Graph imports (relative within package)
 from . import graph
 from . import logit_estimator as estimator
-from . import utils
+# from . import utils  # Not used here; avoid importing heavy viz deps at import-time
 from . import model_selection
 from . import gic
 from . import param_estimator as pe
@@ -13,23 +13,13 @@ from . import graph
 from . import model_selection as ms
 
 # usual imports
-import matplotlib.pyplot as plt
 import pickle
 import math
-import matplotlib.pyplot as plt
-from scipy import stats
-from scipy.stats import gaussian_kde
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import gc
 import random
 import networkx as nx
-from numpy import errstate
-
-from IPython.display import display
-from pyvis.network import Network
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 
