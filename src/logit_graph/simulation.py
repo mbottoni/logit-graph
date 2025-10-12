@@ -11,6 +11,7 @@ from . import gic
 from . import param_estimator as pe
 from . import graph
 from . import model_selection as ms
+from .degrees_counts import get_sum_degrees as _get_sum_degrees
 
 # usual imports
 import pickle
@@ -20,10 +21,135 @@ import pandas as pd
 import gc
 import random
 import networkx as nx
+from tqdm import tqdm
 
 
 
 ### Helper Functions ###
+def _build_features_labels_sampled(graph_input, d, max_edges=None, max_non_edges=None, random_state=None, verbose=False):
+    """
+    Build a sampled feature matrix and labels for logistic regression without enumerating all non-edges.
+
+    Args:
+        graph_input: numpy adjacency array or networkx.Graph
+        d (int): neighborhood depth used in degree features
+        max_edges (int|None): number of positive samples (edges) to include. If None, use all edges
+        max_non_edges (int|None): number of negative samples (non-edges) to include. If None, uses same as max_edges
+        random_state (int|None): RNG seed
+        verbose (bool): print progress
+
+    Returns:
+        features (np.ndarray), labels (list[int])
+    """
+    rng = np.random.default_rng(random_state)
+
+    # Ensure numpy adjacency
+    if isinstance(graph_input, nx.Graph):
+        adj = nx.to_numpy_array(graph_input)
+    else:
+        adj = np.array(graph_input)
+
+    n = adj.shape[0]
+    G = nx.from_numpy_array(adj)
+
+    # Edges list (i<j)
+    edges_all = list(G.edges())
+    if max_edges is not None and len(edges_all) > max_edges:
+        edges_idx = rng.choice(len(edges_all), size=max_edges, replace=False)
+        edges_sample = [edges_all[i] for i in edges_idx]
+    else:
+        edges_sample = edges_all
+
+    # Precompute adjacency set for quick lookup
+    edge_set = set((min(i, j), max(i, j)) for i, j in edges_all)
+
+    # Decide negatives to draw
+    if max_non_edges is None:
+        max_non_edges = len(edges_sample)
+
+    non_edges_sample = []
+    attempts = 0
+    max_attempts = max_non_edges * 50 if max_non_edges is not None else n * 50
+    while len(non_edges_sample) < max_non_edges and attempts < max_attempts:
+        i = int(rng.integers(0, n))
+        j = int(rng.integers(0, n))
+        if i == j:
+            attempts += 1
+            continue
+        a, b = (i, j) if i < j else (j, i)
+        if (a, b) not in edge_set:
+            non_edges_sample.append((a, b))
+        attempts += 1
+    if verbose and len(non_edges_sample) < max_non_edges:
+        print(f"Warning: requested {max_non_edges} non-edges, sampled {len(non_edges_sample)}")
+
+    # Precompute degree-sum features per node
+    sum_degrees = np.zeros(n)
+    for v in range(n):
+        sum_degrees[v] = _get_sum_degrees(adj, vertex=v, d=d)
+
+    pairs = edges_sample + non_edges_sample
+    labels = [1] * len(edges_sample) + [0] * len(non_edges_sample)
+
+    # Build feature matrix with intercept first (constant), then two features
+    feats = np.array([(sum_degrees[i], sum_degrees[j]) for (i, j) in pairs], dtype=float)
+    ones = np.ones((feats.shape[0], 1), dtype=float)
+    features = np.concatenate([ones, feats], axis=1)
+
+    return features, labels
+
+def estimate_sigma_only(graph_input, d, max_edges=None, max_non_edges=None, l1_wt=1, alpha=0, random_state=None, verbose=False):
+    """
+    Estimate sigma via LogitRegEstimator WITHOUT simulating any graph.
+
+    Args:
+        graph_input: numpy adjacency array or networkx.Graph
+        d (int): neighborhood depth used in degree features
+        max_edges (int|None): number of edge samples to use
+        max_non_edges (int|None): number of non-edge samples to use
+        l1_wt (float): regularization L1 weight (1=L1, 0=L2)
+        alpha (float): regularization strength
+        random_state (int|None): RNG seed
+        verbose (bool): print progress
+
+    Returns:
+        float: estimated sigma (intercept)
+    """
+    # Ensure numpy adjacency
+    if isinstance(graph_input, nx.Graph):
+        adj = nx.to_numpy_array(graph_input)
+    else:
+        adj = np.array(graph_input)
+
+    # Build sampled features
+    features, labels = _build_features_labels_sampled(
+        adj, d=d, max_edges=max_edges, max_non_edges=max_non_edges, random_state=random_state, verbose=verbose
+    )
+
+    est = estimator.LogitRegEstimator(adj, d=d, verbose=False)
+    _, params, _ = est.estimate_parameters(l1_wt=l1_wt, alpha=alpha, features=features, labels=labels)
+    sigma = float(params[0])
+    return sigma
+
+def estimate_sigma_many(graph_input, d, n_repeats=30, max_edges=None, max_non_edges=None, l1_wt=1, alpha=0, seed=42, verbose=False):
+    """
+    Repeat sigma estimation n_repeats times (with different RNG seeds) without simulation.
+
+    Returns list of sigma values.
+    """
+    sigmas = []
+    for r in tqdm(range(int(n_repeats))):
+        rs = None if seed is None else (seed + r)
+        sigma_r = estimate_sigma_only(
+            graph_input, d=d, max_edges=max_edges, max_non_edges=max_non_edges,
+            l1_wt=l1_wt, alpha=alpha, random_state=rs, verbose=verbose
+        )
+        sigmas.append(sigma_r)
+    return sigmas
+
+#####
+#####
+
 def calculate_graph_attributes(graph_to_analyze):
     """Calculate various graph attributes for a given graph."""
     if graph_to_analyze is None or graph_to_analyze.number_of_nodes() == 0:
