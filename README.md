@@ -136,8 +136,8 @@ These folders are not required for installing or using the pip package; they sup
 
 ## Citation
 
-If you use this package in academic work, please cite the project and link to the repository `https://github.com/maruanottoni/logit-graph`. A formal citation entry will be added upon publication.
+If you use this package in academic work, please cite the project and link to the repository `https://github.com/mbottoni/logit-graph`. A formal citation entry will be added upon publication.
 
 ```text
-Ottoni, M. (2024). Logit Graph: probabilistic logit-based graph modeling and selection. GitHub repository. https://github.com/maruanottoni/logit-graph
+Ottoni, M. (2025). Logit Graph: probabilistic logit-based graph modeling and selection. GitHub repository. https://github.com/mbottoni/logit-graph
 ```
