@@ -1,6 +1,6 @@
 [project]
 name = "logit-graph"
-version = "0.1.0"
+version = "0.1.1"
 description = "Probabilistic logit-based graph model and utilities"
 readme = "README.md"
 requires-python = ">=3.9"
