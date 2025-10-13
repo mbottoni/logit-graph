@@ -127,9 +127,9 @@ def estimate_sigma_only(graph_input, d, max_edges=None, max_non_edges=None, l1_w
     )
 
     est = estimator.LogitRegEstimator(adj, d=d, verbose=False)
-    _, params, _ = est.estimate_parameters(l1_wt=l1_wt, alpha=alpha, features=features, labels=labels)
+    result, params, _ = est.estimate_parameters(l1_wt=l1_wt, alpha=alpha, features=features, labels=labels)
     sigma = float(params[0])
-    return sigma
+    return sigma, result
 
 def estimate_sigma_many(graph_input, d, n_repeats=30, max_edges=None, max_non_edges=None, l1_wt=1, alpha=0, seed=42, verbose=False):
     """
@@ -203,7 +203,7 @@ class LogitGraphFitter:
     Fits a single Logit Graph model to a real graph, following a scikit-learn-like API.
     """
     def __init__(self, d=0, n_iteration=10000, warm_up=500, patience=2000,
-                 dist_type='KL', edge_delta=None, min_gic_threshold=5, verbose=True, er_p=0.05):
+                 dist_type='KL', edge_delta=None, min_gic_threshold=5, verbose=True, er_p=0.05, init_graph=None):
         """
         Initializes the LogitGraphFitter with model parameters.
 
@@ -226,6 +226,7 @@ class LogitGraphFitter:
         self.edge_delta = edge_delta
         self.min_gic_threshold = min_gic_threshold
         self.verbose = verbose
+        self.init_graph = init_graph
         
         self.fitted_graph = None
         self.metadata = {}
@@ -294,12 +295,13 @@ class LogitGraphFitter:
         sigma = params[0]
 
         n = real_graph_arr.shape[0]
-        graph_model = graph.GraphModel(n=n, d=self.d, sigma=sigma)
+        graph_model = graph.GraphModel(n=n, d=self.d, sigma=sigma, er_p=self.er_p, init_graph=self.init_graph)
 
         if self.verbose:
             print(f"Running LG generation for d={self.d}...")
 
         graphs, _, spectrum_diffs, best_iteration, best_graph_arr, gic_values = graph_model.populate_edges_spectrum_min_gic(
+            er_p=self.er_p,
             max_iterations=self.n_iteration,
             patience=self.patience,
             real_graph=real_graph_arr,
@@ -456,7 +458,8 @@ class GraphModelComparator:
         sigma = params[0]
 
         n = real_graph.shape[0]
-        graph_model = graph.GraphModel(n=n, d=d, sigma=sigma, er_p=self.lg_params['er_p'])
+        init_graph = self.lg_params.get('init_graph') if isinstance(self.lg_params, dict) else None
+        graph_model = graph.GraphModel(n=n, d=d, sigma=sigma, er_p=self.lg_params['er_p'], init_graph=init_graph)
 
         if self.verbose:
             print(f"Running LG generation for d={d}...")

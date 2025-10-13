@@ -22,7 +22,7 @@ from .degrees_counts import degree_vertex, get_sum_degrees
 from . import gic
 
 class GraphModel:
-    def __init__(self, n, d, sigma, alpha=1, beta=1, er_p=0.05):
+    def __init__(self, n, d, sigma, alpha=1, beta=1, er_p=0.05, init_graph=None):
         self.n = n # number of nodes
         self.d = d # number of neighbors to consider 
         self.sigma = sigma # Offset weights
@@ -30,7 +30,11 @@ class GraphModel:
         self.beta = beta   # weights on j node
         #self.graph = self.generate_empty_graph(n)
         self.er_p = er_p
-        self.graph = self.generate_small_er_graph(n, p=er_p)
+        # If an initial NetworkX graph is provided, start from it; otherwise use ER seed
+        if init_graph is not None and isinstance(init_graph, nx.Graph):
+            self.graph = nx.to_numpy_array(init_graph)
+        else:
+            self.graph = self.generate_small_er_graph(n, p=er_p)
 
     def generate_empty_graph(self, n):
         return np.zeros((n, n))
