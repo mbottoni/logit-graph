@@ -26,6 +26,8 @@ If you prefer using the full research environment (for notebooks, plotting, etc.
 
 ### Fit a Logit Graph to a network
 
+There is simple colab with a tutorial here: https://colab.research.google.com/drive/1-WlU12bxN2-84fLI7IpEXB6jkifcMuaY?usp=sharing
+
 ```python
 import networkx as nx
 from logit_graph import LogitGraphFitter
