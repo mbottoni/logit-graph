@@ -32,6 +32,7 @@ jobs:
             networkx==3.2.1 \
             pandas==2.2.1 \
             statsmodels==0.14.1 \
+            scikit-learn==1.4.1.post1 \
             tqdm==4.66.4 \
             pytest==8.3.2
 
