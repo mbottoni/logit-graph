@@ -1,7 +1,8 @@
-from .simulation import LogitGraphFitter, GraphModelComparator, calculate_graph_attributes
+from .simulation import LogitGraphFitter, LogitGraphSimulation, GraphModelComparator, calculate_graph_attributes
 
 __all__ = [
     "LogitGraphFitter",
+    "LogitGraphSimulation",
     "GraphModelComparator",
     "calculate_graph_attributes",
 ]
