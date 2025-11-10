@@ -325,6 +325,103 @@ class LogitGraphFitter:
         return best_graph_arr, sigma, gic_value, spectrum_diffs, edge_diffs, best_iteration, graphs, gic_values
 
 
+class LogitGraphSimulation:
+    """
+    Simulates a Logit Graph directly from provided parameters, following a scikit-learn-like API.
+    
+    Usage:
+        sim = LogitGraphSimulation(n=100, d=2, sigma=1.0, alpha=1.0, beta=1.0)
+        sim.simulate()
+        G = sim.simulated_graph
+        info = sim.metadata
+    """
+    def __init__(self, n, d, sigma, alpha=1.0, beta=1.0, er_p=0.05,
+                 n_iteration=10000, warm_up=500, patience=2000, verbose=True, init_graph=None):
+        """
+        Initializes the LogitGraphSimulation with model and run parameters.
+
+        Args:
+            n (int): Number of nodes.
+            d (int): Neighborhood depth used in degree features.
+            sigma (float): Intercept parameter of the logit model.
+            alpha (float): Weight for node i contribution.
+            beta (float): Weight for node j contribution.
+            er_p (float): Probability for ER seed graph if no init_graph is provided.
+            n_iteration (int): Maximum number of iterations.
+            warm_up (int): Warm-up iterations before checking convergence.
+            patience (int): Stability window for baseline stopping criteria.
+            verbose (bool): Whether to print progress.
+            init_graph (nx.Graph|None): Optional initial graph to start from.
+        """
+        self.n = n
+        self.d = d
+        self.sigma = sigma
+        self.alpha = alpha
+        self.beta = beta
+        self.er_p = er_p
+        self.n_iteration = n_iteration
+        self.warm_up = warm_up
+        self.patience = patience
+        self.verbose = verbose
+        self.init_graph = init_graph
+
+        self.simulated_graph = None
+        self.metadata = {}
+
+    def simulate(self):
+        """
+        Runs the simulation and stores the resulting NetworkX graph and metadata.
+
+        Returns:
+            self
+        """
+        if self.verbose:
+            print(f"\n{'='*20} Simulating Logit Graph {'='*20}")
+            print(f"Parameters - n: {self.n}, d: {self.d}, sigma: {self.sigma:.4f}, alpha: {self.alpha:.4f}, beta: {self.beta:.4f}, er_p: {self.er_p}")
+
+        self.metadata = {
+            'simulate_success': False,
+            'error_message': None,
+            'n': self.n,
+            'd': self.d,
+            'sigma': float(self.sigma),
+            'alpha': float(self.alpha),
+            'beta': float(self.beta),
+            'er_p': float(self.er_p),
+        }
+
+        try:
+            graph_model = graph.GraphModel(
+                n=self.n, d=self.d, sigma=self.sigma, alpha=self.alpha, beta=self.beta, er_p=self.er_p, init_graph=self.init_graph
+            )
+
+            # Use baseline simulator (no reference/real graph needed)
+            graphs, spectra = graph_model.populate_edges_baseline(
+                warm_up=self.warm_up, max_iterations=self.n_iteration, patience=self.patience
+            )
+
+            final_graph_arr = graphs[-1] if graphs else graph_model.graph
+            self.simulated_graph = nx.from_numpy_array(final_graph_arr)
+
+            self.metadata.update({
+                'simulate_success': True,
+                'iterations_ran': max(0, len(graphs) - 1),
+                'final_nodes': self.simulated_graph.number_of_nodes(),
+                'final_edges': self.simulated_graph.number_of_edges(),
+                'final_spectrum': spectra,
+            })
+
+            if self.verbose:
+                print(f"Simulation successful - Nodes: {self.metadata['final_nodes']}, Edges: {self.metadata['final_edges']}")
+
+        except Exception as e:
+            print(f"Error simulating logit graph: {e}")
+            self.metadata['error_message'] = str(e)
+            self.simulated_graph = None
+
+        return self
+
+
 class GraphModelComparator:
     """
     Compares Logit Graph with other random graph models, with a scikit-learn-like API.
