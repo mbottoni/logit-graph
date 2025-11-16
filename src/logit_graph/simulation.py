@@ -241,19 +241,24 @@ class LogitGraphFitter:
         Returns:
             self: The instance with fitted_graph and metadata attributes populated.
         """
+        # Ensure we work with an undirected view for consistent edge counting and spectra
+        # Many datasets load as directed; our fitter/populator assumes undirected adjacency.
+        undirected_graph = original_graph.to_undirected()
+
         if self.verbose:
             print(f"\n{'='*20} Processing Graph {'='*20}")
-            print(f"Original graph - Nodes: {original_graph.number_of_nodes()}, Edges: {original_graph.number_of_edges()}")
+            print(f"Original graph - Nodes: {undirected_graph.number_of_nodes()}, Edges: {undirected_graph.number_of_edges()}")
 
         self.metadata = {
-            'original_nodes': original_graph.number_of_nodes(),
-            'original_edges': original_graph.number_of_edges(),
+            'original_nodes': undirected_graph.number_of_nodes(),
+            'original_edges': undirected_graph.number_of_edges(),
             'fit_success': False,
             'error_message': None,
         }
         
         try:
-            adj_matrix = nx.to_numpy_array(original_graph)
+            # Build adjacency from the undirected graph to avoid double-counting edges
+            adj_matrix = nx.to_numpy_array(undirected_graph)
             
             best_graph_arr, sigma, gic_val, spectrum_diffs, edge_diffs, best_iter, all_graphs, gic_values = self._generate_graph(adj_matrix)
             
