@@ -4,8 +4,16 @@ from scipy.stats import ks_2samp
 from scipy.special import expit
 
 try:
-    from tqdm.notebook import tqdm
-except Exception:
+    from tqdm.notebook import tqdm as notebook_tqdm
+    from tqdm import tqdm as console_tqdm
+    # Try to detect if we're in a notebook environment
+    try:
+        get_ipython()
+        tqdm = notebook_tqdm
+    except NameError:
+        tqdm = console_tqdm
+except ImportError:
+    # Fallback if tqdm is not installed
     def tqdm(*args, **kwargs):
         class _Dummy:
             def set_postfix(self, *a, **k):
@@ -135,8 +143,10 @@ class GraphModel:
         stop_condition = False
         graphs = [self.graph.copy()]  # List to store the graphs
 
+        # Create progress bar
+        pbar = tqdm(total=max_iterations, desc="Generating graph", leave=False, disable=False)
+        
         while i < max_iterations and (i < warm_up or not stop_condition):
-            print(f'iteration: {i}')
             self.add_remove_edge()  # add or remove vertex
             graphs.append(self.graph.copy())
 
@@ -149,7 +159,13 @@ class GraphModel:
                 stop_condition = stop_condition_n_edges and stop_condition_spectrum
 
             i += 1
+            pbar.update(1)
+            
+            # Update progress bar with convergence info
+            if i > warm_up:
+                pbar.set_postfix({'edges': int(np.sum(self.graph)), 'converged': stop_condition})
 
+        pbar.close()
         spectra = self.calculate_spectrum(self.graph)
         return graphs, spectra
 
@@ -176,11 +192,9 @@ class GraphModel:
 
             current_edges = np.sum(self.graph)
 
-            if verbose and i % 1000 == 0:
-                print(f'iteration: {i}')
-
             if i > max_iterations:
-                print('Max iterations reached. Convergence reached')
+                if verbose:
+                    print('Max iterations reached. Convergence reached')
                 break
 
             # Check edge criteria only if edge_delta is provided
@@ -213,9 +227,10 @@ class GraphModel:
 
             i += 1
 
-        print(f'\t Best iteration: {best_iteration}')
-        print(f'\t Best spectrum difference: {best_spectrum_diff}')
-        print(f'\t Number of edges: {np.sum(self.graph)}, Number of edges real graph: {real_edges}')
+        if verbose:
+            print(f'\t Best iteration: {best_iteration}')
+            print(f'\t Best spectrum difference: {best_spectrum_diff}')
+            print(f'\t Number of edges: {np.sum(self.graph)}, Number of edges real graph: {real_edges}')
 
         self.graph = best_graph
         spectra = self.calculate_spectrum(self.graph)
