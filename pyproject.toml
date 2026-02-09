@@ -24,7 +24,19 @@ dependencies = [
     "numpy>=1.23",
     "scipy>=1.10",
     "pandas>=2.0",
-    "statsmodels>=0.14"
+    "tqdm",
+    "statsmodels>=0.14",
+    "ipython>=8",
+    "seaborn",
+    "pyvis",
+    "imageio",
+    "marimo",
+    "ipykernel,
+    "scikit-learn>=1.6.1",
+    "matplotlib>=3.9.4",
+    "imageio>=2.37.2",
+    "pyvis>=0.3.2",
+    "seaborn>=0.13.2",
 ]
 
 [build-system]
