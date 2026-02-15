@@ -2,29 +2,7 @@ import numpy as np
 import networkx as nx
 from scipy.stats import ks_2samp
 from scipy.special import expit
-
-try:
-    from tqdm.notebook import tqdm as notebook_tqdm
-    from tqdm import tqdm as console_tqdm
-    # Try to detect if we're in a notebook environment
-    try:
-        get_ipython()
-        tqdm = notebook_tqdm
-    except NameError:
-        tqdm = console_tqdm
-except ImportError:
-    # Fallback if tqdm is not installed
-    def tqdm(*args, **kwargs):
-        class _Dummy:
-            def set_postfix(self, *a, **k):
-                pass
-            def update(self, *a, **k):
-                pass
-            def write(self, *a, **k):
-                pass
-            def close(self):
-                pass
-        return _Dummy()
+from tqdm.auto import tqdm
 
 from .degrees_counts import degree_vertex, get_sum_degrees
 from . import gic
