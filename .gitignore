@@ -43,3 +43,4 @@ statGraph/
 *.tar.gz
 
 notebooks/runs/*
+*.gif
