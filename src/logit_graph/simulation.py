@@ -203,7 +203,8 @@ class LogitGraphFitter:
     Fits a single Logit Graph model to a real graph, following a scikit-learn-like API.
     """
     def __init__(self, d=0, n_iteration=10000, warm_up=500, patience=2000,
-                 dist_type='KL', edge_delta=None, min_gic_threshold=5, verbose=True, er_p=0.05, init_graph=None):
+                 dist_type='KL', edge_delta=None, min_gic_threshold=5,
+                 check_interval=50, verbose=True, er_p=0.05, init_graph=None):
         """
         Initializes the LogitGraphFitter with model parameters.
 
@@ -211,10 +212,12 @@ class LogitGraphFitter:
             d (int): The dimension of the latent space.
             n_iteration (int): The maximum number of iterations for edge generation.
             warm_up (int): The number of warm-up iterations.
-            patience (int): The number of iterations to wait for improvement before stopping.
+            patience (int): The number of consecutive checks without improvement before stopping.
             dist_type (str): The distance type for GIC calculation ('KL', etc.).
             edge_delta (float, optional): Edge convergence threshold. Defaults to None.
             min_gic_threshold (float, optional): GIC convergence threshold. Defaults to 5.
+            check_interval (int): How often (in iterations) to compute the
+                expensive spectrum/GIC during graph generation.  Defaults to 50.
             verbose (bool): Whether to print progress information.
         """
         self.d = d
@@ -225,6 +228,7 @@ class LogitGraphFitter:
         self.dist_type = dist_type
         self.edge_delta = edge_delta
         self.min_gic_threshold = min_gic_threshold
+        self.check_interval = check_interval
         self.verbose = verbose
         self.init_graph = init_graph
         
@@ -315,6 +319,7 @@ class LogitGraphFitter:
             edge_delta=self.edge_delta,
             min_gic_threshold=self.min_gic_threshold,
             gic_dist_type=self.dist_type,
+            check_interval=self.check_interval,
             verbose=self.verbose,
         )
         
@@ -343,7 +348,9 @@ class LogitGraphSimulation:
         info = sim.metadata
     """
     def __init__(self, n, d, sigma, alpha=1.0, beta=1.0, er_p=0.05,
-                 n_iteration=10000, warm_up=500, patience=2000, verbose=True, init_graph=None):
+                 n_iteration=10000, warm_up=500, patience=2000,
+                 check_interval=50, edge_cv_tol=0.02, spectrum_cv_tol=0.02,
+                 verbose=True, init_graph=None):
         """
         Initializes the LogitGraphSimulation with model and run parameters.
 
@@ -356,7 +363,14 @@ class LogitGraphSimulation:
             er_p (float): Probability for ER seed graph if no init_graph is provided.
             n_iteration (int): Maximum number of iterations.
             warm_up (int): Warm-up iterations before checking convergence.
-            patience (int): Stability window for baseline stopping criteria.
+            patience (int): Number of measurements in the rolling convergence
+                window.
+            check_interval (int): How often (in iterations) to record a
+                measurement and test for convergence.
+            edge_cv_tol (float): Coefficient-of-variation threshold for
+                edge-count stability.
+            spectrum_cv_tol (float): Coefficient-of-variation threshold for
+                spectrum-norm stability.
             verbose (bool): Whether to print progress.
             init_graph (nx.Graph|None): Optional initial graph to start from.
         """
@@ -369,6 +383,9 @@ class LogitGraphSimulation:
         self.n_iteration = n_iteration
         self.warm_up = warm_up
         self.patience = patience
+        self.check_interval = check_interval
+        self.edge_cv_tol = edge_cv_tol
+        self.spectrum_cv_tol = spectrum_cv_tol
         self.verbose = verbose
         self.init_graph = init_graph
 
@@ -404,7 +421,9 @@ class LogitGraphSimulation:
 
             # Use baseline simulator (no reference/real graph needed)
             graphs, spectra = graph_model.populate_edges_baseline(
-                warm_up=self.warm_up, max_iterations=self.n_iteration, patience=self.patience
+                warm_up=self.warm_up, max_iterations=self.n_iteration,
+                patience=self.patience, check_interval=self.check_interval,
+                edge_cv_tol=self.edge_cv_tol, spectrum_cv_tol=self.spectrum_cv_tol,
             )
 
             final_graph_arr = graphs[-1] if graphs else graph_model.graph
