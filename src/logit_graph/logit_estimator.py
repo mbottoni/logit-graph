@@ -158,9 +158,9 @@ class LogitRegEstimator:
         for i in range(self.n):
             sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, d=self.d)
 
-        #features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
-        normalization = 1
-        features = np.array([(sum_degrees[i] / normalization, sum_degrees[j] / normalization) for i, j in data])
+        # Symmetric feature: sum of degree features for both endpoints
+        # This ensures P(edge i,j) = P(edge j,i) for undirected graphs
+        features = np.array([sum_degrees[i] + sum_degrees[j] for i, j in data]).reshape(-1, 1)
 
         # Add a constant term for the intercept
         features = sm.add_constant(features)

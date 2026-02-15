@@ -91,8 +91,8 @@ def _build_features_labels_sampled(graph_input, d, max_edges=None, max_non_edges
     pairs = edges_sample + non_edges_sample
     labels = [1] * len(edges_sample) + [0] * len(non_edges_sample)
 
-    # Build feature matrix with intercept first (constant), then two features
-    feats = np.array([(sum_degrees[i], sum_degrees[j]) for (i, j) in pairs], dtype=float)
+    # Build feature matrix with intercept first (constant), then symmetric feature
+    feats = np.array([sum_degrees[i] + sum_degrees[j] for (i, j) in pairs], dtype=float).reshape(-1, 1)
     ones = np.ones((feats.shape[0], 1), dtype=float)
     features = np.concatenate([ones, feats], axis=1)
 
@@ -260,13 +260,14 @@ class LogitGraphFitter:
             # Build adjacency from the undirected graph to avoid double-counting edges
             adj_matrix = nx.to_numpy_array(undirected_graph)
             
-            best_graph_arr, sigma, gic_val, spectrum_diffs, edge_diffs, best_iter, all_graphs, gic_values = self._generate_graph(adj_matrix)
+            best_graph_arr, sigma, beta, gic_val, spectrum_diffs, edge_diffs, best_iter, all_graphs, gic_values = self._generate_graph(adj_matrix)
             
             self.fitted_graph = nx.from_numpy_array(best_graph_arr)
             
             self.metadata.update({
                 'fit_success': True,
                 'sigma': sigma,
+                'beta': beta,
                 'gic_value': gic_val,
                 'best_iteration': best_iter,
                 'fitted_nodes': self.fitted_graph.number_of_nodes(),
@@ -298,9 +299,10 @@ class LogitGraphFitter:
         features, labels = est.get_features_labels()
         _, params, _ = est.estimate_parameters(l1_wt=1, alpha=0, features=features, labels=labels)
         sigma = params[0]
+        beta = params[1]
 
         n = real_graph_arr.shape[0]
-        graph_model = graph.GraphModel(n=n, d=self.d, sigma=sigma, er_p=self.er_p, init_graph=self.init_graph)
+        graph_model = graph.GraphModel(n=n, d=self.d, sigma=sigma, beta=beta, er_p=self.er_p, init_graph=self.init_graph)
 
         if self.verbose:
             print(f"Running LG generation for d={self.d}...")
@@ -327,7 +329,7 @@ class LogitGraphFitter:
         real_edges = np.sum(real_graph_arr) / 2
         edge_diffs = [abs(np.sum(g) / 2 - real_edges) for g in graphs]
 
-        return best_graph_arr, sigma, gic_value, spectrum_diffs, edge_diffs, best_iteration, graphs, gic_values
+        return best_graph_arr, sigma, beta, gic_value, spectrum_diffs, edge_diffs, best_iteration, graphs, gic_values
 
 
 class LogitGraphSimulation:
@@ -558,10 +560,11 @@ class GraphModelComparator:
         features, labels = est.get_features_labels()
         _, params, _ = est.estimate_parameters(l1_wt=1, alpha=0, features=features, labels=labels)
         sigma = params[0]
+        beta = params[1]
 
         n = real_graph.shape[0]
         init_graph = self.lg_params.get('init_graph') if isinstance(self.lg_params, dict) else None
-        graph_model = graph.GraphModel(n=n, d=d, sigma=sigma, er_p=self.lg_params['er_p'], init_graph=init_graph)
+        graph_model = graph.GraphModel(n=n, d=d, sigma=sigma, beta=beta, er_p=self.lg_params['er_p'], init_graph=init_graph)
 
         if self.verbose:
             print(f"Running LG generation for d={d}...")

@@ -24,7 +24,6 @@ dependencies = [
     "numpy>=1.23",
     "scipy>=1.10",
     "pandas>=2.0",
-    "tqdm",
     "statsmodels>=0.14",
     "ipython>=8",
     "seaborn",
@@ -38,6 +37,8 @@ dependencies = [
     "imageio>=2.37.2",
     "pyvis>=0.3.2",
     "seaborn>=0.13.2",
+    "powerlaw>=1.5.2",
+    "tqdm>=4.66",
 ]
 
 [build-system]

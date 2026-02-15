@@ -17,7 +17,7 @@ class GraphInformationCriterion:
     def compute_spectral_density(self, graph):
         laplacian = nx.normalized_laplacian_matrix(graph)
         eigenvalues = np.linalg.eigvalsh(laplacian.todense())
-        hist, bin_edges = np.histogram(eigenvalues, bins=10, range=(0, 2), density=True)
+        hist, bin_edges = np.histogram(eigenvalues, bins=50, range=(0, 2), density=True)
         return hist, bin_edges
 
     def generate_model_graph(self):

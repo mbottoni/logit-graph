@@ -51,16 +51,12 @@ class GraphModel:
         return random_choice
 
     def add_remove_edge(self):
-        # Pre compute
-        # TODO: I dont need to pick every node
-        #sum_degrees = np.zeros(self.n)
-        #for i in range(self.n):
-        #    sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, d = self.d)
-
         i, j = np.random.choice(self.n, 2, replace=False)
-        #total_degree = (sum_degrees[i] + sum_degrees[j]) + self.sigma
-        total_degree = self.alpha * ( get_sum_degrees(self.graph, vertex=i, d=self.d) + self.beta * get_sum_degrees(self.graph, vertex=j, d=self.d) ) + self.sigma
-        self.graph[j, i] = self.graph[i, j] = self.get_edge_logit(total_degree) # here we can add or remove vertex
+        sum_i = get_sum_degrees(self.graph, vertex=i, d=self.d)
+        sum_j = get_sum_degrees(self.graph, vertex=j, d=self.d)
+        # Symmetric formulation: P(edge i,j) = logistic(sigma + beta * (S_i + S_j))
+        total_degree = self.sigma + self.beta * (sum_i + sum_j)
+        self.graph[j, i] = self.graph[i, j] = self.get_edge_logit(total_degree)
 
     def check_convergence_hist(self, graphs, stability_window=5, degree_dist_threshold=0.05):
         def degree_distribution_stability(graph1, graph2):
