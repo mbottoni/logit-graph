@@ -1,17 +1,11 @@
-import networkx as nx
-import numpy as np
 import random
-from scipy.stats import ks_2samp
+
 import networkx as nx
 import numpy as np
-from scipy.stats import entropy
-from scipy.spatial.distance import euclidean, cityblock
+from scipy.stats import ks_2samp
 
-import sys
-sys.path.append('..')
 from . import gic
 from . import param_estimator as pe
-from . import logit_estimator as est
 
 
 # Initial try to implement the model selection

@@ -1,11 +1,21 @@
+from __future__ import annotations
+
 import networkx as nx
 import numpy as np
 from scipy.stats import entropy
 from scipy.spatial.distance import euclidean, cityblock
-from numpy import errstate
+from typing import Any, Callable, Optional, Union
 
 class GraphInformationCriterion:
-    def __init__(self, graph, model, log_graph=None, p=None, dist='KL', **kwargs):
+    def __init__(
+        self,
+        graph: nx.Graph,
+        model: Union[str, Callable[..., nx.Graph]],
+        log_graph: Optional[nx.Graph] = None,
+        p: Optional[Union[float, list]] = None,
+        dist: str = 'KL',
+        **kwargs: Any,
+    ) -> None:
         self.graph = graph
         self.log_graph =  log_graph
         self.model = model
@@ -14,13 +24,13 @@ class GraphInformationCriterion:
         self.kwargs = kwargs
         self.n = graph.number_of_nodes()
 
-    def compute_spectral_density(self, graph):
+    def compute_spectral_density(self, graph: nx.Graph) -> tuple[np.ndarray, np.ndarray]:
         laplacian = nx.normalized_laplacian_matrix(graph)
         eigenvalues = np.linalg.eigvalsh(laplacian.todense())
         hist, bin_edges = np.histogram(eigenvalues, bins=50, range=(0, 2), density=True)
         return hist, bin_edges
 
-    def generate_model_graph(self):
+    def generate_model_graph(self) -> nx.Graph:
         if isinstance(self.model, str):
             if self.model == "ER":
                 return nx.erdos_renyi_graph(self.n, self.parameter)
@@ -45,7 +55,7 @@ class GraphInformationCriterion:
         else:
             raise ValueError(f"{self.model}: Model definition is not recognized.")
 
-    def calculate_gic(self, model_den=None):
+    def calculate_gic(self, model_den: Optional[np.ndarray] = None) -> float:
         graph_den, _ = self.compute_spectral_density(self.graph)
         if model_den is None:
             model_graph = self.generate_model_graph()
