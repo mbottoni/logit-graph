@@ -1,7 +1,6 @@
 import networkx as nx
 import numpy as np
-import sys
-sys.path.append('..')
+
 from . import gic
 
 class GraphParameterEstimator():

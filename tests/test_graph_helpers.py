@@ -8,7 +8,7 @@ def test_build_features_labels_sampled_balanced_sizes():
     G = nx.erdos_renyi_graph(20, 0.2, seed=1)
     X, y = _build_features_labels_sampled(G, d=1, max_edges=30, max_non_edges=30, random_state=123)
     assert X.shape[0] == len(y)
-    assert X.shape[1] == 3
+    assert X.shape[1] == 2  # Intercept + 1 symmetric feature (S_i + S_j)
     # Expect balanced labels
     assert sum(y) == 30
 

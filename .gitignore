@@ -44,3 +44,4 @@ statGraph/
 
 notebooks/runs/*
 *.gif
+src/logit_graph.egg-info/*
