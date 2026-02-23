@@ -1,32 +1,32 @@
+from __future__ import annotations
 
-import sys
 import os
+import gc
+from typing import Any, Optional, Union
 
-# Graph imports (relative within package)
-from . import graph
-from . import logit_estimator as estimator
-# from . import utils  # Not used here; avoid importing heavy viz deps at import-time
-from . import model_selection
-from . import gic
-from . import param_estimator as pe
-from . import graph
-from . import model_selection as ms
-from .degrees_counts import get_sum_degrees as _get_sum_degrees
-
-# usual imports
-import pickle
-import math
 import numpy as np
 import pandas as pd
-import gc
-import random
 import networkx as nx
 from tqdm import tqdm
+
+# Relative package imports
+from . import graph
+from . import logit_estimator as estimator
+from . import gic
+from . import model_selection as ms
+from .degrees_counts import get_sum_degrees as _get_sum_degrees
 
 
 
 ### Helper Functions ###
-def _build_features_labels_sampled(graph_input, d, max_edges=None, max_non_edges=None, random_state=None, verbose=False):
+def _build_features_labels_sampled(
+    graph_input: Union[np.ndarray, nx.Graph],
+    d: int,
+    max_edges: Optional[int] = None,
+    max_non_edges: Optional[int] = None,
+    random_state: Optional[int] = None,
+    verbose: bool = False,
+) -> tuple[np.ndarray, list[int]]:
     """
     Build a sampled feature matrix and labels for logistic regression without enumerating all non-edges.
 
@@ -91,14 +91,23 @@ def _build_features_labels_sampled(graph_input, d, max_edges=None, max_non_edges
     pairs = edges_sample + non_edges_sample
     labels = [1] * len(edges_sample) + [0] * len(non_edges_sample)
 
-    # Build feature matrix with intercept first (constant), then two features
-    feats = np.array([(sum_degrees[i], sum_degrees[j]) for (i, j) in pairs], dtype=float)
+    # Build feature matrix with intercept first (constant), then symmetric feature
+    feats = np.array([sum_degrees[i] + sum_degrees[j] for (i, j) in pairs], dtype=float).reshape(-1, 1)
     ones = np.ones((feats.shape[0], 1), dtype=float)
     features = np.concatenate([ones, feats], axis=1)
 
     return features, labels
 
-def estimate_sigma_only(graph_input, d, max_edges=None, max_non_edges=None, l1_wt=1, alpha=0, random_state=None, verbose=False):
+def estimate_sigma_only(
+    graph_input: Union[np.ndarray, nx.Graph],
+    d: int,
+    max_edges: Optional[int] = None,
+    max_non_edges: Optional[int] = None,
+    l1_wt: float = 1,
+    alpha: float = 0,
+    random_state: Optional[int] = None,
+    verbose: bool = False,
+) -> tuple[float, Any]:
     """
     Estimate sigma via LogitRegEstimator WITHOUT simulating any graph.
 
@@ -131,16 +140,26 @@ def estimate_sigma_only(graph_input, d, max_edges=None, max_non_edges=None, l1_w
     sigma = float(params[0])
     return sigma, result
 
-def estimate_sigma_many(graph_input, d, n_repeats=30, max_edges=None, max_non_edges=None, l1_wt=1, alpha=0, seed=42, verbose=False):
+def estimate_sigma_many(
+    graph_input: Union[np.ndarray, nx.Graph],
+    d: int,
+    n_repeats: int = 30,
+    max_edges: Optional[int] = None,
+    max_non_edges: Optional[int] = None,
+    l1_wt: float = 1,
+    alpha: float = 0,
+    seed: int = 42,
+    verbose: bool = False,
+) -> list[float]:
     """
     Repeat sigma estimation n_repeats times (with different RNG seeds) without simulation.
 
-    Returns list of sigma values.
+    Returns list of sigma values (floats).
     """
     sigmas = []
     for r in tqdm(range(int(n_repeats))):
         rs = None if seed is None else (seed + r)
-        sigma_r = estimate_sigma_only(
+        sigma_r, _result = estimate_sigma_only(
             graph_input, d=d, max_edges=max_edges, max_non_edges=max_non_edges,
             l1_wt=l1_wt, alpha=alpha, random_state=rs, verbose=verbose
         )
@@ -150,7 +169,7 @@ def estimate_sigma_many(graph_input, d, n_repeats=30, max_edges=None, max_non_ed
 #####
 #####
 
-def calculate_graph_attributes(graph_to_analyze):
+def calculate_graph_attributes(graph_to_analyze: Optional[nx.Graph]) -> dict[str, Any]:
     """Calculate various graph attributes for a given graph."""
     if graph_to_analyze is None or graph_to_analyze.number_of_nodes() == 0:
         return {attr: np.nan for attr in [
@@ -187,7 +206,7 @@ def calculate_graph_attributes(graph_to_analyze):
 
     return attrs
 
-def clean_and_convert_param(param):
+def clean_and_convert_param(param: Any) -> float:
     """Clean and convert parameter string to float."""
     if isinstance(param, (int, float)):
         return param
@@ -202,8 +221,20 @@ class LogitGraphFitter:
     """
     Fits a single Logit Graph model to a real graph, following a scikit-learn-like API.
     """
-    def __init__(self, d=0, n_iteration=10000, warm_up=500, patience=2000,
-                 dist_type='KL', edge_delta=None, min_gic_threshold=5, verbose=True, er_p=0.05, init_graph=None):
+    def __init__(
+        self,
+        d: int = 0,
+        n_iteration: int = 10000,
+        warm_up: int = 500,
+        patience: int = 2000,
+        dist_type: str = 'KL',
+        edge_delta: Optional[float] = None,
+        min_gic_threshold: float = 5,
+        check_interval: int = 50,
+        verbose: bool = True,
+        er_p: float = 0.05,
+        init_graph: Optional[nx.Graph] = None,
+    ) -> None:
         """
         Initializes the LogitGraphFitter with model parameters.
 
@@ -211,10 +242,12 @@ class LogitGraphFitter:
             d (int): The dimension of the latent space.
             n_iteration (int): The maximum number of iterations for edge generation.
             warm_up (int): The number of warm-up iterations.
-            patience (int): The number of iterations to wait for improvement before stopping.
+            patience (int): The number of consecutive checks without improvement before stopping.
             dist_type (str): The distance type for GIC calculation ('KL', etc.).
             edge_delta (float, optional): Edge convergence threshold. Defaults to None.
             min_gic_threshold (float, optional): GIC convergence threshold. Defaults to 5.
+            check_interval (int): How often (in iterations) to compute the
+                expensive spectrum/GIC during graph generation.  Defaults to 50.
             verbose (bool): Whether to print progress information.
         """
         self.d = d
@@ -225,13 +258,14 @@ class LogitGraphFitter:
         self.dist_type = dist_type
         self.edge_delta = edge_delta
         self.min_gic_threshold = min_gic_threshold
+        self.check_interval = check_interval
         self.verbose = verbose
         self.init_graph = init_graph
         
         self.fitted_graph = None
         self.metadata = {}
 
-    def fit(self, original_graph):
+    def fit(self, original_graph: nx.Graph) -> LogitGraphFitter:
         """
         Fits the Logit Graph model to the provided graph.
 
@@ -260,13 +294,14 @@ class LogitGraphFitter:
             # Build adjacency from the undirected graph to avoid double-counting edges
             adj_matrix = nx.to_numpy_array(undirected_graph)
             
-            best_graph_arr, sigma, gic_val, spectrum_diffs, edge_diffs, best_iter, all_graphs, gic_values = self._generate_graph(adj_matrix)
+            best_graph_arr, sigma, beta, gic_val, spectrum_diffs, edge_diffs, best_iter, all_graphs, gic_values = self._generate_graph(adj_matrix)
             
             self.fitted_graph = nx.from_numpy_array(best_graph_arr)
             
             self.metadata.update({
                 'fit_success': True,
                 'sigma': sigma,
+                'beta': beta,
                 'gic_value': gic_val,
                 'best_iteration': best_iter,
                 'fitted_nodes': self.fitted_graph.number_of_nodes(),
@@ -290,7 +325,9 @@ class LogitGraphFitter:
         
         return self
 
-    def _generate_graph(self, real_graph_arr):
+    def _generate_graph(
+        self, real_graph_arr: np.ndarray
+    ) -> tuple[np.ndarray, float, float, float, list[float], list[float], int, list[np.ndarray], list[float]]:
         """
         Internal method to estimate parameters and generate the graph.
         """
@@ -298,9 +335,10 @@ class LogitGraphFitter:
         features, labels = est.get_features_labels()
         _, params, _ = est.estimate_parameters(l1_wt=1, alpha=0, features=features, labels=labels)
         sigma = params[0]
+        beta = params[1]
 
         n = real_graph_arr.shape[0]
-        graph_model = graph.GraphModel(n=n, d=self.d, sigma=sigma, er_p=self.er_p, init_graph=self.init_graph)
+        graph_model = graph.GraphModel(n=n, d=self.d, sigma=sigma, beta=beta, er_p=self.er_p, init_graph=self.init_graph)
 
         if self.verbose:
             print(f"Running LG generation for d={self.d}...")
@@ -313,6 +351,7 @@ class LogitGraphFitter:
             edge_delta=self.edge_delta,
             min_gic_threshold=self.min_gic_threshold,
             gic_dist_type=self.dist_type,
+            check_interval=self.check_interval,
             verbose=self.verbose,
         )
         
@@ -321,13 +360,13 @@ class LogitGraphFitter:
             graph=nx.from_numpy_array(real_graph_arr),
             log_graph=best_graph_nx,
             model='LG',
-            dist_type=self.dist_type
+            dist=self.dist_type,
         ).calculate_gic()
         
         real_edges = np.sum(real_graph_arr) / 2
         edge_diffs = [abs(np.sum(g) / 2 - real_edges) for g in graphs]
 
-        return best_graph_arr, sigma, gic_value, spectrum_diffs, edge_diffs, best_iteration, graphs, gic_values
+        return best_graph_arr, sigma, beta, gic_value, spectrum_diffs, edge_diffs, best_iteration, graphs, gic_values
 
 
 class LogitGraphSimulation:
@@ -340,8 +379,23 @@ class LogitGraphSimulation:
         G = sim.simulated_graph
         info = sim.metadata
     """
-    def __init__(self, n, d, sigma, alpha=1.0, beta=1.0, er_p=0.05,
-                 n_iteration=10000, warm_up=500, patience=2000, verbose=True, init_graph=None):
+    def __init__(
+        self,
+        n: int,
+        d: int,
+        sigma: float,
+        alpha: float = 1.0,
+        beta: float = 1.0,
+        er_p: float = 0.05,
+        n_iteration: int = 10000,
+        warm_up: int = 500,
+        patience: int = 2000,
+        check_interval: int = 50,
+        edge_cv_tol: float = 0.02,
+        spectrum_cv_tol: float = 0.02,
+        verbose: bool = True,
+        init_graph: Optional[nx.Graph] = None,
+    ) -> None:
         """
         Initializes the LogitGraphSimulation with model and run parameters.
 
@@ -354,7 +408,14 @@ class LogitGraphSimulation:
             er_p (float): Probability for ER seed graph if no init_graph is provided.
             n_iteration (int): Maximum number of iterations.
             warm_up (int): Warm-up iterations before checking convergence.
-            patience (int): Stability window for baseline stopping criteria.
+            patience (int): Number of measurements in the rolling convergence
+                window.
+            check_interval (int): How often (in iterations) to record a
+                measurement and test for convergence.
+            edge_cv_tol (float): Coefficient-of-variation threshold for
+                edge-count stability.
+            spectrum_cv_tol (float): Coefficient-of-variation threshold for
+                spectrum-norm stability.
             verbose (bool): Whether to print progress.
             init_graph (nx.Graph|None): Optional initial graph to start from.
         """
@@ -367,13 +428,16 @@ class LogitGraphSimulation:
         self.n_iteration = n_iteration
         self.warm_up = warm_up
         self.patience = patience
+        self.check_interval = check_interval
+        self.edge_cv_tol = edge_cv_tol
+        self.spectrum_cv_tol = spectrum_cv_tol
         self.verbose = verbose
         self.init_graph = init_graph
 
         self.simulated_graph = None
         self.metadata = {}
 
-    def simulate(self):
+    def simulate(self) -> LogitGraphSimulation:
         """
         Runs the simulation and stores the resulting NetworkX graph and metadata.
 
@@ -402,7 +466,9 @@ class LogitGraphSimulation:
 
             # Use baseline simulator (no reference/real graph needed)
             graphs, spectra = graph_model.populate_edges_baseline(
-                warm_up=self.warm_up, max_iterations=self.n_iteration, patience=self.patience
+                warm_up=self.warm_up, max_iterations=self.n_iteration,
+                patience=self.patience, check_interval=self.check_interval,
+                edge_cv_tol=self.edge_cv_tol, spectrum_cv_tol=self.spectrum_cv_tol,
             )
 
             final_graph_arr = graphs[-1] if graphs else graph_model.graph
@@ -431,7 +497,17 @@ class GraphModelComparator:
     """
     Compares Logit Graph with other random graph models, with a scikit-learn-like API.
     """
-    def __init__(self, d_list, lg_params, other_model_n_runs=2, other_model_params=None, dist_type='KL', verbose=True, other_models=None, other_model_grid_points=5):
+    def __init__(
+        self,
+        d_list: list[int],
+        lg_params: dict[str, Any],
+        other_model_n_runs: int = 2,
+        other_model_params: Optional[list[dict[str, Any]]] = None,
+        dist_type: str = 'KL',
+        verbose: bool = True,
+        other_models: Optional[list[str]] = None,
+        other_model_grid_points: int = 5,
+    ) -> None:
         """
         Initializes the GraphModelComparator.
 
@@ -465,7 +541,7 @@ class GraphModelComparator:
         self.summary_df = None
         self.fitted_graphs_data = {}
 
-    def compare(self, original_graph, graph_filepath):
+    def compare(self, original_graph: nx.Graph, graph_filepath: str) -> GraphModelComparator:
         """
         Fits LG and other models to the graph and compares them.
 
@@ -498,7 +574,7 @@ class GraphModelComparator:
         
         return self
 
-    def _fit_best_lg(self, adj_matrix):
+    def _fit_best_lg(self, adj_matrix: np.ndarray) -> None:
         if self.verbose:
             print("\n--- Fitting Logit Graph (LG) model ---")
         
@@ -549,7 +625,9 @@ class GraphModelComparator:
             if self.verbose:
                 print("LG fitting failed for all values of d.")
 
-    def _get_logit_graph_for_d(self, real_graph, d):
+    def _get_logit_graph_for_d(
+        self, real_graph: Union[np.ndarray, nx.Graph], d: int
+    ) -> tuple[np.ndarray, float, float, int, list[float], list[float], list[float]]:
         """Estimates parameters and generates a graph for a specific `d`."""
         if isinstance(real_graph, nx.Graph):
             real_graph = nx.to_numpy_array(real_graph)
@@ -558,10 +636,11 @@ class GraphModelComparator:
         features, labels = est.get_features_labels()
         _, params, _ = est.estimate_parameters(l1_wt=1, alpha=0, features=features, labels=labels)
         sigma = params[0]
+        beta = params[1]
 
         n = real_graph.shape[0]
         init_graph = self.lg_params.get('init_graph') if isinstance(self.lg_params, dict) else None
-        graph_model = graph.GraphModel(n=n, d=d, sigma=sigma, er_p=self.lg_params['er_p'], init_graph=init_graph)
+        graph_model = graph.GraphModel(n=n, d=d, sigma=sigma, beta=beta, er_p=self.lg_params['er_p'], init_graph=init_graph)
 
         if self.verbose:
             print(f"Running LG generation for d={d}...")
@@ -583,7 +662,7 @@ class GraphModelComparator:
             graph=nx.from_numpy_array(real_graph),
             log_graph=best_graph_nx,
             model='LG',
-            dist_type=self.dist_type
+            dist=self.dist_type,
         ).calculate_gic()
 
         real_edges = np.sum(real_graph) / 2
@@ -591,7 +670,7 @@ class GraphModelComparator:
 
         return best_graph_arr, sigma, gic_value, best_iteration, gic_values, spectrum_diffs, edge_diffs
 
-    def _fit_other_models(self, original_graph):
+    def _fit_other_models(self, original_graph: nx.Graph) -> None:
         if self.verbose:
             print("\n--- Fitting other random graph models ---")
         
@@ -656,7 +735,7 @@ class GraphModelComparator:
                 if self.verbose:
                     print(f"{model_name} fitting - GIC: {gic_value:.4f}, Param: {param:.4f}")
 
-    def _build_summary_df(self, graph_filepath):
+    def _build_summary_df(self, graph_filepath: str) -> None:
         if self.verbose:
             print("\n--- Calculating graph attributes ---")
         
