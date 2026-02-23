@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 import numpy as np
 from scipy.optimize import minimize
+from typing import Any, Optional, Union
+
 try:
     import torch
 except Exception:  # Make torch optional
@@ -18,7 +22,7 @@ max_val = np.nan
 eps = 1e-5
 
 class NegativeLogLikelihoodLoss(torch.nn.Module if torch is not None else object):
-    def __init__(self, graph, d):
+    def __init__(self, graph: np.ndarray, d: int) -> None:
         super(NegativeLogLikelihoodLoss, self).__init__()
         if torch is None:
             raise ImportError("PyTorch is required for NegativeLogLikelihoodLoss. Install with `pip install torch`.\n"
@@ -27,12 +31,12 @@ class NegativeLogLikelihoodLoss(torch.nn.Module if torch is not None else object
         self.n = graph.shape[0]
         self.d = d
 
-    def logistic_probability(self, sum_degrees):
+    def logistic_probability(self, sum_degrees: Any) -> Any:
         num = torch.exp(sum_degrees)
         denom = 1 + 1 * torch.exp(sum_degrees)
         return num / denom
 
-    def forward(self, params):
+    def forward(self, params: list) -> Any:
         alpha, beta, sigma = params
         likelihood = 0.0
 
@@ -55,77 +59,88 @@ class NegativeLogLikelihoodLoss(torch.nn.Module if torch is not None else object
         return -likelihood  # Return negative likelihood
 
 class MLEGraphModelEstimator:
-    def __init__(self, graph, d):
+    """Maximum-likelihood estimator for the logit-graph model (requires PyTorch)."""
+
+    def __init__(self, graph: np.ndarray, d: int) -> None:
+        if torch is None:
+            raise ImportError(
+                "PyTorch is required for MLEGraphModelEstimator. "
+                "Install with `pip install torch`.\n"
+                "Alternatively, use LogitRegEstimator which does not require torch.")
         self.graph = graph  # The observed adjacency matrix
         self.n = graph.shape[0]  # Number of nodes in the graph
+        self.d = d  # Neighbourhood depth for degree features
         self.params_history = []  # History of parameters during optimization
-        self.p = p
 
-    def logistic_probability(self, sum_degrees):
+    def logistic_probability(self, sum_degrees: Any) -> Any:
         num = torch.exp(sum_degrees)
-        denom = 1 + 1 * torch.exp(sum_degrees)
+        denom = 1 + torch.exp(sum_degrees)
         return num / denom
 
-    def likelihood_function(self, params):
+    def likelihood_function(self, params: list) -> float:
         """Negative log-likelihood function to be minimized."""
         alpha, beta, sigma = params
         likelihood = 0
 
         for i in range(self.n):
             for j in range(i, self.n):
-                #sum_degrees = np.sum(self.graph[i]) + np.sum(self.graph[j])  # Sum of degrees of nodes i and j
-                #p_ij = self.logistic_probability(c, beta, sum_degrees)  # Probability of edge (i, j)
-                degrees_i = get_sum_degrees(self.graph, i, self.p)
-                degrees_j = get_sum_degrees(self.graph, j, self.p)
-                sum_degrees_raw = ( alpha * degrees_i + beta * degrees_j )
-                sum_degrees = ( sum_degrees_raw + sigma )
+                degrees_i = get_sum_degrees(self.graph, i, self.d)
+                degrees_j = get_sum_degrees(self.graph, j, self.d)
+                sum_degrees_raw = alpha * degrees_i + beta * degrees_j
+                sum_degrees = sum_degrees_raw + sigma
                 p_ij = self.logistic_probability(sum_degrees)
 
-                if 1-p_ij+eps <= 0:
-                    return max_val
+                if 1 - p_ij + eps <= 0:
+                    return float(max_val)
 
                 if self.graph[i, j] == 1:
                     try:
-                        likelihood += np.log(abs(p_ij + eps))  # Adding a small constant to avoid log(0)
-                    except:
-                        return np.float(max_val)
+                        likelihood += np.log(abs(p_ij + eps))
+                    except Exception:
+                        return float(max_val)
                 else:
                     try:
                         likelihood += np.log(abs(1 - p_ij + eps))
-                    except:
-                        return np.float(max_val)
+                    except Exception:
+                        return float(max_val)
 
-        return likelihood  # Negative because we minimize in the optimization routine
+        return likelihood
 
-    def estimate_parameters(self, initial_guess=[0.5, 0.1, 0.1], learning_rate=0.01, max_iter=1000):
-            if torch is None:
-                raise ImportError("PyTorch is required for MLEGraphModelEstimator. Install with `pip install torch`.")
-            alpha, beta, sigma = [torch.tensor(x, dtype=torch.float32, requires_grad=True) for x in initial_guess]
-            optimizer = torch.optim.SGD([alpha, beta, sigma], lr=learning_rate)  # Using SGD optimizer from PyTorch
+    def estimate_parameters(
+        self,
+        initial_guess: Optional[list[float]] = None,
+        learning_rate: float = 0.01,
+        max_iter: int = 1000,
+    ) -> tuple[float, float, float]:
+        if initial_guess is None:
+            initial_guess = [0.5, 0.1, 0.1]
+        alpha, beta, sigma = [
+            torch.tensor(x, dtype=torch.float32, requires_grad=True)
+            for x in initial_guess
+        ]
+        optimizer = torch.optim.SGD([alpha, beta, sigma], lr=learning_rate)
 
-            # Instantiate the loss function class with the graph
-            loss_function = NegativeLogLikelihoodLoss(self.graph, self.p)
-            for _ in range(max_iter):
-                optimizer.zero_grad()  # Clear previous gradients
-                # Compute the loss by passing the parameters to the loss function instance
-                loss = loss_function([alpha, beta, sigma])
-                # Call backward on the loss tensor to compute gradients
-                loss.backward()
-                # Update parameters based on gradients
-                optimizer.step()
+        loss_function = NegativeLogLikelihoodLoss(self.graph, self.d)
+        for _ in range(max_iter):
+            optimizer.zero_grad()
+            loss = loss_function([alpha, beta, sigma])
+            loss.backward()
+            optimizer.step()
 
-                # Store parameters
-                self.params_history.append([alpha.item(), beta.item(), sigma.item()])
-                print(f"Current parameters: alpha={alpha.item()}, beta={beta.item()}, sigma={sigma.item()}, Loss={loss.item()}")
+            self.params_history.append([alpha.item(), beta.item(), sigma.item()])
 
-            print(f"Optimization completed. Estimated parameters: alpha={alpha.item()}, beta={beta.item()}, sigma={sigma.item()}")
-            return alpha.item(), beta.item(), sigma.item()
+        return alpha.item(), beta.item(), sigma.item()
 
 
 
 # Main estimator for the LG graph
 class LogitRegEstimator:
-    def __init__(self, graph, d, verbose=False):
+    def __init__(
+        self,
+        graph: Union[np.ndarray, nx.Graph],
+        d: int,
+        verbose: bool = False,
+    ) -> None:
         self.graph = graph  # The observed adjacency matrix
         if isinstance(graph, np.ndarray):
             self.n = graph.shape[0]  # Number of nodes in the graph
@@ -136,7 +151,7 @@ class LogitRegEstimator:
         self.d = d # number of degrees to search
         self.verbose = verbose
 
-    def get_features_labels(self):
+    def get_features_labels(self) -> tuple[np.ndarray, list[int]]:
         if self.verbose:
             print("Extracting features and labels...")
             
@@ -158,9 +173,9 @@ class LogitRegEstimator:
         for i in range(self.n):
             sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, d=self.d)
 
-        #features = np.array([(G.degree(i) / normalization, G.degree(j) / normalization) for i, j in data])
-        normalization = 1
-        features = np.array([(sum_degrees[i] / normalization, sum_degrees[j] / normalization) for i, j in data])
+        # Symmetric feature: sum of degree features for both endpoints
+        # This ensures P(edge i,j) = P(edge j,i) for undirected graphs
+        features = np.array([sum_degrees[i] + sum_degrees[j] for i, j in data]).reshape(-1, 1)
 
         # Add a constant term for the intercept
         features = sm.add_constant(features)
@@ -171,7 +186,13 @@ class LogitRegEstimator:
             
         return features, labels
 
-    def estimate_parameters(self, l1_wt=1, alpha=0, features=None, labels=None):
+    def estimate_parameters(
+        self,
+        l1_wt: float = 1,
+        alpha: float = 0,
+        features: Optional[np.ndarray] = None,
+        labels: Optional[list[int]] = None,
+    ) -> tuple[Any, np.ndarray, np.ndarray]:
         """
         Fits the logistic regression model using the extracted features and labels.
 

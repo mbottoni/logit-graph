@@ -29,10 +29,10 @@ def test_degree_vertex_multi_hop_no_duplicates():
     # Path 0-1-2-3
     adj = build_adj_from_edges(4, [(0, 1), (1, 2), (2, 3)])
 
-    # degrees: [1,2,2,1]
-    # Implementation: d=2 includes vertex degree and degrees at exactly 2 hops (node 2)
+    # degrees: node0=1, node1=2, node2=2, node3=1
+    # d=2 from vertex 0: vertex 0 (deg 1), dist-1 node 1 (deg 2), dist-2 node 2 (deg 2)
     vals = degree_vertex(adj, 0, d=2)
-    assert sorted(vals) == [1, 2]
+    assert sorted(vals) == [1, 2, 2]
 
 
 def test_get_sum_degrees_matches_sum_of_degree_vertex():
