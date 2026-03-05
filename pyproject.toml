@@ -39,6 +39,7 @@ dependencies = [
     "seaborn>=0.13.2",
     "powerlaw>=1.5.2",
     "tqdm>=4.66",
+    "umap-learn>=0.5.11",
 ]
 
 [build-system]
