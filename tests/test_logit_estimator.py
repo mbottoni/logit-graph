@@ -25,9 +25,12 @@ def test_estimate_parameters_runs_and_returns_result():
     adj = small_adj(12, 0.25, seed=2)
     est = LogitRegEstimator(adj, d=1)
     X, y = est.get_features_labels()
-    result, params, feats = est.estimate_parameters(l1_wt=1, alpha=0, features=X, labels=y)
-    # Expect intercept (sigma) + 1 coefficient (beta)
-    assert len(params) == 2
+    # Default fix_beta=True: only sigma is estimated (beta fixed at 1)
+    result, params, feats = est.estimate_parameters(features=X, labels=y)
+    assert len(params) == 1
     assert feats.shape == X.shape
+    # Legacy fix_beta=False: both sigma and beta estimated
+    result2, params2, _ = est.estimate_parameters(features=X, labels=y, fix_beta=False)
+    assert len(params2) == 2
 
 

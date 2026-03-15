@@ -6,6 +6,16 @@ from scipy.stats import entropy
 from scipy.spatial.distance import euclidean, cityblock
 from typing import Any, Callable, Optional, Union
 
+_MODEL_N_PARAMS: dict[str, int] = {
+    "ER": 1,
+    "BA": 1,
+    "WS": 2,
+    "GRG": 1,
+    "KR": 1,
+    "LG": 1,
+}
+
+
 class GraphInformationCriterion:
     def __init__(
         self,
@@ -55,24 +65,37 @@ class GraphInformationCriterion:
         else:
             raise ValueError(f"{self.model}: Model definition is not recognized.")
 
-    def calculate_gic(self, model_den: Optional[np.ndarray] = None) -> float:
+    def _get_n_params(self) -> int:
+        """Return the number of free parameters for the current model."""
+        if isinstance(self.model, str):
+            return _MODEL_N_PARAMS.get(self.model, 1)
+        return 1
+
+    def calculate_spectral_distance(self, model_den: Optional[np.ndarray] = None) -> float:
+        """Raw spectral distance (KL / L1 / L2) without complexity penalty."""
         graph_den, _ = self.compute_spectral_density(self.graph)
         if model_den is None:
             model_graph = self.generate_model_graph()
-            if self.model == "LG":
-                #print('gic module : ', type(model_graph), model_graph)
-                pass
             model_den, _ = self.compute_spectral_density(model_graph)
-        else:
-            model_den = model_den # for getting the avg spectrum
 
         if self.dist_type == 'KL':
-            distance = entropy(graph_den + 1e-10, model_den + 1e-10)  # KL divergence
+            distance = entropy(graph_den + 1e-10, model_den + 1e-10)
         elif self.dist_type == 'L1':
-            distance = cityblock(graph_den, model_den)  # L1 distance
+            distance = cityblock(graph_den, model_den)
         elif self.dist_type == 'L2':
-            distance = euclidean(graph_den, model_den)  # L2 distance
+            distance = euclidean(graph_den, model_den)
         else:
             raise ValueError("Unsupported distance type specified.")
 
         return distance
+
+    def calculate_gic(
+        self,
+        model_den: Optional[np.ndarray] = None,
+        n_params: Optional[int] = None,
+    ) -> float:
+        """GIC = 2 * spectral_distance + 2 * |theta|  (Eq. 4 in the paper)."""
+        distance = self.calculate_spectral_distance(model_den=model_den)
+        if n_params is None:
+            n_params = self._get_n_params()
+        return 2.0 * distance + 2.0 * n_params

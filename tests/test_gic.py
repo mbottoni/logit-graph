@@ -16,10 +16,13 @@ def test_compute_spectral_density_output_shapes():
 def test_calculate_gic_identical_graphs_near_zero():
     G = nx.erdos_renyi_graph(25, 0.3, seed=2)
     gic = GraphInformationCriterion(G, model='LG', log_graph=G, dist='L2')
-    # When comparing identical graphs, their spectral densities should match closely
-    d = gic.calculate_gic()
+    # Raw spectral distance between identical graphs should be ~0
+    d = gic.calculate_spectral_distance()
     assert d >= 0
     assert d < 1e-6 or np.isclose(d, 0.0)
+    # GIC adds the penalty: 2*distance + 2*n_params (LG has 1 param)
+    g = gic.calculate_gic()
+    assert np.isclose(g, 2.0, atol=1e-4)
 
 
 def test_generate_model_graph_by_string_models():
