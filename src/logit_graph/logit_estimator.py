@@ -192,52 +192,67 @@ class LogitRegEstimator:
         alpha: float = 0,
         features: Optional[np.ndarray] = None,
         labels: Optional[list[int]] = None,
+        fix_beta: bool = True,
     ) -> tuple[Any, np.ndarray, np.ndarray]:
         """
         Fits the logistic regression model using the extracted features and labels.
 
+        When ``fix_beta=True`` (default), the coefficient of the degree-sum
+        predictor is fixed at 1 (used as an offset) and only the intercept
+        sigma is estimated — matching the paper's formulation.  When
+        ``fix_beta=False``, both sigma and beta are estimated freely
+        (legacy behaviour).
+
         Args:
-        l1_wt (float): The L1 weight (0 for pure L2, 1 for pure L1).
-        alpha (float): Regularization strength. Larger values specify stronger regularization.
+            l1_wt (float): The L1 weight (0 for pure L2, 1 for pure L1).
+                Only used when ``fix_beta=False``.
+            alpha (float): Regularization strength.
+                Only used when ``fix_beta=False``.
+            fix_beta (bool): If True, fix beta=1 and estimate only sigma
+                via offset logistic regression (paper formulation).
         """
+        if features is None or labels is None:
+            features, labels = self.get_features_labels()
+
         if self.verbose:
             print("\nStarting parameter estimation...")
-            print(f"Regularization parameters: l1_weight={l1_wt}, alpha={alpha}")
+            print(f"fix_beta={fix_beta}")
 
-        # Suppress statsmodels warnings for overflow and divide by zero
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="overflow encountered in exp")
             warnings.filterwarnings("ignore", message="divide by zero encountered in log")
             warnings.filterwarnings("ignore", category=RuntimeWarning, module="statsmodels")
-            
-            # Logistic Regression Model using statsmodels with regularization
-            model = sm.Logit(labels, features)
 
-            ######################################
-            
-            # Fit the model with regularization
-            if l1_wt in [0, 1]:
-                # Pure L1 or L2 regularization
-                if self.verbose:
-                    print(f"Using pure {'L1' if l1_wt == 1 else 'L2'} regularization")
-                result = model.fit_regularized(method='l1' if l1_wt == 1 else None, alpha=alpha, disp=self.verbose)
+            if fix_beta:
+                intercept_col = features[:, 0:1]
+                offset_col = features[:, 1]
+                model = sm.Logit(labels, intercept_col, offset=offset_col)
+                try:
+                    result = model.fit(method='bfgs', disp=self.verbose)
+                except (np.linalg.LinAlgError, Exception):
+                    result = model.fit_regularized(
+                        method='l1', alpha=1e-4, disp=self.verbose,
+                    )
             else:
-                # Elastic Net (combination of L1 and L2)
-                if self.verbose:
-                    print("Using Elastic Net regularization")
-                result = model.fit_regularized(method='elastic_net', alpha=alpha, L1_wt=l1_wt, disp=self.verbose)
+                model = sm.Logit(labels, features)
+                if l1_wt in [0, 1]:
+                    result = model.fit_regularized(
+                        method='l1' if l1_wt == 1 else None,
+                        alpha=alpha, disp=self.verbose,
+                    )
+                else:
+                    result = model.fit_regularized(
+                        method='elastic_net', alpha=alpha,
+                        L1_wt=l1_wt, disp=self.verbose,
+                    )
 
-        ######################################
-
-        # Extract model parameters
         params = result.params
-        
+
         if self.verbose:
-            # Handle both pandas Series and numpy array formats
-            if hasattr(params, 'values'):
-                print(f"Estimated parameters: {params.values}")
-            else:
-                print(f"Estimated parameters: {params}")
-            print(f"Logistic regression converged: {result.mle_retvals.get('converged', 'N/A')}")
+            param_vals = params.values if hasattr(params, 'values') else params
+            print(f"Estimated parameters: {param_vals}")
+            mle_ret = getattr(result, 'mle_retvals', None)
+            if mle_ret:
+                print(f"Converged: {mle_ret.get('converged', 'N/A')}")
 
         return result, params, features

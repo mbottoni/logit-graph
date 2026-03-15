@@ -443,7 +443,7 @@ class GraphModel:
                         gic_calc = gic.GraphInformationCriterion(
                             real_nx_graph, model='LG',
                             log_graph=current_nx, dist=gic_dist_type)
-                        current_gic = gic_calc.calculate_gic()
+                        current_gic = gic_calc.calculate_spectral_distance()
                     except Exception:
                         current_gic = float('inf')
 

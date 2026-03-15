@@ -40,6 +40,7 @@ dependencies = [
     "powerlaw>=1.5.2",
     "tqdm>=4.66",
     "umap-learn>=0.5.11",
+    "pytest>=8.4.2",
 ]
 
 [build-system]
