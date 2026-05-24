@@ -49,3 +49,6 @@ src/logit_graph.egg-info/*
 
 notebooks/anova/runs/
 notebooks/changes_article/
+*/runs/*
+notebooks/misc_datasets/runs/
+notebooks/citation/runs/citation_kpm_sensitivity/
