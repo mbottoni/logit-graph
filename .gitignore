@@ -46,3 +46,6 @@ notebooks/runs/*
 *.gif
 src/logit_graph.egg-info/*
 *.pdf
+
+notebooks/anova/runs/
+notebooks/changes_article/
