@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from logit_graph.experiments.presets import AICSweepConfig, SigmaSweepConfig
-from logit_graph.experiments.sweeps import run_aic_d_sweep, run_sigma_sweep
+from logit_graph.experiments.sweeps import collect_anova_pvalues, run_aic_d_sweep, run_sigma_sweep
 
 
 @pytest.fixture()
@@ -62,3 +62,27 @@ def test_aic_sweep_serial_vs_parallel(tiny_aic_cfg, tmp_path):
     )
     assert conf_serial == conf_parallel
     assert len(df_parallel) == tiny_aic_cfg.n_runs * len(tiny_aic_cfg.d_true_values)
+
+
+def test_roc_anova_serial_vs_rep_parallel(tmp_path):
+    """Rep-level thread parallelism should match serial p-values."""
+    common = dict(
+        n=30,
+        d=1,
+        sigma1=-1.0,
+        sigma2=-1.5,
+        n_reps=3,
+        n_experiments=4,
+        n_iter=500,
+        feature_mode_gen="incremental",
+        feature_mode_est="incremental",
+        target_density=0.10,
+        signal=0.5,
+        seed_base=42,
+        n_jobs=1,
+        rep_use_threads=True,
+    )
+    serial = collect_anova_pvalues(**common, rep_jobs=1)
+    parallel = collect_anova_pvalues(**common, rep_jobs=2)
+    assert serial.shape == parallel.shape
+    assert serial.tolist() == parallel.tolist()

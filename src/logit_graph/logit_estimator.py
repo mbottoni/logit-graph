@@ -260,16 +260,15 @@ class LogitRegEstimator:
             mode=use_mode,
             layer2=use_layer2,
         )
-        result = self._fit_offset_logit(offsets, labels_arr)
-        ll = float(result.llf)
-        k = 1
-        aic = -2.0 * ll + 2.0 * k + extra_penalty
-        sigma_hat = float(result.params[0])
+        from .offset_logit import aic_from_offset_fit, fit_offset_logit_fast
+
+        sigma_hat, ll = fit_offset_logit_fast(offsets, labels_arr)
+        fit = aic_from_offset_fit(sigma_hat, ll, extra_penalty=extra_penalty)
         return {
-            "aic": aic,
-            "ll": ll,
-            "k": float(k),
-            "sigma_hat": sigma_hat,
+            "aic": fit["aic"],
+            "ll": fit["ll"],
+            "k": fit["k"],
+            "sigma_hat": fit["sigma_hat"],
             "d_est": float(d_use),
             "n_obs": float(len(labels_arr)),
         }

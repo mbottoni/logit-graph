@@ -359,6 +359,7 @@ class GraphModel:
                 adj=self.graph,
             )
             fg.run_steps(max_iterations, self._rng)
+            self._csr_rows = fg.rows
             self.graph = fg.to_adjacency()
             self._init_cache()
             spectra = self.calculate_spectrum(self.graph)

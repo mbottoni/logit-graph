@@ -158,6 +158,12 @@ def build_pair_dataset(
     """
     adj = _adj_from_input(graph)
     n = adj.shape[0]
+
+    if layer2 and max_pairs is None:
+        from .lg_features_fast import build_pair_dataset_fast
+
+        return build_pair_dataset_fast(adj, d, mode=mode, alpha_gwesp=alpha_gwesp)
+
     rng = np.random.default_rng(seed)
 
     pairs: list[tuple[int, int]] = []

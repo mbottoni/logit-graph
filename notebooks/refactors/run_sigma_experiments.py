@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def _default_jobs() -> int:
-    return min(4, max(1, (os.cpu_count() or 2) - 1))
+    return max(1, (os.cpu_count() or 2) - 1)
 
 
 def main() -> None:
@@ -22,6 +22,10 @@ def main() -> None:
         run_sigma_sweep,
         summarize_sigma_insights,
     )
+    from logit_graph.experiments.sweeps import (
+        sigma_sweep_csv_path,
+        sigma_sweep_results_json_path,
+    )
 
     OUT = Path(__file__).resolve().parents[2] / "images" / "correction_paper"
     OUT.mkdir(parents=True, exist_ok=True)
@@ -32,6 +36,10 @@ def main() -> None:
     N_JOBS = int(os.environ.get("LG_SIGMA_JOBS", _default_jobs()))
 
     cfg = PRESETS[MODE]["sigma"]
+    if "LG_SIGMA_ITER_CAP" in os.environ:
+        cfg.iter_cap = int(os.environ["LG_SIGMA_ITER_CAP"])
+    elif os.environ.get("LG_SIGMA_ITER_CAP", "").lower() == "none":
+        cfg.iter_cap = None
     print(
         f"Mode={MODE}, n={cfg.n_values}, reps={cfg.n_reps}, iter_cap={cfg.iter_cap}, "
         f"cache={USE_CACHE}, jobs={N_JOBS}",
@@ -40,6 +48,9 @@ def main() -> None:
     df = run_sigma_sweep(cfg, OUT, use_cache=USE_CACHE, n_jobs=N_JOBS)
     plot_convergence_sigma(df, OUT / "convergence_sigma.png")
     print(f"Saved {OUT / 'convergence_sigma.png'}")
+    print(f"Data CSV: {sigma_sweep_csv_path(OUT, cfg)}")
+    print(f"Metadata: {sigma_sweep_results_json_path(OUT, cfg)}")
+    print("Replot later: python notebooks/refactors/run_sigma_replot.py")
 
     summary = summarize_sigma_insights(df)
     print(summary)

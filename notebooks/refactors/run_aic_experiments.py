@@ -16,6 +16,8 @@ def main() -> None:
 
     from logit_graph.experiments import (
         PRESETS,
+        aic_results_json_path,
+        aic_trials_path,
         plot_aic_confusion,
         run_aic_d_sweep,
         summarize_aic_insights,
@@ -27,17 +29,22 @@ def main() -> None:
     MODE = os.environ.get("LG_EXPERIMENT_MODE", "INSIGHT")
     USE_CACHE = os.environ.get("LG_AIC_USE_CACHE", "1") == "1"
     N_JOBS = int(os.environ.get("LG_AIC_JOBS", _default_jobs()))
+    ENSEMBLE_JOBS = os.environ.get("LG_AIC_ENSEMBLE_JOBS")
 
     cfg = PRESETS[MODE]["aic"]
     print(
         f"Mode={MODE}, n={cfg.n_sizes}, runs={cfg.n_runs}, "
         f"M={cfg.m_ensemble}, iter_cap={cfg.iter_cap}, pen={cfg.aic_penalty_per_d}, "
-        f"cache={USE_CACHE}, jobs={N_JOBS}",
+        f"cache={USE_CACHE}, jobs={N_JOBS}"
+        + (f", ensemble_jobs={ENSEMBLE_JOBS}" if ENSEMBLE_JOBS else ""),
     )
 
     _, conf = run_aic_d_sweep(cfg, OUT, use_cache=USE_CACHE, n_jobs=N_JOBS)
     plot_aic_confusion(conf, cfg.d_true_values, OUT / "aic_d_confusion_n_sweep.png")
     print(f"Saved {OUT / 'aic_d_confusion_n_sweep.png'}")
+    print(f"Trials CSV: {aic_trials_path(OUT, cfg)}")
+    print(f"Results JSON: {aic_results_json_path(OUT, cfg)}")
+    print("Replot later: python notebooks/refactors/run_aic_replot.py")
 
     summary = summarize_aic_insights(conf, cfg.d_true_values)
     print(summary)
