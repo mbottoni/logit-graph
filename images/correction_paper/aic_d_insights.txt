@@ -1,0 +1,8 @@
+AIC d-selection confusion (rows=d_true, cols=d_hat):
+  n=80
+      d̂= 0  d̂= 1  d̂= 2  d̂= 3   acc
+  d_true=0:     3     0     0     0   100%
+  d_true=1:     0     3     0     0   100%
+  d_true=2:     0     0     3     0   100%
+  d_true=3:     0     0     0     3   100%
+  overall accuracy: 100%

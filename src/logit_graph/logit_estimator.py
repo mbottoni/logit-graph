@@ -17,6 +17,7 @@ import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
 from .degrees_counts import degree_vertex, get_sum_degrees
+from .lg_features import FeatureMode, build_pair_dataset, pair_feature_layer2
 
 max_val = np.nan
 eps = 1e-5
@@ -140,51 +141,130 @@ class LogitRegEstimator:
         graph: Union[np.ndarray, nx.Graph],
         d: int,
         verbose: bool = False,
+        layer2: bool = True,
+        feature_mode: FeatureMode = "bounded",
     ) -> None:
         self.graph = graph  # The observed adjacency matrix
         if isinstance(graph, np.ndarray):
             self.n = graph.shape[0]  # Number of nodes in the graph
+            self.adj = graph
         elif isinstance(graph, nx.Graph):
             self.n = graph.number_of_nodes()
+            self.adj = nx.to_numpy_array(graph)
         else:
             raise ValueError("Unsupported graph type. Please provide a NumPy array or NetworkX graph.")
         self.d = d # number of degrees to search
         self.verbose = verbose
+        self.layer2 = layer2
+        self.feature_mode = feature_mode
 
-    def get_features_labels(self) -> tuple[np.ndarray, list[int]]:
+    def get_features_labels(
+        self,
+        layer2: Optional[bool] = None,
+        feature_mode: Optional[FeatureMode] = None,
+        max_pairs: Optional[int] = None,
+        seed: Optional[int] = None,
+    ) -> tuple[np.ndarray, list[int]]:
         if self.verbose:
             print("Extracting features and labels...")
-            
-        G = nx.Graph(self.graph)
 
-        edges = list(set(G.edges()))
-        non_edges = list(set(nx.non_edges(G)))
+        use_layer2 = self.layer2 if layer2 is None else layer2
+        use_mode = self.feature_mode if feature_mode is None else feature_mode
 
-        # Combine edges and non-edges to form the dataset
-        data = edges + non_edges
-        labels = [1] * len(edges) + [0] * len(non_edges)
+        offsets, labels_arr = build_pair_dataset(
+            self.adj,
+            d=self.d,
+            mode=use_mode,
+            layer2=use_layer2,
+            max_pairs=max_pairs,
+            seed=seed,
+        )
+        features = sm.add_constant(offsets.reshape(-1, 1))
+        labels = labels_arr.tolist()
 
         if self.verbose:
-            print(f"Found {len(edges)} edges and {len(non_edges)} non-edges")
-            print("Computing sum of degrees for each vertex...")
+            print(f"Feature matrix shape: {features.shape}, edges={sum(labels)}")
 
-        # Pre compute
-        sum_degrees = np.zeros(self.n)
-        for i in range(self.n):
-            sum_degrees[i] = get_sum_degrees(self.graph, vertex=i, d=self.d)
-
-        # Symmetric feature: sum of degree features for both endpoints
-        # This ensures P(edge i,j) = P(edge j,i) for undirected graphs
-        features = np.array([sum_degrees[i] + sum_degrees[j] for i, j in data]).reshape(-1, 1)
-
-        # Add a constant term for the intercept
-        features = sm.add_constant(features)
-        
-        if self.verbose:
-            print("Feature extraction complete")
-            print(f"Feature matrix shape: {features.shape}")
-            
         return features, labels
+
+    def _fit_offset_logit(
+        self,
+        offsets: np.ndarray,
+        labels: np.ndarray,
+    ) -> Any:
+        """Fit logit(y) = sigma + offsets with sigma as intercept."""
+        y = np.asarray(labels, dtype=int)
+        x = np.ones((len(y), 1), dtype=float)
+        off = np.asarray(offsets, dtype=float)
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="overflow encountered in exp")
+            warnings.filterwarnings("ignore", message="divide by zero encountered in log")
+            warnings.filterwarnings("ignore", category=RuntimeWarning, module="statsmodels")
+
+            for method in ("bfgs", "newton", "lbfgs"):
+                try:
+                    model = sm.Logit(y, x, offset=off)
+                    result = model.fit(method=method, disp=self.verbose, maxiter=300)
+                    if np.isfinite(result.llf):
+                        return result
+                except Exception:
+                    continue
+
+            model = sm.Logit(y, x, offset=off)
+            return model.fit_regularized(method="l1", alpha=1e-4, disp=self.verbose)
+
+    def compute_aic(
+        self,
+        d_est: Optional[int] = None,
+        feature_mode: Optional[FeatureMode] = None,
+        layer2: Optional[bool] = None,
+        extra_penalty: float = 0.0,
+    ) -> dict[str, float]:
+        """Paper AIC: -2*ll + 2 (one parameter sigma)."""
+        d_use = self.d if d_est is None else d_est
+        use_mode = self.feature_mode if feature_mode is None else feature_mode
+        use_layer2 = self.layer2 if layer2 is None else layer2
+
+        offsets, labels_arr = build_pair_dataset(
+            self.adj,
+            d=d_use,
+            mode=use_mode,
+            layer2=use_layer2,
+        )
+        result = self._fit_offset_logit(offsets, labels_arr)
+        ll = float(result.llf)
+        k = 1
+        aic = -2.0 * ll + 2.0 * k + extra_penalty
+        sigma_hat = float(result.params[0])
+        return {
+            "aic": aic,
+            "ll": ll,
+            "k": float(k),
+            "sigma_hat": sigma_hat,
+            "d_est": float(d_use),
+            "n_obs": float(len(labels_arr)),
+        }
+
+    def select_d(
+        self,
+        d_candidates: Optional[list[int]] = None,
+        feature_mode: Optional[FeatureMode] = None,
+        extra_penalty_per_d: float = 0.0,
+    ) -> tuple[int, dict[int, dict[str, float]]]:
+        """Return argmin_d AIC(d) and per-d stats."""
+        if d_candidates is None:
+            d_candidates = [0, 1, 2, 3]
+        use_mode = self.feature_mode if feature_mode is None else feature_mode
+        stats: dict[int, dict[str, float]] = {}
+        for d_c in d_candidates:
+            stats[d_c] = self.compute_aic(
+                d_est=d_c,
+                feature_mode=use_mode,
+                extra_penalty=extra_penalty_per_d * d_c,
+            )
+        best = min(stats, key=lambda d: stats[d]["aic"])
+        return best, stats
 
     def estimate_parameters(
         self,
