@@ -39,6 +39,7 @@ dependencies = [
     "seaborn>=0.13.2",
     "powerlaw>=1.5.2",
     "tqdm>=4.66",
+    "numba>=0.59",
     "umap-learn>=0.5.11",
     "pytest>=8.4.2",
 ]

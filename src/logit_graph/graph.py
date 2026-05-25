@@ -9,7 +9,12 @@ from tqdm.auto import tqdm
 from typing import Optional, Union
 
 from .degrees_counts import degree_vertex, get_sum_degrees
-from .lg_features import FeatureMode, pair_feature_layer2, recommended_iterations
+from .lg_features import FeatureMode, MODE_TO_CODE, pair_feature_layer2, recommended_iterations
+from .lg_features_fast import (
+    FastGibbsGraph,
+    nbrs_from_adj,
+    pair_feature_layer2_nbrs,
+)
 from . import gic
 
 
@@ -25,6 +30,7 @@ class GraphModel:
         init_graph: Optional[nx.Graph] = None,
         layer2: bool = True,
         feature_mode: FeatureMode = "incremental",
+        seed: Optional[int] = None,
     ) -> None:
         # NOTE: ``feature_mode`` defaults to ``"incremental"`` so the d=0
         # case has zero pair feature (pure Erdős–Rényi at ``p = expit(sigma)``)
@@ -39,14 +45,14 @@ class GraphModel:
         self.er_p = er_p
         self.layer2 = layer2
         self.feature_mode = feature_mode
+        self._adj_only: bool = False
+
+        self._rng = np.random.default_rng(seed)
 
         if init_graph is not None and isinstance(init_graph, nx.Graph):
             self.graph = nx.to_numpy_array(init_graph)
         else:
             self.graph = self.generate_small_er_graph(n, p=er_p)
-
-        # Fast RNG (numpy Generator API, faster than legacy np.random)
-        self._rng = np.random.default_rng()
 
         # Cached state — kept in sync by add_remove_edge
         self._init_cache()
@@ -56,9 +62,10 @@ class GraphModel:
     # ------------------------------------------------------------------
 
     def _init_cache(self) -> None:
-        """(Re-)compute the cached degree vector and edge count."""
+        """(Re-)compute the cached degree vector, neighbors, and edge count."""
         self._degrees: np.ndarray = self.graph.sum(axis=1)
         self._edge_count: int = int(np.triu(self.graph).sum())
+        self._nbrs: list[set[int]] = nbrs_from_adj(self.graph)
 
     # ------------------------------------------------------------------
     # Graph generators
@@ -68,7 +75,10 @@ class GraphModel:
         return np.zeros((n, n))
 
     def generate_small_er_graph(self, n: int, p: float) -> np.ndarray:
-        return nx.to_numpy_array(nx.erdos_renyi_graph(n, p))
+        """Vectorized ER sample (symmetric, uses ``self._rng``)."""
+        upper = self._rng.random((n, n)) < p
+        upper = np.triu(upper, k=1)
+        return (upper | upper.T).astype(float)
 
     # ------------------------------------------------------------------
     # Spectrum — direct numpy Laplacian (no NetworkX round-trip)
@@ -132,22 +142,85 @@ class GraphModel:
             )
         return float(self._degrees[vertex])
 
-    def add_remove_edge(self) -> None:
-        """Propose a random node pair and set / clear their edge.
+    def _layer2_feature(self, i: int, j: int) -> float:
+        """Layer-2 pair feature via in-place neighbor-list toggle."""
+        return pair_feature_layer2_nbrs(
+            self._nbrs, i, j, self.d, mode=self.feature_mode,
+        )
 
-        Optimisations over the naive version:
-        - ``np.random.default_rng`` integers (2.7x vs legacy choice)
-        - Cached degree vector look-up (47x for d=0, 54x for d=1)
-        - Inline Bernoulli via ``rng.random() < p`` (9.4x vs np.random.choice)
-        - Incremental degree + edge-count update (O(1) vs O(n)/O(n^2))
-        """
-        # --- fast pair sampling ---
+    def _sync_edge(self, i: int, j: int, new_val: float, old_val: float) -> None:
+        """Update degrees and neighbor sets; dense adj unless adj-only mode."""
+        if old_val == new_val:
+            return
+        delta = new_val - old_val
+        self._degrees[i] += delta
+        self._degrees[j] += delta
+        self._edge_count += int(delta)
+        if not self._adj_only:
+            self.graph[i, j] = self.graph[j, i] = new_val
+        if new_val > 0:
+            self._nbrs[i].add(j)
+            self._nbrs[j].add(i)
+        else:
+            self._nbrs[i].discard(j)
+            self._nbrs[j].discard(i)
+
+    def _has_edge(self, i: int, j: int) -> float:
+        if self._adj_only:
+            return float(j in self._nbrs[i])
+        return self.graph[i, j]
+
+    def add_remove_edge(self) -> None:
+        """Propose a random node pair and set / clear their edge."""
         i = int(self._rng.integers(0, self.n))
         j = int(self._rng.integers(0, self.n - 1))
         if j >= i:
             j += 1
 
-        # --- features (Layer-2 optional) ---
+        if self.layer2:
+            feat = self._layer2_feature(i, j)
+        else:
+            sum_i = self._get_sum_degrees_fast(i)
+            sum_j = self._get_sum_degrees_fast(j)
+            if self.feature_mode == "paper_raw":
+                feat = sum_i + sum_j
+            elif self.feature_mode == "bounded":
+                feat = np.log1p(sum_i) + np.log1p(sum_j)
+            else:
+                feat = self._layer2_feature(i, j)
+
+        logit = self.sigma + self.alpha * self.beta * feat
+        p = expit(logit)
+        new_val = float(self._rng.random() < p)
+        old_val = self._has_edge(i, j)
+        self._sync_edge(i, j, new_val, old_val)
+
+    def add_remove_edge_adj_only(self) -> None:
+        """Neighbor-list path without dense-matrix sync (fast_mode partial)."""
+        prev = self._adj_only
+        self._adj_only = True
+        try:
+            self.add_remove_edge()
+        finally:
+            self._adj_only = prev
+
+    def materialize_adjacency(self) -> None:
+        """Rebuild dense adjacency from neighbor lists."""
+        n = self.n
+        adj = np.zeros((n, n), dtype=float)
+        for i in range(n):
+            for j in self._nbrs[i]:
+                adj[i, j] = 1.0
+        self.graph = adj
+        self._adj_only = False
+
+    def _add_remove_edge_legacy(self) -> None:
+        """Dense-matrix-copy layer-2 path (reference for equivalence tests)."""
+        i = int(self._rng.integers(0, self.n))
+        j = int(self._rng.integers(0, self.n - 1))
+        if j >= i:
+            j += 1
+
         if self.layer2:
             feat = pair_feature_layer2(
                 self.graph, i, j, self.d, mode=self.feature_mode,
@@ -167,15 +240,19 @@ class GraphModel:
         logit = self.sigma + self.alpha * self.beta * feat
         p = expit(logit)
         new_val = float(self._rng.random() < p)
-
-        # --- incremental update ---
         old_val = self.graph[i, j]
         if old_val != new_val:
-            delta = new_val - old_val          # +1.0 or -1.0
+            delta = new_val - old_val
             self._degrees[i] += delta
             self._degrees[j] += delta
             self._edge_count += int(delta)
             self.graph[i, j] = self.graph[j, i] = new_val
+            if new_val > 0:
+                self._nbrs[i].add(j)
+                self._nbrs[j].add(i)
+            else:
+                self._nbrs[i].discard(j)
+                self._nbrs[j].discard(i)
 
     # ------------------------------------------------------------------
     # Convergence helpers (unchanged)
@@ -270,8 +347,20 @@ class GraphModel:
         ``max_iterations`` Gibbs steps (for experiment sweeps).
         """
         if fast_mode:
-            for _ in range(max_iterations):
-                self.add_remove_edge()
+            fg = FastGibbsGraph(
+                self.n,
+                self.d,
+                self.sigma,
+                er_p=self.er_p,
+                rng=self._rng,
+                feature_mode=self.feature_mode,
+                alpha=self.alpha,
+                beta=self.beta,
+                adj=self.graph,
+            )
+            fg.run_steps(max_iterations, self._rng)
+            self.graph = fg.to_adjacency()
+            self._init_cache()
             spectra = self.calculate_spectrum(self.graph)
             return [self.graph.copy()], spectra
 

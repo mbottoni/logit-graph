@@ -1,9 +1,12 @@
 """Paper experiment sweeps (INSIGHT / SMOKE / DEV / PAPER presets)."""
-from .presets import PRESETS, AICSweepConfig, SigmaSweepConfig
+from .presets import PRESETS, AICSweepConfig, ROCSweepConfig, SigmaSweepConfig
 from .sweeps import (
     plot_aic_confusion,
     plot_convergence_sigma,
+    plot_roc_effect_size,
+    plot_roc_sample_size,
     run_aic_d_sweep,
+    run_roc_sweeps,
     run_sigma_sweep,
     run_sigma_estimator_ablation,
     flag_sigma_sweep_issues,
@@ -11,20 +14,28 @@ from .sweeps import (
     summarize_sigma_insights,
     simulate_graph,
     estimate_sigma_from_graph,
+    compute_roc_curve,
+    collect_anova_pvalues,
 )
 
 __all__ = [
     "PRESETS",
     "AICSweepConfig",
+    "ROCSweepConfig",
     "SigmaSweepConfig",
     "run_sigma_sweep",
+    "run_roc_sweeps",
     "run_aic_d_sweep",
     "run_sigma_estimator_ablation",
     "flag_sigma_sweep_issues",
     "summarize_aic_insights",
     "summarize_sigma_insights",
     "plot_convergence_sigma",
+    "plot_roc_effect_size",
+    "plot_roc_sample_size",
     "plot_aic_confusion",
     "simulate_graph",
     "estimate_sigma_from_graph",
+    "compute_roc_curve",
+    "collect_anova_pvalues",
 ]
