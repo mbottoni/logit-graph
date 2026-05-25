@@ -5,49 +5,64 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-for var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
-    os.environ.setdefault(var, "1")
 
-from logit_graph.experiments import (
-    PRESETS,
-    flag_sigma_sweep_issues,
-    plot_convergence_sigma,
-    run_sigma_estimator_ablation,
-    run_sigma_sweep,
-    summarize_sigma_insights,
-)
+def _default_jobs() -> int:
+    return min(4, max(1, (os.cpu_count() or 2) - 1))
 
-OUT = Path(__file__).resolve().parents[2] / "images" / "correction_paper"
-OUT.mkdir(parents=True, exist_ok=True)
 
-MODE = os.environ.get("LG_EXPERIMENT_MODE", "INSIGHT")
-RUN_ABLATION = os.environ.get("LG_SIGMA_ABLATION", "0") == "1"
+def main() -> None:
+    for var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ.setdefault(var, "1")
 
-cfg = PRESETS[MODE]["sigma"]
-print(f"Mode={MODE}, n={cfg.n_values}, reps={cfg.n_reps}, iter_cap={cfg.iter_cap}")
-
-df = run_sigma_sweep(cfg, OUT, use_cache=False)
-plot_convergence_sigma(df, OUT / "convergence_sigma.png")
-print(f"Saved {OUT / 'convergence_sigma.png'}")
-
-summary = summarize_sigma_insights(df)
-print(summary)
-(OUT / "convergence_sigma_insights.txt").write_text(summary + "\n")
-
-issues = flag_sigma_sweep_issues(df, target_density=cfg.target_density)
-if len(issues):
-    issues_path = OUT / "convergence_sigma_issues.csv"
-    issues.to_csv(issues_path, index=False)
-    print(f"Flagged {len(issues)} cells -> {issues_path}")
-
-if RUN_ABLATION:
-    ab = run_sigma_estimator_ablation(n=80, n_reps=2, n_iter=15_000)
-    ab_path = OUT / "convergence_sigma_ablation_n80.csv"
-    ab.to_csv(ab_path, index=False)
-    summary_ab = (
-        ab.groupby(["d", "sigma_true", "est_mode"])["sigma_error"]
-        .agg(["mean", "std"])
-        .reset_index()
+    from logit_graph.experiments import (
+        PRESETS,
+        flag_sigma_sweep_issues,
+        plot_convergence_sigma,
+        run_sigma_estimator_ablation,
+        run_sigma_sweep,
+        summarize_sigma_insights,
     )
-    summary_ab.to_csv(OUT / "convergence_sigma_ablation_summary.csv", index=False)
-    print(f"Saved ablation -> {ab_path}")
+
+    OUT = Path(__file__).resolve().parents[2] / "images" / "correction_paper"
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    MODE = os.environ.get("LG_EXPERIMENT_MODE", "INSIGHT")
+    RUN_ABLATION = os.environ.get("LG_SIGMA_ABLATION", "0") == "1"
+    USE_CACHE = os.environ.get("LG_SIGMA_USE_CACHE", "1") == "1"
+    N_JOBS = int(os.environ.get("LG_SIGMA_JOBS", _default_jobs()))
+
+    cfg = PRESETS[MODE]["sigma"]
+    print(
+        f"Mode={MODE}, n={cfg.n_values}, reps={cfg.n_reps}, iter_cap={cfg.iter_cap}, "
+        f"cache={USE_CACHE}, jobs={N_JOBS}",
+    )
+
+    df = run_sigma_sweep(cfg, OUT, use_cache=USE_CACHE, n_jobs=N_JOBS)
+    plot_convergence_sigma(df, OUT / "convergence_sigma.png")
+    print(f"Saved {OUT / 'convergence_sigma.png'}")
+
+    summary = summarize_sigma_insights(df)
+    print(summary)
+    (OUT / "convergence_sigma_insights.txt").write_text(summary + "\n")
+
+    issues = flag_sigma_sweep_issues(df, target_density=cfg.target_density)
+    if len(issues):
+        issues_path = OUT / "convergence_sigma_issues.csv"
+        issues.to_csv(issues_path, index=False)
+        print(f"Flagged {len(issues)} cells -> {issues_path}")
+
+    if RUN_ABLATION:
+        ab = run_sigma_estimator_ablation(n=80, n_reps=2, n_iter=15_000)
+        ab_path = OUT / "convergence_sigma_ablation_n80.csv"
+        ab.to_csv(ab_path, index=False)
+        summary_ab = (
+            ab.groupby(["d", "sigma_true", "est_mode"])["sigma_error"]
+            .agg(["mean", "std"])
+            .reset_index()
+        )
+        summary_ab.to_csv(OUT / "convergence_sigma_ablation_summary.csv", index=False)
+        print(f"Saved ablation -> {ab_path}")
+
+
+if __name__ == "__main__":
+    main()

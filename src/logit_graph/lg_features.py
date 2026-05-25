@@ -201,3 +201,14 @@ def build_pair_dataset(
             )
 
     return offsets, labels
+
+
+# Fast neighbor-list paths (Gibbs hot path; estimation keeps matrix API above).
+from .lg_features_fast import (  # noqa: E402
+    MODE_TO_CODE,
+    nbrs_from_adj,
+    nbrs_to_csr,
+    pair_feature_layer2_csr_py,
+    pair_feature_layer2_nbrs,
+    pair_feature_nbrs,
+)

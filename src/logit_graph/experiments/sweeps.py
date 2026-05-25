@@ -14,12 +14,110 @@ import pandas as pd
 from .. import graph as graph_mod
 from ..lg_features import FeatureMode, recommended_iterations
 from ..logit_estimator import LogitRegEstimator
-from .presets import AICSweepConfig, SigmaSweepConfig
+from .presets import AICSweepConfig, ROCSweepConfig, SigmaSweepConfig
 
 
 def _config_hash(cfg: Any) -> str:
     blob = json.dumps(cfg.__dict__, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def _sigma_cell_cache_path(
+    out_dir: Path,
+    cfg_hash: str,
+    d: int,
+    sigma_true: float,
+    n: int,
+) -> Path:
+    tag = f"d{d}_s{sigma_true:.1f}".replace(".", "p").replace("-", "m")
+    return out_dir / f"sigma_hats_{cfg_hash}_{tag}_n{n}.npz"
+
+
+def _aggregate_sigma_cell(
+    hats: list[float],
+    densities: list[float],
+    betas: list[float],
+    features: list[float],
+    *,
+    d: int,
+    sigma_true: float,
+    n: int,
+    nit: int,
+    n_reps: int,
+) -> dict[str, Any]:
+    arr = np.asarray(hats, dtype=float)
+    m = float(np.nanmean(arr))
+    se = float(np.nanstd(arr, ddof=1) / math.sqrt(len(arr))) if len(arr) > 1 else 0.0
+    return {
+        "d": d,
+        "sigma_true": sigma_true,
+        "n": n,
+        "sigma_hat_mean": m,
+        "sigma_hat_std": float(np.nanstd(arr, ddof=1)) if len(arr) > 1 else 0.0,
+        "ci_lo": m - 1.96 * se,
+        "ci_hi": m + 1.96 * se,
+        "n_iter": nit,
+        "n_reps": n_reps,
+        "density_mean": float(np.mean(densities)),
+        "density_std": float(np.std(densities, ddof=1)) if len(densities) > 1 else 0.0,
+        "beta_mean": float(np.mean(betas)),
+        "feature_mean": float(np.mean(features)),
+        "sigma_error": m - sigma_true,
+    }
+
+
+def _run_sigma_reps(
+    *,
+    d: int,
+    sigma_true: float,
+    n: int,
+    n_reps: int,
+    nit: int,
+    feature_mode_gen: FeatureMode,
+    feature_mode_est: FeatureMode,
+    target_density: float,
+    signal: float,
+    seed_base: int,
+    n_jobs: int,
+) -> tuple[list[float], list[float], list[float], list[float]]:
+    from .workers import sigma_rep_job
+
+    jobs = [
+        {
+            "d": d,
+            "sigma_true": sigma_true,
+            "n": n,
+            "rep": rep,
+            "n_iter": nit,
+            "feature_mode_gen": feature_mode_gen,
+            "feature_mode_est": feature_mode_est,
+            "target_density": target_density,
+            "signal": signal,
+            "seed": seed_base + hash((d, sigma_true, n, rep)) % (2**31 - 1),
+        }
+        for rep in range(n_reps)
+    ]
+
+    if n_jobs <= 1:
+        results = [sigma_rep_job(j) for j in jobs]
+    else:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        results: list[dict[str, Any]] = [{}] * n_reps
+        with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+            futures = {
+                pool.submit(sigma_rep_job, payload): payload["rep"]
+                for payload in jobs
+            }
+            for fut in as_completed(futures):
+                rep = futures[fut]
+                results[rep] = fut.result()
+
+    hats = [r["sigma_hat"] for r in results]
+    densities = [r["density"] for r in results]
+    betas = [r["beta"] for r in results]
+    features = [r["feature_mean"] for r in results]
+    return hats, densities, betas, features
 
 
 def _iter_count(
@@ -184,9 +282,8 @@ def simulate_graph(
         er_p=er_init,
         layer2=True,
         feature_mode=gen_mode,
+        seed=seed,
     )
-    if seed is not None:
-        gm._rng = np.random.default_rng(seed)
 
     gm.populate_edges_baseline(
         warm_up=0,
@@ -279,15 +376,574 @@ def estimate_sigma_from_graph(
     return float(stats["sigma_hat"])
 
 
+def _estimate_sigma_batch(
+    n: int,
+    d: int,
+    sigma_true: float,
+    n_reps: int,
+    *,
+    n_iter: int,
+    feature_mode_gen: FeatureMode,
+    feature_mode_est: FeatureMode,
+    target_density: float,
+    signal: float,
+    seed_base: int,
+) -> list[float]:
+    hats: list[float] = []
+    mode_est: FeatureMode = "incremental" if d == 0 else feature_mode_est
+    for rep in range(n_reps):
+        seed = seed_base + rep
+        adj = simulate_graph(
+            n, d, sigma=sigma_true,
+            n_iter=n_iter,
+            feature_mode=feature_mode_gen,
+            target_density=target_density,
+            signal=signal,
+            seed=seed,
+        )
+        hats.append(estimate_sigma_from_graph(adj, d, feature_mode=mode_est))
+    return hats
+
+
+def run_anova_pvalue(
+    n: int,
+    d: int,
+    sigma1: float,
+    sigma2: float,
+    *,
+    n_reps: int,
+    n_iter: int,
+    feature_mode_gen: FeatureMode,
+    feature_mode_est: FeatureMode,
+    target_density: float,
+    signal: float,
+    seed: int,
+) -> float:
+    """One Monte Carlo replicate: two groups of sigma_hat, one-way ANOVA p-value."""
+    from scipy import stats
+
+    g1 = _estimate_sigma_batch(
+        n, d, sigma1, n_reps,
+        n_iter=n_iter,
+        feature_mode_gen=feature_mode_gen,
+        feature_mode_est=feature_mode_est,
+        target_density=target_density,
+        signal=signal,
+        seed_base=seed,
+    )
+    g2 = _estimate_sigma_batch(
+        n, d, sigma2, n_reps,
+        n_iter=n_iter,
+        feature_mode_gen=feature_mode_gen,
+        feature_mode_est=feature_mode_est,
+        target_density=target_density,
+        signal=signal,
+        seed_base=seed + 10_000,
+    )
+    _, p_val = stats.f_oneway(g1, g2)
+    return float(p_val)
+
+
+def _anova_experiment_seed(
+    n: int,
+    d: int,
+    sigma1: float,
+    sigma2: float,
+    exp: int,
+    seed_base: int,
+) -> int:
+    return seed_base + hash((n, d, sigma1, sigma2, exp)) % (2**31 - 1)
+
+
+def _anova_experiment_job(payload: dict[str, Any]) -> float:
+    return run_anova_pvalue(
+        payload["n"],
+        payload["d"],
+        payload["sigma1"],
+        payload["sigma2"],
+        n_reps=payload["n_reps"],
+        n_iter=payload["n_iter"],
+        feature_mode_gen=payload["feature_mode_gen"],
+        feature_mode_est=payload["feature_mode_est"],
+        target_density=payload["target_density"],
+        signal=payload["signal"],
+        seed=payload["seed"],
+    )
+
+
+def collect_anova_pvalues(
+    n: int,
+    d: int,
+    sigma1: float,
+    sigma2: float,
+    *,
+    n_reps: int,
+    n_experiments: int,
+    n_iter: int,
+    feature_mode_gen: FeatureMode,
+    feature_mode_est: FeatureMode,
+    target_density: float,
+    signal: float,
+    seed_base: int,
+    n_jobs: int = 1,
+    checkpoint_path: Optional[Path] = None,
+    checkpoint_every: int = 10,
+) -> np.ndarray:
+    start = 0
+    p_values = np.empty(n_experiments, dtype=float)
+    if checkpoint_path is not None and checkpoint_path.is_file():
+        saved = np.load(checkpoint_path)
+        n_done = min(len(saved), n_experiments)
+        p_values[:n_done] = saved[:n_done]
+        start = n_done
+        if start:
+            print(f"    resume from {start}/{n_experiments}", flush=True)
+
+    jobs = [
+        {
+            "n": n,
+            "d": d,
+            "sigma1": sigma1,
+            "sigma2": sigma2,
+            "n_reps": n_reps,
+            "n_iter": n_iter,
+            "feature_mode_gen": feature_mode_gen,
+            "feature_mode_est": feature_mode_est,
+            "target_density": target_density,
+            "signal": signal,
+            "seed": _anova_experiment_seed(n, d, sigma1, sigma2, exp, seed_base),
+        }
+        for exp in range(start, n_experiments)
+    ]
+
+    if not jobs:
+        return p_values
+
+    if n_jobs <= 1:
+        for i, payload in enumerate(jobs, start=start):
+            p_values[i] = _anova_experiment_job(payload)
+            done = i + 1
+            if checkpoint_path is not None and done % checkpoint_every == 0:
+                np.save(checkpoint_path, p_values[:done])
+            if done % max(1, n_experiments // 10) == 0:
+                print(f"    exp {done}/{n_experiments}", flush=True)
+        if checkpoint_path is not None:
+            np.save(checkpoint_path, p_values)
+        return p_values
+
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    done = start
+    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+        futures = {
+            pool.submit(_anova_experiment_job, payload): start + offset
+            for offset, payload in enumerate(jobs)
+        }
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            p_values[idx] = fut.result()
+            done += 1
+            if checkpoint_path is not None and done % checkpoint_every == 0:
+                np.save(checkpoint_path, p_values[:done])
+            if done % max(1, n_experiments // 10) == 0:
+                print(f"    exp {done}/{n_experiments}", flush=True)
+    if checkpoint_path is not None:
+        np.save(checkpoint_path, p_values)
+    return p_values
+
+
+def compute_roc_curve(
+    p_values: np.ndarray,
+    thresholds: Optional[np.ndarray] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if thresholds is None:
+        thresholds = np.linspace(0.0, 1.0, 201)
+    rates = np.array([float(np.mean(p_values < t)) for t in thresholds], dtype=float)
+    return thresholds, rates
+
+
+def _roc_cell_pvalues_path(
+    out_dir: Path,
+    cfg_hash: str,
+    sweep: str,
+    d: int,
+    *,
+    sigma2: Optional[float] = None,
+    n: Optional[int] = None,
+) -> Path:
+    if sweep == "effect":
+        tag = f"effect_d{d}_s2{sigma2:.1f}".replace(".", "p").replace("-", "m")
+    else:
+        tag = f"sample_d{d}_n{n}"
+    return out_dir / f"roc_pvalues_{cfg_hash}_{tag}.npy"
+
+
+def _roc_rows_from_pvalues(
+    pvals: np.ndarray,
+    *,
+    sweep: str,
+    d: int,
+    sigma1: float,
+    sigma2: float,
+    n: int,
+    n_reps: int,
+    n_experiments: int,
+) -> list[dict[str, Any]]:
+    thresh, rates = compute_roc_curve(pvals)
+    power = float(np.mean(pvals < 0.05))
+    return [
+        {
+            "sweep": sweep,
+            "d": d,
+            "n": n,
+            "sigma1": sigma1,
+            "sigma2": sigma2,
+            "alpha": t,
+            "rejection_rate": r,
+            "power_at_005": power,
+            "n_reps": n_reps,
+            "n_experiments": n_experiments,
+        }
+        for t, r in zip(thresh, rates)
+    ]
+
+
+def _roc_all_cells_complete(cfg: ROCSweepConfig, out_dir: Path, cfg_hash: str) -> bool:
+    for d in cfg.d_values:
+        for sigma2 in cfg.sigma2_values:
+            if not _roc_cell_pvalues_path(
+                out_dir, cfg_hash, "effect", d, sigma2=sigma2,
+            ).is_file():
+                return False
+    for d in cfg.d_values:
+        for n in cfg.n_values:
+            if not _roc_cell_pvalues_path(
+                out_dir, cfg_hash, "sample", d, n=n,
+            ).is_file():
+                return False
+    return True
+
+
+def _load_rows_from_cell_caches(
+    cfg: ROCSweepConfig,
+    out_dir: Path,
+    cfg_hash: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for d in cfg.d_values:
+        for sigma2 in cfg.sigma2_values:
+            path = _roc_cell_pvalues_path(out_dir, cfg_hash, "effect", d, sigma2=sigma2)
+            if path.is_file():
+                pvals = np.load(path)
+                rows.extend(_roc_rows_from_pvalues(
+                    pvals,
+                    sweep="effect",
+                    d=d,
+                    sigma1=cfg.sigma1,
+                    sigma2=sigma2,
+                    n=cfg.n_effect,
+                    n_reps=cfg.n_reps,
+                    n_experiments=cfg.n_experiments,
+                ))
+    for d in cfg.d_values:
+        for n in cfg.n_values:
+            path = _roc_cell_pvalues_path(out_dir, cfg_hash, "sample", d, n=n)
+            if path.is_file():
+                pvals = np.load(path)
+                rows.extend(_roc_rows_from_pvalues(
+                    pvals,
+                    sweep="sample",
+                    d=d,
+                    sigma1=cfg.sigma1,
+                    sigma2=cfg.sigma2_fixed,
+                    n=n,
+                    n_reps=cfg.n_reps,
+                    n_experiments=cfg.n_experiments,
+                ))
+    return rows
+
+
+def run_roc_sweeps(
+    cfg: ROCSweepConfig,
+    out_dir: Path,
+    *,
+    use_cache: bool = True,
+    n_jobs: int = 1,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Run effect-size and sample-size ROC sweeps; return long-form DataFrames."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg_hash = _config_hash(cfg)
+    cache_path = out_dir / f"roc_sweeps_{cfg_hash}.csv"
+
+    if use_cache and cache_path.is_file() and _roc_all_cells_complete(cfg, out_dir, cfg_hash):
+        df = pd.read_csv(cache_path)
+        effect = df[df.sweep == "effect"].copy()
+        sample = df[df.sweep == "sample"].copy()
+        return effect, sample
+
+    rows: list[dict[str, Any]] = _load_rows_from_cell_caches(cfg, out_dir, cfg_hash)
+    gen_mode: FeatureMode = cfg.feature_mode_gen
+    est_mode: FeatureMode = cfg.feature_mode_est
+
+    # Sample-size sweep first (small n cells finish sooner).
+    total_sample = len(cfg.d_values) * len(cfg.n_values)
+    cell = 0
+    for d in cfg.d_values:
+        for n in sorted(cfg.n_values):
+            cell += 1
+            cell_path = _roc_cell_pvalues_path(
+                out_dir, cfg_hash, "sample", d, n=n,
+            )
+            ckpt_path = cell_path.with_suffix(".partial.npy")
+            nit = _iter_count(n, cfg.iter_cap, sigma_true=cfg.sigma1)
+            if use_cache and cell_path.is_file():
+                print(
+                    f"[roc sample {cell}/{total_sample}] cache hit d={d} n={n}",
+                    flush=True,
+                )
+                pvals = np.load(cell_path)
+            else:
+                print(
+                    f"[roc sample {cell}/{total_sample}] d={d} n={n} "
+                    f"iters={nit} exps={cfg.n_experiments} jobs={n_jobs}",
+                    flush=True,
+                )
+                seed = cfg.seed_base + 5000 + d * 1000 + n
+                pvals = collect_anova_pvalues(
+                    n, d, cfg.sigma1, cfg.sigma2_fixed,
+                    n_reps=cfg.n_reps,
+                    n_experiments=cfg.n_experiments,
+                    n_iter=nit,
+                    feature_mode_gen=gen_mode,
+                    feature_mode_est=est_mode,
+                    target_density=cfg.target_density,
+                    signal=cfg.signal,
+                    seed_base=seed,
+                    n_jobs=n_jobs,
+                    checkpoint_path=ckpt_path,
+                )
+                np.save(cell_path, pvals)
+                if ckpt_path.is_file():
+                    ckpt_path.unlink()
+            rows = [r for r in rows if not (r["sweep"] == "sample" and r["d"] == d and r["n"] == n)]
+            rows.extend(_roc_rows_from_pvalues(
+                pvals,
+                sweep="sample",
+                d=d,
+                sigma1=cfg.sigma1,
+                sigma2=cfg.sigma2_fixed,
+                n=n,
+                n_reps=cfg.n_reps,
+                n_experiments=cfg.n_experiments,
+            ))
+            pd.DataFrame(rows).to_csv(cache_path, index=False)
+
+    total_effect = len(cfg.d_values) * len(cfg.sigma2_values)
+    cell = 0
+    for d in cfg.d_values:
+        nit = _iter_count(cfg.n_effect, cfg.iter_cap, sigma_true=cfg.sigma1)
+        for sigma2 in cfg.sigma2_values:
+            cell += 1
+            cell_path = _roc_cell_pvalues_path(
+                out_dir, cfg_hash, "effect", d, sigma2=sigma2,
+            )
+            ckpt_path = cell_path.with_suffix(".partial.npy")
+            if use_cache and cell_path.is_file():
+                print(
+                    f"[roc effect {cell}/{total_effect}] cache hit d={d} sigma2={sigma2}",
+                    flush=True,
+                )
+                pvals = np.load(cell_path)
+            else:
+                print(
+                    f"[roc effect {cell}/{total_effect}] d={d} sigma2={sigma2} "
+                    f"n={cfg.n_effect} iters={nit} exps={cfg.n_experiments} "
+                    f"jobs={n_jobs}",
+                    flush=True,
+                )
+                seed = cfg.seed_base + d * 100 + int(10 * sigma2)
+                pvals = collect_anova_pvalues(
+                    cfg.n_effect, d, cfg.sigma1, sigma2,
+                    n_reps=cfg.n_reps,
+                    n_experiments=cfg.n_experiments,
+                    n_iter=nit,
+                    feature_mode_gen=gen_mode,
+                    feature_mode_est=est_mode,
+                    target_density=cfg.target_density,
+                    signal=cfg.signal,
+                    seed_base=seed,
+                    n_jobs=n_jobs,
+                    checkpoint_path=ckpt_path,
+                )
+                np.save(cell_path, pvals)
+                if ckpt_path.is_file():
+                    ckpt_path.unlink()
+            rows = [
+                r for r in rows
+                if not (r["sweep"] == "effect" and r["d"] == d and r["sigma2"] == sigma2)
+            ]
+            rows.extend(_roc_rows_from_pvalues(
+                pvals,
+                sweep="effect",
+                d=d,
+                sigma1=cfg.sigma1,
+                sigma2=sigma2,
+                n=cfg.n_effect,
+                n_reps=cfg.n_reps,
+                n_experiments=cfg.n_experiments,
+            ))
+            pd.DataFrame(rows).to_csv(cache_path, index=False)
+
+    df = pd.DataFrame(rows)
+    df.to_csv(cache_path, index=False)
+    effect = df[df.sweep == "effect"].copy()
+    sample = df[df.sweep == "sample"].copy()
+    return effect, sample
+
+
+def plot_roc_effect_size(
+    df: pd.DataFrame,
+    out_path: Path,
+    *,
+    sigma1: float = -1.0,
+    n_fixed: int = 500,
+) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    palette = {
+        -1.0: ("#888888", "--"),
+        -1.5: ("#0072B2", "-"),
+        -2.0: ("#E69F00", "-."),
+        -2.5: ("#CC79A7", ":"),
+    }
+    sub = df[df.sweep == "effect"]
+    if sub.empty:
+        return
+    d_values = sorted(sub["d"].unique())
+    sigma2_values = sorted(sub["sigma2"].unique())
+
+    fig, axes = plt.subplots(1, len(d_values), figsize=(7.3 * len(d_values), 8.5), sharey=True)
+    if len(d_values) == 1:
+        axes = [axes]
+
+    for ax, d in zip(axes, d_values):
+        ax.plot([0, 1], [0, 1], color="#AAAAAA", linestyle=":", linewidth=1.4, zorder=1)
+        for sigma2 in sigma2_values:
+            curve = sub[(sub.d == d) & (sub.sigma2 == sigma2)].sort_values("alpha")
+            color, ls = palette.get(float(sigma2), ("#333333", "-"))
+            lw = 1.8 if sigma2 == sigma1 else 2.5
+            ax.plot(curve.alpha, curve.rejection_rate, color=color, linestyle=ls, linewidth=lw)
+        ax.set_xlabel(r"Significance level $\alpha$")
+        ax.set_title(f"$d = {int(d)}$")
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+
+    axes[0].set_ylabel("Rejection rate (power)")
+
+    handles = []
+    for sigma2 in sigma2_values:
+        color, ls = palette.get(float(sigma2), ("#333333", "-"))
+        lw = 1.8 if sigma2 == sigma1 else 2.5
+        diff = abs(sigma2 - sigma1)
+        lbl = (
+            f"$\\sigma_2 = {sigma2}$  ($|\\Delta| = {diff:.1f}$)"
+            if diff > 0
+            else f"$\\sigma_2 = \\sigma_1 = {sigma2}$ (null)"
+        )
+        handles.append(Line2D([], [], color=color, linestyle=ls, linewidth=lw, label=lbl))
+    handles.append(Line2D([], [], color="#AAAAAA", linestyle=":", linewidth=1.4,
+                            label="Diagonal (no power)"))
+    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=True,
+               bbox_to_anchor=(0.5, 0.02), fontsize=14)
+    fig.suptitle(
+        rf"ROC: effect size ($n = {n_fixed}$, $\sigma_1 = {sigma1}$)",
+        fontsize=22, y=0.98,
+    )
+    fig.subplots_adjust(wspace=0.08, bottom=0.22)
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_roc_sample_size(
+    df: pd.DataFrame,
+    out_path: Path,
+    *,
+    sigma1: float = -1.0,
+    sigma2: float = -1.5,
+) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    palette = {
+        10: ("#888888", "--"),
+        100: ("#0072B2", "-"),
+        500: ("#E69F00", "-."),
+        1000: ("#009E73", ":"),
+        2000: ("#CC79A7", (0, (4, 2, 1, 2))),
+    }
+    sub = df[df.sweep == "sample"]
+    if sub.empty:
+        return
+    d_values = sorted(sub["d"].unique())
+    n_values = sorted(sub["n"].unique())
+
+    fig, axes = plt.subplots(1, len(d_values), figsize=(7.3 * len(d_values), 8.5), sharey=True)
+    if len(d_values) == 1:
+        axes = [axes]
+
+    for ax, d in zip(axes, d_values):
+        ax.plot([0, 1], [0, 1], color="#AAAAAA", linestyle=":", linewidth=1.4, zorder=1)
+        for n in n_values:
+            curve = sub[(sub.d == d) & (sub.n == n)].sort_values("alpha")
+            color, ls = palette.get(int(n), ("#333333", "-"))
+            ax.plot(curve.alpha, curve.rejection_rate, color=color, linestyle=ls, linewidth=2.5)
+        ax.set_xlabel(r"Significance level $\alpha$")
+        ax.set_title(f"$d = {int(d)}$")
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+
+    axes[0].set_ylabel("Rejection rate (power)")
+
+    handles = [
+        Line2D([], [], color=palette.get(int(n), ("#333333", "-"))[0],
+               linestyle=palette.get(int(n), ("#333333", "-"))[1],
+               linewidth=2.5, label=f"$n = {int(n)}$")
+        for n in n_values
+    ]
+    handles.append(Line2D([], [], color="#AAAAAA", linestyle=":", linewidth=1.4,
+                            label="Diagonal (no power)"))
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles),
+               frameon=True, bbox_to_anchor=(0.5, 0.01), fontsize=14)
+    fig.suptitle(
+        rf"ROC: sample size ($\sigma_1 = {sigma1}$, $\sigma_2 = {sigma2}$)",
+        fontsize=22, y=0.98,
+    )
+    fig.subplots_adjust(wspace=0.08, bottom=0.20)
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 def run_sigma_sweep(
     cfg: SigmaSweepConfig,
     out_dir: Path,
     *,
     use_cache: bool = True,
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = out_dir / f"convergence_sigma_{_config_hash(cfg)}.csv"
+    cfg_hash = _config_hash(cfg)
+    cache_path = out_dir / f"convergence_sigma_{cfg_hash}.csv"
 
     if use_cache and cache_path.is_file():
         return pd.read_csv(cache_path)
@@ -300,54 +956,50 @@ def run_sigma_sweep(
             for n in cfg.n_values:
                 cell_idx += 1
                 nit = _iter_count(n, cfg.iter_cap, sigma_true=sigma_true)
-                print(
-                    f"[sigma sweep {cell_idx}/{total_cells}] d={d} sigma={sigma_true} n={n} "
-                    f"iters={nit} reps={cfg.n_reps}",
-                    flush=True,
-                )
-                hats: list[float] = []
-                densities: list[float] = []
-                betas: list[float] = []
-                features: list[float] = []
-                for rep in range(cfg.n_reps):
-                    seed = cfg.seed_base + hash((d, sigma_true, n, rep)) % (2**31 - 1)
-                    adj, meta = simulate_graph(
-                        n, d, sigma=sigma_true,
-                        n_iter=nit,
-                        feature_mode=cfg.feature_mode_gen,
+                cell_path = _sigma_cell_cache_path(out_dir, cfg_hash, d, sigma_true, n)
+
+                if use_cache and cell_path.is_file():
+                    print(
+                        f"[sigma sweep {cell_idx}/{total_cells}] cache hit "
+                        f"d={d} sigma={sigma_true} n={n}",
+                        flush=True,
+                    )
+                    data = np.load(cell_path)
+                    hats = data["hats"].tolist()
+                    densities = data["densities"].tolist()
+                    betas = data["betas"].tolist()
+                    features = data["features"].tolist()
+                else:
+                    print(
+                        f"[sigma sweep {cell_idx}/{total_cells}] d={d} sigma={sigma_true} n={n} "
+                        f"iters={nit} reps={cfg.n_reps} jobs={n_jobs}",
+                        flush=True,
+                    )
+                    hats, densities, betas, features = _run_sigma_reps(
+                        d=d,
+                        sigma_true=sigma_true,
+                        n=n,
+                        n_reps=cfg.n_reps,
+                        nit=nit,
+                        feature_mode_gen=cfg.feature_mode_gen,
+                        feature_mode_est=cfg.feature_mode_est,
                         target_density=cfg.target_density,
                         signal=cfg.signal,
-                        seed=seed,
-                        return_meta=True,
+                        seed_base=cfg.seed_base,
+                        n_jobs=n_jobs,
                     )
-                    mode_est: FeatureMode = (
-                        "incremental" if d == 0 else cfg.feature_mode_est
+                    np.savez(
+                        cell_path,
+                        hats=np.asarray(hats, dtype=float),
+                        densities=np.asarray(densities, dtype=float),
+                        betas=np.asarray(betas, dtype=float),
+                        features=np.asarray(features, dtype=float),
                     )
-                    sh = estimate_sigma_from_graph(adj, d, feature_mode=mode_est)
-                    hats.append(sh)
-                    densities.append(meta["density"])
-                    betas.append(meta["beta"])
-                    features.append(meta["feature_mean"])
 
-                arr = np.asarray(hats, dtype=float)
-                m = float(np.nanmean(arr))
-                se = float(np.nanstd(arr, ddof=1) / math.sqrt(len(arr))) if len(arr) > 1 else 0.0
-                records.append({
-                    "d": d,
-                    "sigma_true": sigma_true,
-                    "n": n,
-                    "sigma_hat_mean": m,
-                    "sigma_hat_std": float(np.nanstd(arr, ddof=1)) if len(arr) > 1 else 0.0,
-                    "ci_lo": m - 1.96 * se,
-                    "ci_hi": m + 1.96 * se,
-                    "n_iter": nit,
-                    "n_reps": cfg.n_reps,
-                    "density_mean": float(np.mean(densities)),
-                    "density_std": float(np.std(densities, ddof=1)) if len(densities) > 1 else 0.0,
-                    "beta_mean": float(np.mean(betas)),
-                    "feature_mean": float(np.mean(features)),
-                    "sigma_error": m - sigma_true,
-                })
+                records.append(_aggregate_sigma_cell(
+                    hats, densities, betas, features,
+                    d=d, sigma_true=sigma_true, n=n, nit=nit, n_reps=cfg.n_reps,
+                ))
                 pd.DataFrame(records).to_csv(cache_path, index=False)
 
     df = pd.DataFrame(records)
@@ -487,6 +1139,7 @@ def run_aic_d_sweep(
     out_dir: Path,
     *,
     use_cache: bool = True,
+    n_jobs: int = 1,
 ) -> tuple[pd.DataFrame, dict[int, dict[int, dict[int, int]]]]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -497,43 +1150,61 @@ def run_aic_d_sweep(
         conf = _confusion_from_df(df, cfg)
         return df, conf
 
-    rows: list[dict[str, Any]] = []
-    conf: dict[int, dict[int, dict[int, int]]] = {
-        n: {dt: {de: 0 for de in cfg.d_est_values} for dt in cfg.d_true_values}
-        for n in cfg.n_sizes
-    }
+    from .workers import aic_run_job
 
+    jobs: list[dict[str, Any]] = []
     for n in cfg.n_sizes:
         nit = _iter_count(n, cfg.iter_cap)
         for d_true in cfg.d_true_values:
             for run in range(cfg.n_runs):
-                graphs = []
-                for m in range(cfg.m_ensemble):
-                    seed = cfg.seed_base + n * 1000 + d_true * 100 + run * 10 + m
-                    adj = simulate_graph(
-                        n, d_true, sigma=cfg.sigma_gen,
-                        n_iter=nit,
-                        feature_mode=cfg.feature_mode_gen,
-                        target_density=cfg.target_density,
-                        signal=cfg.signal,
-                        seed=seed,
-                    )
-                    graphs.append(adj)
-
-                hat_d, aic_stats = select_d_ensemble(
-                    graphs,
-                    d_candidates=cfg.d_est_values,
-                    feature_mode=cfg.feature_mode_est,
-                    extra_penalty_per_d=cfg.aic_penalty_per_d,
-                )
-                conf[n][d_true][hat_d] += 1
-                rows.append({
+                jobs.append({
                     "n": n,
                     "d_true": d_true,
                     "run": run,
-                    "hat_d": hat_d,
-                    **{f"aic_d{de}": aic_stats[de]["aic"] for de in cfg.d_est_values},
+                    "n_iter": nit,
+                    "m_ensemble": cfg.m_ensemble,
+                    "sigma_gen": cfg.sigma_gen,
+                    "feature_mode_gen": cfg.feature_mode_gen,
+                    "feature_mode_est": cfg.feature_mode_est,
+                    "target_density": cfg.target_density,
+                    "signal": cfg.signal,
+                    "d_est_values": cfg.d_est_values,
+                    "aic_penalty_per_d": cfg.aic_penalty_per_d,
+                    "seed_base": cfg.seed_base,
                 })
+
+    rows: list[dict[str, Any]] = []
+    if n_jobs <= 1:
+        for idx, payload in enumerate(jobs):
+            rows.append(aic_run_job(payload))
+            if (idx + 1) % max(1, len(jobs) // 5) == 0:
+                print(f"  aic run {idx + 1}/{len(jobs)}", flush=True)
+    else:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        rows = [{}] * len(jobs)
+        done = 0
+        with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+            futures = {
+                pool.submit(aic_run_job, payload): idx
+                for idx, payload in enumerate(jobs)
+            }
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                rows[idx] = fut.result()
+                done += 1
+                if done % max(1, len(jobs) // 5) == 0:
+                    print(f"  aic run {done}/{len(jobs)}", flush=True)
+
+    conf: dict[int, dict[int, dict[int, int]]] = {
+        n: {dt: {de: 0 for de in cfg.d_est_values} for dt in cfg.d_true_values}
+        for n in cfg.n_sizes
+    }
+    for row in rows:
+        n = int(row["n"])
+        dt = int(row["d_true"])
+        hd = int(row["hat_d"])
+        conf[n][dt][hd] += 1
 
     df = pd.DataFrame(rows)
     df.to_csv(cache_path, index=False)
