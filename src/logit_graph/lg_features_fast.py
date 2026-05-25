@@ -142,22 +142,110 @@ def _sum_degree_marked_rows(
 
 
 @njit(cache=True)
+def _common_neighbors_skip_rows(
+    rows: list, i: int, j: int, l2_skip: bool,
+) -> int:
+    """Count common neighbors of ``i`` and ``j`` (exact ``d=1`` common-dhop)."""
+    ri = rows[i]
+    rj = rows[j]
+    a = 0
+    b = 0
+    count = 0
+    while a < ri.shape[0] and b < rj.shape[0]:
+        vi = int(ri[a])
+        vj = int(rj[b])
+        if l2_skip:
+            if vi == j:
+                a += 1
+                continue
+            if vj == i:
+                b += 1
+                continue
+        if vi == i or vi == j:
+            a += 1
+            continue
+        if vj == i or vj == j:
+            b += 1
+            continue
+        if vi == vj:
+            count += 1
+            a += 1
+            b += 1
+        elif vi < vj:
+            a += 1
+        else:
+            b += 1
+    return count
+
+
+@njit(cache=True)
+def _bfs_distances_skip_rows(
+    rows: list,
+    source: int,
+    max_depth: int,
+    n: int,
+    dist: np.ndarray,
+    l2_skip: bool,
+    ei: int,
+    ej: int,
+) -> None:
+    for v in range(n):
+        dist[v] = -1
+    dist[source] = 0
+    frontier = np.empty(n, dtype=np.int32)
+    frontier_len = 1
+    frontier[0] = source
+    head = 0
+    while head < frontier_len:
+        v = int(frontier[head])
+        head += 1
+        dv = int(dist[v])
+        if dv >= max_depth:
+            continue
+        row = rows[v]
+        for k in range(row.shape[0]):
+            u = int(row[k])
+            if l2_skip and ((v == ei and u == ej) or (v == ej and u == ei)):
+                continue
+            if dist[u] < 0:
+                dist[u] = dv + 1
+                frontier[frontier_len] = u
+                frontier_len += 1
+
+
+@njit(cache=True)
+def _count_common_within_dist(
+    dist_i: np.ndarray,
+    dist_j: np.ndarray,
+    n: int,
+    i: int,
+    j: int,
+    max_d: int,
+) -> int:
+    count = 0
+    for v in range(n):
+        if v == i or v == j:
+            continue
+        di = int(dist_i[v])
+        dj = int(dist_j[v])
+        if di >= 0 and dj >= 0 and di <= max_d and dj <= max_d:
+            count += 1
+    return count
+
+
+@njit(cache=True)
 def _common_dhop_skip_rows(
     rows: list, i: int, j: int, depth: int, n: int, l2_skip: bool,
 ) -> int:
     if depth == 0:
         return 0
-    mark_i = np.zeros(n, dtype=np.int8)
-    mark_j = np.zeros(n, dtype=np.int8)
-    _ball_mark_rows(rows, i, depth, n, mark_i, l2_skip, i, j)
-    _ball_mark_rows(rows, j, depth, n, mark_j, l2_skip, i, j)
-    count = 0
-    for v in range(n):
-        if v == i or v == j:
-            continue
-        if mark_i[v] == 1 and mark_j[v] == 1:
-            count += 1
-    return count
+    if depth == 1:
+        return _common_neighbors_skip_rows(rows, i, j, l2_skip)
+    dist_i = np.empty(n, dtype=np.int16)
+    dist_j = np.empty(n, dtype=np.int16)
+    _bfs_distances_skip_rows(rows, i, depth, n, dist_i, l2_skip, i, j)
+    _bfs_distances_skip_rows(rows, j, depth, n, dist_j, l2_skip, i, j)
+    return _count_common_within_dist(dist_i, dist_j, n, i, j, depth)
 
 
 @njit(cache=True)
@@ -167,12 +255,16 @@ def _incremental_h_skip_rows(
     if d == 0:
         return 0.0
     if d == 1:
-        c = _common_dhop_skip_rows(rows, i, j, 1, n, l2_skip)
+        c = _common_neighbors_skip_rows(rows, i, j, l2_skip)
         if c <= 0:
             return 0.0
         return alpha_gwesp * (1.0 - (1.0 - 1.0 / alpha_gwesp) ** c)
-    c_d = _common_dhop_skip_rows(rows, i, j, d, n, l2_skip)
-    c_dm1 = _common_dhop_skip_rows(rows, i, j, d - 1, n, l2_skip)
+    dist_i = np.empty(n, dtype=np.int16)
+    dist_j = np.empty(n, dtype=np.int16)
+    _bfs_distances_skip_rows(rows, i, d, n, dist_i, l2_skip, i, j)
+    _bfs_distances_skip_rows(rows, j, d, n, dist_j, l2_skip, i, j)
+    c_d = _count_common_within_dist(dist_i, dist_j, n, i, j, d)
+    c_dm1 = _count_common_within_dist(dist_i, dist_j, n, i, j, d - 1)
     delta = c_d - c_dm1
     if delta < 0:
         delta = 0
@@ -186,6 +278,92 @@ def _sum_ball_degree_skip_rows(
     mark = np.zeros(n, dtype=np.int8)
     _ball_mark_rows(rows, source, depth, n, mark, l2_skip, ei, ej)
     return _sum_degree_marked_rows(rows, mark, n, l2_skip, ei, ej)
+
+
+@njit(cache=True)
+def _precompute_vertex_ball_sums_skip_rows(
+    rows: list, n: int, d: int, mode_code: int,
+) -> np.ndarray:
+    """Ball-degree sums per vertex for paper_raw / bounded (Layer-2 via -1 fixup)."""
+    sums = np.empty(n, dtype=np.float64)
+    for v in range(n):
+        raw = _sum_ball_degree_skip_rows(rows, v, d, n, False, -1, -1)
+        if mode_code == 0:
+            sums[v] = raw
+        else:
+            sums[v] = math.log(1.0 + raw)
+    return sums
+
+
+@njit(cache=True)
+def _layer2_offset_from_vertex_sums(
+    vertex_sums: np.ndarray, i: int, j: int, had: bool, mode_code: int,
+) -> float:
+    si = vertex_sums[i]
+    sj = vertex_sums[j]
+    if had:
+        si -= 1.0
+        sj -= 1.0
+    if mode_code == 0:
+        return si + sj
+    return si + sj
+
+
+@njit(cache=True)
+def build_multi_d_pair_dataset_skip_rows(
+    rows: list,
+    n: int,
+    d_values: np.ndarray,
+    mode_code: int,
+    alpha_gwesp: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Layer-2 offsets for several ``d`` in one pass over upper-triangle pairs."""
+    nd = d_values.shape[0]
+    m = n * (n - 1) // 2
+    offsets = np.empty((nd, m), dtype=np.float64)
+    labels = np.empty(m, dtype=np.int8)
+    use_vertex_cache = mode_code == 0 or mode_code == 1
+    has_vcache = False
+    vertex_cache = np.empty(n, dtype=np.float64)
+    if use_vertex_cache and nd == 1:
+        vertex_cache = _precompute_vertex_ball_sums_skip_rows(
+            rows, n, int(d_values[0]), mode_code,
+        )
+        has_vcache = True
+    k = 0
+    for i in range(n):
+        row_i = rows[i]
+        for j in range(i + 1, n):
+            had = _sorted_has(row_i, j)
+            labels[k] = 1 if had else 0
+            for di in range(nd):
+                d = int(d_values[di])
+                if has_vcache and di == 0:
+                    offsets[di, k] = _layer2_offset_from_vertex_sums(
+                        vertex_cache, i, j, had, mode_code,
+                    )
+                else:
+                    offsets[di, k] = pair_feature_layer2_skip_rows(
+                        rows, i, j, d, n, mode_code, had, alpha_gwesp,
+                    )
+            k += 1
+    return offsets, labels
+
+
+@njit(cache=True)
+def build_pair_dataset_skip_rows(
+    rows: list,
+    n: int,
+    d: int,
+    mode_code: int,
+    alpha_gwesp: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Layer-2 offsets and edge labels for all upper-triangle pairs."""
+    d_values = np.array([d], dtype=np.int32)
+    offsets_2d, labels = build_multi_d_pair_dataset_skip_rows(
+        rows, n, d_values, mode_code, alpha_gwesp,
+    )
+    return offsets_2d[0], labels
 
 
 @njit(cache=True)
@@ -475,12 +653,68 @@ class FastGibbsGraph:
 
 
 def make_gibbs_draws(n: int, n_iter: int, rng: np.random.Generator) -> np.ndarray:
+    """Precompute Gibbs randomness (vectorized; ``run_gibbs_numba`` applies ``j`` fixup)."""
     draws = np.empty((n_iter, 3), dtype=np.float64)
-    for t in range(n_iter):
-        draws[t, 0] = float(rng.integers(0, n))
-        draws[t, 1] = float(rng.integers(0, n - 1))
-        draws[t, 2] = float(rng.random())
+    draws[:, 0] = rng.integers(0, n, size=n_iter)
+    draws[:, 1] = rng.integers(0, n - 1, size=n_iter)
+    draws[:, 2] = rng.random(n_iter)
     return draws
+
+
+def build_pair_dataset_from_rows(
+    rows: list,
+    d: int,
+    mode: FeatureMode = "incremental",
+    alpha_gwesp: float = ALPHA_GWESP_DEFAULT,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Layer-2 pair dataset from CSR rows (no dense adjacency conversion)."""
+    n = len(rows)
+    offsets, labels = build_pair_dataset_skip_rows(
+        rows, n, d, MODE_TO_CODE[mode], alpha_gwesp,
+    )
+    return offsets, labels.astype(int)
+
+
+def build_pair_dataset_fast(
+    graph: np.ndarray,
+    d: int,
+    mode: FeatureMode = "incremental",
+    alpha_gwesp: float = ALPHA_GWESP_DEFAULT,
+    *,
+    rows: Optional[list] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fast Layer-2 pair dataset via Numba CSR (matches ``build_pair_dataset``)."""
+    if rows is None:
+        adj = np.asarray(graph, dtype=float)
+        rows = rows_from_adj(adj)
+    return build_pair_dataset_from_rows(rows, d, mode=mode, alpha_gwesp=alpha_gwesp)
+
+
+def build_multi_d_pair_datasets_fast(
+    graph: np.ndarray,
+    d_values: list[int],
+    mode: FeatureMode = "incremental",
+    alpha_gwesp: float = ALPHA_GWESP_DEFAULT,
+    *,
+    rows: Optional[list] = None,
+) -> tuple[np.ndarray, dict[int, np.ndarray]]:
+    """Fast multi-``d`` Layer-2 pair datasets sharing one CSR + label pass."""
+    if rows is None:
+        adj = np.asarray(graph, dtype=float)
+        rows = rows_from_adj(adj)
+    n = len(rows)
+    d_arr = np.asarray(sorted(d_values), dtype=np.int32)
+    offsets_2d, labels = build_multi_d_pair_dataset_skip_rows(
+        rows, n, d_arr, MODE_TO_CODE[mode], alpha_gwesp,
+    )
+    offsets_by_d = {int(d): offsets_2d[i].copy() for i, d in enumerate(d_arr)}
+    return labels.astype(int), offsets_by_d
+
+
+def density_from_rows(rows: list, n: int) -> float:
+    if n <= 1:
+        return 0.0
+    return float(sum(int(r.shape[0]) for r in rows) / (n * (n - 1)))
 
 
 def pair_feature_layer2_csr_py(

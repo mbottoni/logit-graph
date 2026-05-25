@@ -14,6 +14,7 @@ from logit_graph.lg_features import (
 )
 from logit_graph.lg_features_fast import (
     FastGibbsGraph,
+    build_pair_dataset_fast,
     make_gibbs_draws,
     nbrs_from_adj,
     pair_feature_layer2_csr_py,
@@ -117,6 +118,19 @@ def test_fast_gibbs_matches_nbrs():
     )
     fg.run_from_draws(draws)
     np.testing.assert_array_equal(gm_nbrs.graph, fg.to_adjacency())
+
+
+def test_build_pair_dataset_from_rows_matches_adj():
+    from logit_graph.lg_features_fast import build_pair_dataset_from_rows, rows_from_adj
+
+    adj = _random_adj(12, 0.25, seed=5)
+    rows = rows_from_adj(adj)
+    for d in (0, 1, 2):
+        for mode in ("incremental", "bounded"):
+            off_adj, lab_adj = build_pair_dataset_fast(adj, d, mode=mode)
+            off_rows, lab_rows = build_pair_dataset_from_rows(rows, d, mode=mode)
+            np.testing.assert_array_equal(lab_adj, lab_rows)
+            np.testing.assert_allclose(off_adj, off_rows, rtol=0, atol=1e-12)
 
 
 def test_simulate_graph_deterministic():

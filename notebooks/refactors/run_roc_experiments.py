@@ -27,6 +27,8 @@ def main() -> None:
     MODE = os.environ.get("LG_EXPERIMENT_MODE", "SMOKE")
     USE_CACHE = os.environ.get("LG_ROC_USE_CACHE", "1") == "1"
     N_JOBS = int(os.environ.get("LG_ROC_JOBS", _default_jobs()))
+    REP_JOBS = os.environ.get("LG_ROC_REP_JOBS")
+    rep_jobs = int(REP_JOBS) if REP_JOBS is not None else None
 
     cfg = PRESETS[MODE]["roc"]
     if "LG_ROC_N_EXPERIMENTS" in os.environ:
@@ -34,10 +36,13 @@ def main() -> None:
     print(
         f"Mode={MODE}, n_effect={cfg.n_effect}, n_values={cfg.n_values}, "
         f"d={cfg.d_values}, reps={cfg.n_reps}, exps={cfg.n_experiments}, "
-        f"iter_cap={cfg.iter_cap}, jobs={N_JOBS}",
+        f"iter_cap={cfg.iter_cap}, jobs={N_JOBS}"
+        + (f", rep_jobs={rep_jobs}" if rep_jobs is not None else ", rep_jobs=auto"),
     )
 
-    effect_df, sample_df = run_roc_sweeps(cfg, OUT, use_cache=USE_CACHE, n_jobs=N_JOBS)
+    effect_df, sample_df = run_roc_sweeps(
+        cfg, OUT, use_cache=USE_CACHE, n_jobs=N_JOBS, rep_jobs=rep_jobs,
+    )
     combined = __import__("pandas").concat([effect_df, sample_df], ignore_index=True)
 
     plot_roc_effect_size(

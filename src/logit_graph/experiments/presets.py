@@ -168,8 +168,8 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
         ),
         "aic": AICSweepConfig(
             n_sizes=[100, 500, 1000],
-            n_runs=25,
-            m_ensemble=5,
+            n_runs=10,
+            m_ensemble=3,
             iter_cap=None,
         ),
     },
