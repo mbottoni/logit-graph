@@ -24,8 +24,13 @@ class GraphModel:
         er_p: float = 0.05,
         init_graph: Optional[nx.Graph] = None,
         layer2: bool = True,
-        feature_mode: FeatureMode = "bounded",
+        feature_mode: FeatureMode = "incremental",
     ) -> None:
+        # NOTE: ``feature_mode`` defaults to ``"incremental"`` so the d=0
+        # case has zero pair feature (pure Erdős–Rényi at ``p = expit(sigma)``)
+        # and d>=1 uses a bounded, identifying feature. The legacy
+        # ``"bounded"`` mode adds ``log(1+deg_i) + log(1+deg_j)`` even at d=0
+        # which introduces degree feedback and saturates the graph.
         self.n = n
         self.d = d
         self.sigma = sigma
