@@ -9,6 +9,7 @@ from tqdm.auto import tqdm
 from typing import Optional, Union
 
 from .degrees_counts import degree_vertex, get_sum_degrees
+from .lg_features import FeatureMode, pair_feature_layer2, recommended_iterations
 from . import gic
 
 
@@ -22,6 +23,8 @@ class GraphModel:
         beta: float = 1,
         er_p: float = 0.05,
         init_graph: Optional[nx.Graph] = None,
+        layer2: bool = True,
+        feature_mode: FeatureMode = "bounded",
     ) -> None:
         self.n = n
         self.d = d
@@ -29,6 +32,8 @@ class GraphModel:
         self.alpha = alpha
         self.beta = beta
         self.er_p = er_p
+        self.layer2 = layer2
+        self.feature_mode = feature_mode
 
         if init_graph is not None and isinstance(init_graph, nx.Graph):
             self.graph = nx.to_numpy_array(init_graph)
@@ -137,13 +142,25 @@ class GraphModel:
         if j >= i:
             j += 1
 
-        # --- cached degree features ---
-        sum_i = self._get_sum_degrees_fast(i)
-        sum_j = self._get_sum_degrees_fast(j)
-        total_degree = self.sigma + self.beta * (sum_i + sum_j)
+        # --- features (Layer-2 optional) ---
+        if self.layer2:
+            feat = pair_feature_layer2(
+                self.graph, i, j, self.d, mode=self.feature_mode,
+            )
+        else:
+            sum_i = self._get_sum_degrees_fast(i)
+            sum_j = self._get_sum_degrees_fast(j)
+            if self.feature_mode == "paper_raw":
+                feat = sum_i + sum_j
+            elif self.feature_mode == "bounded":
+                feat = np.log1p(sum_i) + np.log1p(sum_j)
+            else:
+                feat = pair_feature_layer2(
+                    self.graph, i, j, self.d, mode=self.feature_mode,
+                )
 
-        # --- fast Bernoulli draw ---
-        p = expit(total_degree)
+        logit = self.sigma + self.alpha * self.beta * feat
+        p = expit(logit)
         new_val = float(self._rng.random() < p)
 
         # --- incremental update ---
@@ -224,6 +241,10 @@ class GraphModel:
     # Graph generation loops
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def recommended_iterations(n: int, cap: Optional[int] = None) -> int:
+        return recommended_iterations(n, cap=cap)
+
     def populate_edges_baseline(
         self,
         warm_up: int,
@@ -232,13 +253,23 @@ class GraphModel:
         check_interval: int = 50,
         edge_cv_tol: float = 0.02,
         spectrum_cv_tol: float = 0.02,
+        fast_mode: bool = False,
     ) -> tuple[list[np.ndarray], np.ndarray]:
         """Generate a graph without a ground-truth reference.
 
         Convergence is based on the *coefficient of variation* (CV = std/mean)
         of edge counts and spectrum norms measured every ``check_interval``
         steps over the last ``patience`` measurements.
+
+        When ``fast_mode=True``, skip convergence checks and run exactly
+        ``max_iterations`` Gibbs steps (for experiment sweeps).
         """
+        if fast_mode:
+            for _ in range(max_iterations):
+                self.add_remove_edge()
+            spectra = self.calculate_spectrum(self.graph)
+            return [self.graph.copy()], spectra
+
         graphs = deque(maxlen=max(patience + 10, 200))
         graphs.append(self.graph.copy())
 

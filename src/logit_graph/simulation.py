@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 # Relative package imports
 from . import graph
+from .lg_features import FeatureMode
 from . import logit_estimator as estimator
 from . import gic
 from . import model_selection as ms
@@ -393,6 +394,9 @@ class LogitGraphSimulation:
         spectrum_cv_tol: float = 0.02,
         verbose: bool = True,
         init_graph: Optional[nx.Graph] = None,
+        layer2: bool = True,
+        feature_mode: FeatureMode = "bounded",
+        fast_mode: bool = False,
     ) -> None:
         """
         Initializes the LogitGraphSimulation with model and run parameters.
@@ -431,6 +435,9 @@ class LogitGraphSimulation:
         self.spectrum_cv_tol = spectrum_cv_tol
         self.verbose = verbose
         self.init_graph = init_graph
+        self.layer2 = layer2
+        self.feature_mode = feature_mode
+        self.fast_mode = fast_mode
 
         self.simulated_graph = None
         self.metadata = {}
@@ -459,14 +466,16 @@ class LogitGraphSimulation:
 
         try:
             graph_model = graph.GraphModel(
-                n=self.n, d=self.d, sigma=self.sigma, alpha=self.alpha, beta=self.beta, er_p=self.er_p, init_graph=self.init_graph
+                n=self.n, d=self.d, sigma=self.sigma, alpha=self.alpha, beta=self.beta,
+                er_p=self.er_p, init_graph=self.init_graph,
+                layer2=self.layer2, feature_mode=self.feature_mode,
             )
 
-            # Use baseline simulator (no reference/real graph needed)
             graphs, spectra = graph_model.populate_edges_baseline(
                 warm_up=self.warm_up, max_iterations=self.n_iteration,
                 patience=self.patience, check_interval=self.check_interval,
                 edge_cv_tol=self.edge_cv_tol, spectrum_cv_tol=self.spectrum_cv_tol,
+                fast_mode=self.fast_mode,
             )
 
             final_graph_arr = graphs[-1] if graphs else graph_model.graph

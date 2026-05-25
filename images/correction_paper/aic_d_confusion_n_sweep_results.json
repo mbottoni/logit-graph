@@ -1,0 +1,57 @@
+{
+  "config": {
+    "d_true_values": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "d_est_values": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "n_sizes": [
+      80
+    ],
+    "n_runs": 3,
+    "m_ensemble": 5,
+    "iter_cap": 30000,
+    "target_density": 0.1,
+    "signal": 0.5,
+    "aic_penalty_per_d": 1.0,
+    "feature_mode_gen": "incremental",
+    "feature_mode_est": "incremental",
+    "seed_base": 1000,
+    "sigma_gen": -3.0
+  },
+  "confusion": {
+    "80": {
+      "0": {
+        "0": 3,
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "1": {
+        "0": 0,
+        "1": 3,
+        "2": 0,
+        "3": 0
+      },
+      "2": {
+        "0": 0,
+        "1": 0,
+        "2": 3,
+        "3": 0
+      },
+      "3": {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3": 3
+      }
+    }
+  }
+}
