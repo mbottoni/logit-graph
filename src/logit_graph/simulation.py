@@ -557,15 +557,15 @@ class GraphModelComparator:
         self.d_list = d_list
         self.lg_params = lg_params
         self.other_model_n_runs = other_model_n_runs
-        if other_model_params is None:
-            self.other_model_params = [
-                {'lo': 0.01, 'hi': 0.25},  # ER: p
-                {'k': {'lo': 2, 'hi': 10, 'step': 2}, 'p': {'lo': 0.01, 'hi': 0.5}},  # WS: k, p
-                {'lo': 0.05, 'hi': 0.3},   # GRG: r
-                {'lo': 1, 'hi': 8}         # BA: m
-            ]
-        else:
-            self.other_model_params = other_model_params
+        # ``other_model_params`` may be:
+        #   - ``None``: per-model defaults are looked up by name in
+        #     ``_fit_other_models`` (recommended; robust to any subset of
+        #     ``other_models``).
+        #   - ``list``: positional pairing with ``other_models`` (legacy;
+        #     the list must be in the same order as ``other_models``).
+        #   - ``dict``: keyed by model name (recommended for explicit
+        #     overrides).
+        self.other_model_params = other_model_params
         self.dist_type = dist_type
         self.verbose = verbose
         # Allow selecting which other models to evaluate and how dense the parameter grid should be
@@ -756,19 +756,32 @@ class GraphModelComparator:
                 if self.verbose:
                     print("Could not parse sigma from LG metadata, defaulting to 1.0")
         
-        # TODO: Remove from here
         default_params = {
             'ER': {'lo': 0.01, 'hi': 0.25},
             'WS': {'k': {'lo': 2, 'hi': 10, 'step': 2}, 'p': {'lo': 0.01, 'hi': 0.5}},
             'GRG': {'lo': 0.05, 'hi': 0.3},
-            'BA': {'lo': 1, 'hi': 8}
+            'BA': {'lo': 1, 'hi': 8},
         }
-        default_param_map = {}
-        for i, model in enumerate(self.other_models):
-            if i < len(self.other_model_params):
-                default_param_map[model] = self.other_model_params[i]
-            elif model in default_params:
-                default_param_map[model] = default_params[model]
+        default_param_map: dict[str, Any] = {}
+        if self.other_model_params is None:
+            # No overrides: look up each model's range by name.
+            for model in self.other_models:
+                if model in default_params:
+                    default_param_map[model] = default_params[model]
+        elif isinstance(self.other_model_params, dict):
+            # Explicit name->params dict; fall back to defaults for any missing key.
+            for model in self.other_models:
+                if model in self.other_model_params:
+                    default_param_map[model] = self.other_model_params[model]
+                elif model in default_params:
+                    default_param_map[model] = default_params[model]
+        else:
+            # Legacy positional list — must be in the same order as ``self.other_models``.
+            for i, model in enumerate(self.other_models):
+                if i < len(self.other_model_params):
+                    default_param_map[model] = self.other_model_params[i]
+                elif model in default_params:
+                    default_param_map[model] = default_params[model]
         filtered_params = [default_param_map[m] for m in self.other_models if m in default_param_map]
 
         selector = ms.GraphModelSelection(
