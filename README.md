@@ -9,6 +9,7 @@ A probabilistic logit-based graph model and utilities for fitting, simulating, a
 ## Table of Contents
 
 - [Installation](#installation)
+- [Examples](#examples)
 - [Quickstart](#quickstart)
 - [Public API](#public-api)
 - [Model Overview](#model-overview)
@@ -40,11 +41,92 @@ pip install -e ".[viz,notebook,progress]"
 
 For full research environment (notebooks, plotting), use `requirements.txt` or `environment.yml`.
 
+## Examples
+
+Two self-contained notebooks live under [`examples/`](examples/). They install [`logit-graph` from PyPI](https://pypi.org/project/logit-graph/) (>=0.1.3) and work without a repo checkout (except when you already have the package installed locally in editable mode).
+
+| Notebook | What it shows |
+|----------|---------------|
+| [`pypi_estimate_d_sigma.ipynb`](examples/pypi_estimate_d_sigma.ipynb) | Simulate an LG graph with known `n=200`, `d`, and `σ`; recover `d̂` via AIC and `σ̂` via the Layer-2 offset logit |
+| [`pypi_fit_real_network.ipynb`](examples/pypi_fit_real_network.ipynb) | Fit a **real** Facebook ego network (SNAP `686.edges`) where **LG wins** (lowest GIC vs ER / WS / BA) |
+
+Run from the repo root (after `make install`):
+
+```bash
+jupyter notebook examples/pypi_estimate_d_sigma.ipynb
+jupyter notebook examples/pypi_fit_real_network.ipynb
+```
+
 ## Quickstart
 
-Interactive tutorial: https://colab.research.google.com/drive/1-WlU12bxN2-84fLI7IpEXB6jkifcMuaY?usp=sharing
+The recommended workflow uses the **paper-consistent** Layer-2 offset logit (`feature_mode="incremental"`, `β=1`): pick `d̂` via AIC, estimate `σ̂`, then compare fitted models with spectral GIC.
 
-### Fit a Logit Graph to a network
+### 1. Simulate a graph and recover `d̂`, `σ̂`
+
+```python
+import numpy as np
+from logit_graph import simulate_graph, select_d_ensemble, estimate_sigma_from_graph
+
+N, D_TRUE, SIGMA_TRUE = 200, 1, -4.0
+
+adj, meta = simulate_graph(
+    N, D_TRUE, sigma=SIGMA_TRUE, n_iter=30_000,
+    feature_mode="incremental", target_density=0.10, seed=42, return_meta=True,
+)
+
+d_hat, aic_stats = select_d_ensemble(
+    graphs=[adj],
+    d_candidates=[0, 1, 2, 3],
+    feature_mode="incremental",
+)
+sigma_hat = estimate_sigma_from_graph(adj, d_hat, feature_mode="incremental")
+
+print(f"true  d={D_TRUE}, σ={SIGMA_TRUE:.3f}")
+print(f"est   d̂={d_hat}, σ̂={sigma_hat:.3f}")
+```
+
+See [`examples/pypi_estimate_d_sigma.ipynb`](examples/pypi_estimate_d_sigma.ipynb) for the full notebook.
+
+### 2. Fit a real network and compare LG vs ER / WS / BA
+
+```python
+import networkx as nx
+from logit_graph import GraphModelComparator, estimate_sigma_from_graph, select_d_ensemble
+
+G = nx.read_edgelist("686.edges", nodetype=int)   # SNAP Facebook ego net
+G = nx.convert_node_labels_to_integers(nx.Graph(G))
+adj = nx.to_numpy_array(G)
+
+d_hat, _ = select_d_ensemble([adj], [0, 1, 2, 3], "incremental")
+sigma_hat = estimate_sigma_from_graph(adj, d_hat, "incremental")
+
+comparator = GraphModelComparator(
+    d_list=[d_hat],                    # LG only at the AIC-selected d̂
+    lg_params={
+        "max_iterations": 5000,
+        "patience": 500,
+        "edge_delta": None,
+        "min_gic_threshold": 5,
+        "er_p": 0.05,
+        "check_interval": 50,
+    },
+    other_model_n_runs=2,
+    dist_type="KL",
+    verbose=False,
+    other_models=["ER", "WS", "BA"],
+    other_model_grid_points=5,
+    random_state=0,                    # reproducible GIC (requires logit-graph >= 0.1.3)
+).compare(original_graph=G, graph_filepath="facebook_686")
+
+print(comparator.summary_df.sort_values("gic_value"))
+print(f"d̂={d_hat}, σ̂={sigma_hat:+.4f}")
+```
+
+On ego network **686**, LG typically achieves the **lowest GIC**. See [`examples/pypi_fit_real_network.ipynb`](examples/pypi_fit_real_network.ipynb) (downloads the graph from SNAP if needed, or uses `examples/data/686.edges` when present).
+
+### 3. Direct spectral fit with `LogitGraphFitter`
+
+For a fixed `d`, `LogitGraphFitter` runs a GIC-guided edge-swap search to produce a fitted graph whose spectrum matches the original:
 
 ```python
 import networkx as nx
@@ -52,109 +134,126 @@ from logit_graph import LogitGraphFitter
 
 G = nx.karate_club_graph()
 
-fitter = LogitGraphFitter(d=2, n_iteration=2000, patience=500, dist_type='KL', verbose=True)
-fitter = fitter.fit(G)
+fitter = LogitGraphFitter(
+    d=1, n_iteration=5000, patience=500, dist_type="KL", verbose=True,
+).fit(G)
 
-fitted_graph = fitter.fitted_graph
-print(f"GIC: {fitter.metadata['gic_value']:.4f}, sigma: {fitter.metadata['sigma']:.4f}")
+print(f"GIC={fitter.metadata['gic_value']:.4f}, σ={fitter.metadata['sigma']:.4f}")
 ```
 
-### Compare models (LG vs ER/WS/BA)
-
-```python
-import networkx as nx
-from logit_graph import GraphModelComparator
-
-G = nx.karate_club_graph()
-
-comparator = GraphModelComparator(
-    d_list=[0, 1, 2, 3],
-    lg_params={
-        'max_iterations': 2000,
-        'patience': 500,
-        'edge_delta': None,
-        'min_gic_threshold': 5,
-        'er_p': 0.05,
-    },
-    other_model_n_runs=2,
-    dist_type='KL',
-    verbose=True,
-    other_models=["ER", "WS", "BA"],    # optionally include "GRG"
-    other_model_grid_points=5
-)
-
-comparator = comparator.compare(original_graph=G, graph_filepath="karate_club")
-print(comparator.summary_df)
-
-lg_graph = comparator.fitted_graphs_data['LG']['graph']
-lg_meta  = comparator.fitted_graphs_data['LG']['metadata']
-```
+This is the MCMC-style spectral matcher. For paper-consistent model selection, prefer `select_d_ensemble` + `GraphModelComparator` as in step 2.
 
 ## Public API
 
-The package exposes four top-level names (all importable directly from `logit_graph`):
+All symbols below are importable from `logit_graph`. The **paper-consistent** path for estimation is `simulate_graph` → `select_d_ensemble` → `estimate_sigma_from_graph` → `GraphModelComparator`.
 
-### `LogitGraphFitter`
+### `simulate_graph`
 
-Fits a single Logit Graph model to a `networkx.Graph`.
+Generate a random graph at fixed `(n, d, σ)`.
 
-**Constructor parameters:**
+```python
+from logit_graph import simulate_graph
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `d` | `int` | — | Neighborhood depth for degree-sum features |
-| `n_iteration` | `int` | — | Maximum number of MCMC-like edge-swap iterations |
-| `warm_up` | `int` | — | Burn-in iterations before GIC tracking starts |
-| `patience` | `int` | — | Early-stopping patience (iterations without GIC improvement) |
-| `dist_type` | `str` | `'KL'` | Spectral distance type: `'KL'`, `'L1'`, or `'L2'` |
-| `edge_delta` | `float\|None` | `None` | If set, stops when edge count is within this fraction of original |
-| `min_gic_threshold` | `float` | `5` | Minimum GIC improvement to reset patience counter |
-| `er_p` | `float` | `0.05` | ER probability for the initial warm-up graph |
-| `verbose` | `bool` | `False` | Print iteration progress |
+adj = simulate_graph(
+    n=200, d=1, sigma=-4.0, n_iter=30_000,
+    feature_mode="incremental", target_density=0.10, seed=42,
+)
+# adj, meta = simulate_graph(..., return_meta=True)  → also returns σ, β, density, …
+```
 
-**Methods:**
-- `fit(original_graph: nx.Graph) -> self`
+| Parameter | Description |
+|-----------|-------------|
+| `n`, `d`, `sigma` | Graph size, feature depth, logit intercept |
+| `n_iter` | Gibbs iterations (`d≥1`) or ignored (`d=0`, direct ER) |
+| `feature_mode` | `"incremental"` (default paper mode), `"bounded"`, or `"full"` |
+| `target_density` | Used when calibrating `β` if `sigma` is omitted |
+| `return_meta` | If `True`, return `(adj, meta)` with fitted `σ`, `β`, density |
 
-**Attributes after `fit`:**
-- `fitted_graph: nx.Graph` — the best-fit graph found
-- `metadata: dict` — contains `sigma`, `gic_value`, `best_iteration`, `spectrum_diffs`, `edge_diffs`, and more
+### `select_d_ensemble`
+
+Pick `d̂` by AIC over candidate depths using the Layer-2 offset logit.
+
+```python
+from logit_graph import select_d_ensemble
+
+d_hat, aic_stats = select_d_ensemble(
+    graphs=[adj],                      # list of adjacency matrices
+    d_candidates=[0, 1, 2, 3],
+    feature_mode="incremental",
+    extra_penalty_per_d=0.0,           # add e.g. 3.0 to penalise larger d
+)
+# aic_stats[d] → {"aic", "ll", "sigma_hat", "n_obs", …}
+```
+
+### `estimate_sigma_from_graph`
+
+Offset-logit estimate of `σ̂` at a fixed `d` (same estimator used inside the AIC table).
+
+```python
+from logit_graph import estimate_sigma_from_graph
+
+sigma_hat = estimate_sigma_from_graph(adj, d=1, feature_mode="incremental")
+```
 
 ### `GraphModelComparator`
 
-Compares Logit Graph against baseline random graph models (ER, WS, BA, GRG).
-
-**Constructor parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `d_list` | `list[int]` | Values of `d` to search over for LG |
-| `lg_params` | `dict` | LG generation settings (`max_iterations`, `patience`, `edge_delta`, `min_gic_threshold`, `er_p`) |
-| `other_model_n_runs` | `int` | Number of independent runs per baseline model |
-| `other_model_params` | `list\|None` | Explicit parameter grid for baseline models; defaults are used if `None` |
-| `dist_type` | `str` | Spectral distance type (`'KL'`, `'L1'`, `'L2'`) |
-| `verbose` | `bool` | Print progress |
-| `other_models` | `list[str]` | Subset of `["ER", "WS", "GRG", "BA"]` |
-| `other_model_grid_points` | `int` | Grid resolution for baseline model parameter sweep |
-
-**Methods:**
-- `compare(original_graph: nx.Graph, graph_filepath: str) -> self`
-
-**Attributes after `compare`:**
-- `summary_df: pd.DataFrame` — per-model GIC, spectral distance, and graph attributes
-- `fitted_graphs_data: dict[str, {graph, metadata, attributes}]` — fitted graphs and metadata keyed by model name
-
-### `LogitGraphSimulation`
-
-Lower-level class for running and aggregating multiple LG simulation runs. Used internally by `GraphModelComparator`; can be used directly for custom simulation loops.
-
-### `calculate_graph_attributes`
+Compare **LG** (at one or more `d` values) against baseline models using spectral GIC (lower = better).
 
 ```python
-from logit_graph import calculate_graph_attributes
-attrs = calculate_graph_attributes(G)  # returns dict
+from logit_graph import GraphModelComparator
+
+comparator = GraphModelComparator(
+    d_list=[d_hat],                    # usually the AIC-selected d̂ only
+    lg_params={                        # passed to LogitGraphFitter internally
+        "max_iterations": 5000,
+        "patience": 500,
+        "edge_delta": None,
+        "min_gic_threshold": 5,
+        "er_p": 0.05,
+        "check_interval": 50,
+    },
+    other_model_n_runs=2,
+    dist_type="KL",                    # "KL", "L1", or "L2"
+    verbose=False,
+    other_models=["ER", "WS", "BA"],   # optionally include "GRG"
+    other_model_grid_points=5,
+    random_state=0,                    # seed LG Gibbs + baseline sampling (>= 0.1.3)
+).compare(original_graph=G, graph_filepath="my_graph")
+
+comparator.summary_df                      # per-model GIC and attributes
+comparator.fitted_graphs_data["LG"]        # {"graph", "metadata", "attributes"}
 ```
 
-Computes basic network properties: density, clustering coefficient, average path length, diameter, assortativity, largest connected component size, and more.
+When `d_list` has multiple entries, the comparator searches over `d` internally and keeps the best LG fit. For paper consistency, pass `d_list=[d_hat]` where `d_hat` comes from `select_d_ensemble`.
+
+### `LogitGraphFitter`
+
+Sklearn-style fitter: given a fixed `d`, estimate `σ` via offset logit and search for a graph minimising spectral GIC.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `d` | `0` | Neighborhood depth for degree-sum features |
+| `n_iteration` | `10000` | Max edge-swap / Gibbs iterations |
+| `warm_up` | `500` | Burn-in before GIC tracking |
+| `patience` | `2000` | Early-stop patience |
+| `dist_type` | `"KL"` | Spectral distance: `"KL"`, `"L1"`, `"L2"` |
+| `min_gic_threshold` | `5` | Min GIC drop to reset patience |
+| `er_p` | `0.05` | ER probability for warm-start graph |
+| `verbose` | `True` | Print progress |
+
+After `fit(G)`: `fitter.fitted_graph`, `fitter.metadata` (`sigma`, `gic_value`, `best_iteration`, …).
+
+### Other exports
+
+| Symbol | Role |
+|--------|------|
+| `LogitGraphSimulation` | Lower-level multi-run LG simulation (used inside the comparator) |
+| `LogitRegEstimator` | Layer-2 offset logit on pair features; returns AIC stats |
+| `calculate_graph_attributes` | Density, clustering, diameter, assortativity, … |
+| `recommended_iterations` | Suggested Gibbs length as a function of `n` |
+| `build_pair_dataset`, `pair_feature`, `pair_feature_layer2` | Feature construction for custom pipelines |
+| `GraphModel` | Core Gibbs / edge-swap engine |
+| `AICSweepConfig`, `SigmaSweepConfig`, `PRESETS` | Experiment presets under `logit_graph.experiments` |
 
 ## Model Overview
 
@@ -195,8 +294,7 @@ where `|θ|` is the number of free parameters (1 for LG). This penalizes model c
 ```
 logit-graph/
 ├── src/logit_graph/          # Package source
-│   ├── __init__.py           # Exports: LogitGraphFitter, GraphModelComparator,
-│   │                         #          LogitGraphSimulation, calculate_graph_attributes
+│   ├── __init__.py           # Public exports (see Public API section)
 │   ├── simulation.py         # High-level fitter and comparator classes
 │   ├── graph.py              # GraphModel: MCMC edge-swap engine (core LG generation)
 │   ├── logit_estimator.py    # Parameter estimation via logistic regression (sklearn / statsmodels / torch)
@@ -215,6 +313,11 @@ logit-graph/
 │   ├── test_graph_helpers.py
 │   ├── test_bugfixes.py
 │   └── test_param_and_model_selection_smoke.py
+│
+├── examples/                 # PyPI-friendly tutorials (simulated + real data)
+│   ├── pypi_estimate_d_sigma.ipynb
+│   ├── pypi_fit_real_network.ipynb
+│   └── data/                 # Cached SNAP ego net (686.edges)
 │
 ├── notebooks/                # Reproducible analysis notebooks
 │   ├── base/                 # Core model validation and synthetic experiments

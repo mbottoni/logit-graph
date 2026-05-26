@@ -1,4 +1,5 @@
 import random
+from typing import Optional
 
 import networkx as nx
 import numpy as np
@@ -145,7 +146,7 @@ class ModelSelectorSpectrum:
 
 # Class implementing the MAIN stat graph model selector
 class GraphModelSelection:
-    def __init__(self, graph, log_graphs, log_params, models=None, parameters=None, n_runs=10, grid_points=10, **kwargs):
+    def __init__(self, graph, log_graphs, log_params, models=None, parameters=None, n_runs=10, grid_points=10, random_state=None, **kwargs):
         self.graph = graph
         self.log_graphs = log_graphs
         self.log_params = log_params
@@ -153,8 +154,35 @@ class GraphModelSelection:
         self.parameters = parameters
         self.n_runs = n_runs
         self.grid_points = grid_points
+        self.random_state = random_state
         self.kwargs = kwargs
         self.validate_input()
+
+    def _run_seed(self, seed_offset: int) -> Optional[int]:
+        if self.random_state is None:
+            return None
+        return int(self.random_state) + 10_000 + seed_offset
+
+    def _generate_graph(self, model: str, params, seed_offset: int):
+        n = self.graph.number_of_nodes()
+        seed = self._run_seed(seed_offset)
+        if model == "ER":
+            return nx.erdos_renyi_graph(n, float(params), seed=seed)
+        if model == "GRG":
+            return nx.random_geometric_graph(n, float(params), seed=seed)
+        if model == "KR":
+            return nx.random_regular_graph(d=2 * int(params), n=n, seed=seed)
+        if model == "WS":
+            if isinstance(params, (list, tuple, np.ndarray)) and len(params) >= 2:
+                return nx.watts_strogatz_graph(n, int(params[0]), float(params[1]), seed=seed)
+            avg_degree = 2 * self.graph.number_of_edges() / self.graph.number_of_nodes()
+            k = max(2, int(avg_degree))
+            if k % 2 != 0:
+                k += 1
+            return nx.watts_strogatz_graph(n, k, float(params), seed=seed)
+        if model == "BA":
+            return nx.barabasi_albert_graph(n, int(params), seed=seed)
+        raise ValueError(f"Unknown model: {model}")
 
     def validate_input(self):
         if not isinstance(self.graph, nx.Graph):
@@ -189,7 +217,7 @@ class GraphModelSelection:
         else:
             raise ValueError(f"Unknown model: {model_name}")
 
-    def calculate_average_spectrum(self, model, params):
+    def calculate_average_spectrum(self, model, params, seed_offset: int = 0):
         spectrum_values = []
         if model == "LG":
             # For LG model, we already have n_runs graphs
@@ -202,15 +230,12 @@ class GraphModelSelection:
                 spectrum, _ = gic_calculator.compute_spectral_density(log_graph)
                 spectrum_values.append(spectrum)
         else:
-            model_func = self.model_function(model)
-            for _ in range(self.n_runs):
+            for run_idx in range(self.n_runs):
                 # Handle both single and multi-parameter models
                 if model == "WS" and isinstance(params, list):
-                    # Multi-parameter case
-                    generated_graph = model_func(self.graph.number_of_nodes(), params)
+                    generated_graph = self._generate_graph(model, params, seed_offset + run_idx)
                     param_for_gic = params
                 else:
-                    # Single parameter case
                     if model in ["BA"]:
                         model_params = int(params)
                     elif model in ["ER", "GRG"]:
@@ -218,7 +243,7 @@ class GraphModelSelection:
                     else:
                         model_params = params
 
-                    generated_graph = model_func(self.graph.number_of_nodes(), model_params)
+                    generated_graph = self._generate_graph(model, model_params, seed_offset + run_idx)
                     param_for_gic = params
 
                 gic_calculator = gic.GraphInformationCriterion(
@@ -246,7 +271,7 @@ class GraphModelSelection:
                 gic_calculator = gic.GraphInformationCriterion(
                     graph=self.graph,
                     model=model,
-                    log_graph=random.choice(self.log_graphs)
+                    log_graph=self.log_graphs[0],
                 )
                 lg_gic = gic_calculator.calculate_gic(model_den=avg_spectrum)
                 
@@ -267,6 +292,7 @@ class GraphModelSelection:
                 best_spectrum = None
                 best_distance = float('inf')
                 best_gic = float('inf')
+                grid_offset = idx * 1000
                 
                 # Handle multi-parameter models (like WS)
                 if model == "WS" and isinstance(param_range, dict) and 'k' in param_range and 'p' in param_range:
@@ -275,10 +301,14 @@ class GraphModelSelection:
                                        param_range['k'].get('step', 2))
                     p_values = np.linspace(param_range['p']['lo'], param_range['p']['hi'], num=self.grid_points)
                     
+                    combo_idx = 0
                     for k in k_values:
                         for p in p_values:
                             params = [int(k), float(p)]
-                            avg_spectrum = self.calculate_average_spectrum(model, params)
+                            avg_spectrum = self.calculate_average_spectrum(
+                                model, params, seed_offset=grid_offset + combo_idx,
+                            )
+                            combo_idx += 1
                             real_spectrum, _ = gic.GraphInformationCriterion(self.graph, model).compute_spectral_density(self.graph)
                             distance = np.linalg.norm(real_spectrum - avg_spectrum)
                             
@@ -297,8 +327,12 @@ class GraphModelSelection:
                                 best_gic = current_gic
                 else:
                     # Single parameter case
-                    for param in np.linspace(param_range['lo'], param_range['hi'], num=self.grid_points):
-                        avg_spectrum = self.calculate_average_spectrum(model, param)
+                    for grid_idx, param in enumerate(
+                        np.linspace(param_range['lo'], param_range['hi'], num=self.grid_points)
+                    ):
+                        avg_spectrum = self.calculate_average_spectrum(
+                            model, param, seed_offset=grid_offset + grid_idx,
+                        )
                         real_spectrum, _ = gic.GraphInformationCriterion(self.graph, model).compute_spectral_density(self.graph)
                         distance = np.linalg.norm(real_spectrum - avg_spectrum)
                         
@@ -336,33 +370,18 @@ class GraphModelSelection:
         }
     
     # Calculate average GIC over n_runs
-    def calculate_average_gic(self, model, params):
+    def calculate_average_gic(self, model, params, seed_offset: int = 0):
         gic_values = []
-        for _ in range(self.n_runs):
+        for run_idx in range(self.n_runs):
             if model == "LG":
-                log_graph = random.choice(self.log_graphs)
+                log_graph = self.log_graphs[0]
                 gic_calculator = gic.GraphInformationCriterion(
                     graph=self.graph,
                     model=model,
                     log_graph=log_graph
                 )
             else:
-                model_func = self.model_function(model)
-                # Handle both single and multi-parameter models
-                if model == "WS" and isinstance(params, list):
-                    # Multi-parameter case
-                    generated_graph = model_func(self.graph.number_of_nodes(), params)
-                else:
-                    # Single parameter case
-                    if model in ["BA"]:
-                        model_params = int(params)
-                    elif model in ["ER", "GRG"]:
-                        model_params = float(params)
-                    else:
-                        model_params = params
-
-                    generated_graph = model_func(self.graph.number_of_nodes(), model_params)
-
+                generated_graph = self._generate_graph(model, params, seed_offset + run_idx)
                 gic_calculator = gic.GraphInformationCriterion(
                     graph=self.graph,
                     model=model,
