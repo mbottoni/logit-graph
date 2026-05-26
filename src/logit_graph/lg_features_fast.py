@@ -64,6 +64,79 @@ def _sorted_remove(row: np.ndarray, x: int) -> np.ndarray:
 
 
 @njit(cache=True)
+def _sorted_has_buf(row_buf: np.ndarray, row_lens: np.ndarray, v: int, x: int) -> bool:
+    ln = int(row_lens[v])
+    row = row_buf[v]
+    lo, hi = 0, ln
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if row[mid] == x:
+            return True
+        if row[mid] < x:
+            lo = mid + 1
+        else:
+            hi = mid
+    return False
+
+
+@njit(cache=True)
+def _sorted_add_buf(
+    row_buf: np.ndarray, row_lens: np.ndarray, v: int, x: int,
+) -> None:
+    ln = int(row_lens[v])
+    row = row_buf[v]
+    pos = 0
+    while pos < ln and row[pos] < x:
+        pos += 1
+    if pos < ln and row[pos] == x:
+        return
+    for k in range(ln, pos, -1):
+        row[k] = row[k - 1]
+    row[pos] = x
+    row_lens[v] = ln + 1
+
+
+@njit(cache=True)
+def _sorted_remove_buf(
+    row_buf: np.ndarray, row_lens: np.ndarray, v: int, x: int,
+) -> None:
+    ln = int(row_lens[v])
+    row = row_buf[v]
+    pos = 0
+    for k in range(ln):
+        if row[k] != x:
+            if pos != k:
+                row[pos] = row[k]
+            pos += 1
+    row_lens[v] = pos
+
+
+@njit(cache=True)
+def _row_buf_to_rows_list(row_buf: np.ndarray, row_lens: np.ndarray, n: int) -> list:
+    rows = []
+    for v in range(n):
+        ln = int(row_lens[v])
+        out = np.empty(ln, dtype=np.int32)
+        for k in range(ln):
+            out[k] = row_buf[v, k]
+        rows.append(out)
+    return rows
+
+
+@njit(cache=True)
+def _rows_list_to_row_buf(rows: list, n: int, max_deg: int) -> tuple[np.ndarray, np.ndarray]:
+    row_buf = np.zeros((n, max_deg), dtype=np.int32)
+    row_lens = np.zeros(n, dtype=np.int32)
+    for v in range(n):
+        row = rows[v]
+        ln = row.shape[0]
+        row_lens[v] = ln
+        for k in range(ln):
+            row_buf[v, k] = row[k]
+    return row_buf, row_lens
+
+
+@njit(cache=True)
 def _rebuild_csr(rows: list, n: int) -> tuple[np.ndarray, np.ndarray]:
     indptr = np.zeros(n + 1, dtype=np.int64)
     total = 0
@@ -310,6 +383,36 @@ def _layer2_offset_from_vertex_sums(
 
 
 @njit(cache=True)
+def run_gibbs_numba(
+    rows: list,
+    degrees: np.ndarray,
+    draws: np.ndarray,
+    d: int,
+    mode_code: int,
+    sigma: float,
+    alpha: float,
+    beta: float,
+    alpha_gwesp: float,
+    n: int,
+) -> None:
+    """Run all Gibbs steps in one compiled loop (``draws`` shape (n_iter, 3))."""
+    max_deg = n - 1
+    if max_deg < 1:
+        max_deg = 1
+    row_buf, row_lens = _rows_list_to_row_buf(rows, n, max_deg)
+    run_gibbs_numba_buf(
+        row_buf, row_lens, draws, d, mode_code, sigma, alpha, beta, alpha_gwesp, n,
+    )
+    for v in range(n):
+        ln = int(row_lens[v])
+        out = np.empty(ln, dtype=np.int32)
+        for k in range(ln):
+            out[k] = row_buf[v, k]
+        rows[v] = out
+        degrees[v] = ln
+
+
+@njit(cache=True)
 def build_multi_d_pair_dataset_skip_rows(
     rows: list,
     n: int,
@@ -323,25 +426,75 @@ def build_multi_d_pair_dataset_skip_rows(
     offsets = np.empty((nd, m), dtype=np.float64)
     labels = np.empty(m, dtype=np.int8)
     use_vertex_cache = mode_code == 0 or mode_code == 1
-    has_vcache = False
-    vertex_cache = np.empty(n, dtype=np.float64)
-    if use_vertex_cache and nd == 1:
-        vertex_cache = _precompute_vertex_ball_sums_skip_rows(
-            rows, n, int(d_values[0]), mode_code,
-        )
-        has_vcache = True
+    max_d_bfs = 0
+    if mode_code == 2 or mode_code == 3:
+        for di in range(nd):
+            d_val = int(d_values[di])
+            if d_val > max_d_bfs:
+                max_d_bfs = d_val
+    vertex_caches = np.empty((nd, n), dtype=np.float64)
+    if use_vertex_cache:
+        for di in range(nd):
+            d = int(d_values[di])
+            vc = _precompute_vertex_ball_sums_skip_rows(rows, n, d, mode_code)
+            for v in range(n):
+                vertex_caches[di, v] = vc[v]
+    dist_i = np.empty(n, dtype=np.int16)
+    dist_j = np.empty(n, dtype=np.int16)
     k = 0
     for i in range(n):
         row_i = rows[i]
         for j in range(i + 1, n):
             had = _sorted_has(row_i, j)
             labels[k] = 1 if had else 0
+            l2 = had
+            dist_ready = False
             for di in range(nd):
                 d = int(d_values[di])
-                if has_vcache and di == 0:
+                if use_vertex_cache:
+                    vc_row = vertex_caches[di]
                     offsets[di, k] = _layer2_offset_from_vertex_sums(
-                        vertex_cache, i, j, had, mode_code,
+                        vc_row, i, j, had, mode_code,
                     )
+                elif mode_code == 2 and d >= 2:
+                    if not dist_ready:
+                        _bfs_distances_skip_rows(
+                            rows, i, max_d_bfs, n, dist_i, l2, i, j,
+                        )
+                        _bfs_distances_skip_rows(
+                            rows, j, max_d_bfs, n, dist_j, l2, i, j,
+                        )
+                        dist_ready = True
+                    c_d = _count_common_within_dist(dist_i, dist_j, n, i, j, d)
+                    c_dm1 = _count_common_within_dist(dist_i, dist_j, n, i, j, d - 1)
+                    delta = c_d - c_dm1
+                    if delta < 0:
+                        delta = 0
+                    offsets[di, k] = math.log(1.0 + delta)
+                elif mode_code == 3 and d >= 2:
+                    if not dist_ready:
+                        _bfs_distances_skip_rows(
+                            rows, i, max_d_bfs, n, dist_i, l2, i, j,
+                        )
+                        _bfs_distances_skip_rows(
+                            rows, j, max_d_bfs, n, dist_j, l2, i, j,
+                        )
+                        dist_ready = True
+                    c = _count_common_within_dist(dist_i, dist_j, n, i, j, d)
+                    offsets[di, k] = math.log(1.0 + c)
+                elif mode_code == 2 and d == 1:
+                    c = _common_neighbors_skip_rows(rows, i, j, l2)
+                    if c <= 0:
+                        offsets[di, k] = 0.0
+                    else:
+                        offsets[di, k] = alpha_gwesp * (
+                            1.0 - (1.0 - 1.0 / alpha_gwesp) ** c
+                        )
+                elif mode_code == 3 and d == 1:
+                    c = _common_neighbors_skip_rows(rows, i, j, l2)
+                    offsets[di, k] = math.log(1.0 + c)
+                elif d == 0:
+                    offsets[di, k] = 0.0
                 else:
                     offsets[di, k] = pair_feature_layer2_skip_rows(
                         rows, i, j, d, n, mode_code, had, alpha_gwesp,
@@ -396,9 +549,187 @@ def _expit(x: float) -> float:
 
 
 @njit(cache=True)
-def run_gibbs_numba(
-    rows: list,
-    degrees: np.ndarray,
+def _common_neighbors_buf(
+    row_buf: np.ndarray, row_lens: np.ndarray, i: int, j: int, l2_skip: bool,
+) -> int:
+    ri_len = int(row_lens[i])
+    rj_len = int(row_lens[j])
+    ri = row_buf[i]
+    rj = row_buf[j]
+    a = 0
+    b = 0
+    count = 0
+    while a < ri_len and b < rj_len:
+        vi = int(ri[a])
+        vj = int(rj[b])
+        if l2_skip:
+            if vi == j:
+                a += 1
+                continue
+            if vj == i:
+                b += 1
+                continue
+        if vi == i or vi == j:
+            a += 1
+            continue
+        if vj == i or vj == j:
+            b += 1
+            continue
+        if vi == vj:
+            count += 1
+            a += 1
+            b += 1
+        elif vi < vj:
+            a += 1
+        else:
+            b += 1
+    return count
+
+
+@njit(cache=True)
+def _bfs_distances_buf(
+    row_buf: np.ndarray,
+    row_lens: np.ndarray,
+    source: int,
+    max_depth: int,
+    n: int,
+    dist: np.ndarray,
+    l2_skip: bool,
+    ei: int,
+    ej: int,
+) -> None:
+    for v in range(n):
+        dist[v] = -1
+    dist[source] = 0
+    frontier = np.empty(n, dtype=np.int32)
+    frontier_len = 1
+    frontier[0] = source
+    head = 0
+    while head < frontier_len:
+        v = int(frontier[head])
+        head += 1
+        dv = int(dist[v])
+        if dv >= max_depth:
+            continue
+        ln = int(row_lens[v])
+        row = row_buf[v]
+        for k in range(ln):
+            u = int(row[k])
+            if l2_skip and ((v == ei and u == ej) or (v == ej and u == ei)):
+                continue
+            if dist[u] < 0:
+                dist[u] = dv + 1
+                frontier[frontier_len] = u
+                frontier_len += 1
+
+
+@njit(cache=True)
+def _sum_ball_degree_buf(
+    row_buf: np.ndarray, row_lens: np.ndarray, source: int, depth: int, n: int,
+    l2_skip: bool, ei: int, ej: int,
+) -> float:
+    mark = np.zeros(n, dtype=np.int8)
+    frontier = np.empty(n, dtype=np.int32)
+    frontier_len = 1
+    frontier[0] = source
+    mark[source] = 1
+    for _ in range(depth):
+        nxt = np.empty(n, dtype=np.int32)
+        nxt_len = 0
+        for fi in range(frontier_len):
+            v = frontier[fi]
+            ln = int(row_lens[v])
+            row = row_buf[v]
+            for k in range(ln):
+                u = int(row[k])
+                if l2_skip and ((v == ei and u == ej) or (v == ej and u == ei)):
+                    continue
+                if mark[u] == 0:
+                    mark[u] = 1
+                    nxt[nxt_len] = u
+                    nxt_len += 1
+        if nxt_len == 0:
+            break
+        frontier_len = nxt_len
+        for k in range(nxt_len):
+            frontier[k] = nxt[k]
+    total = 0.0
+    for v in range(n):
+        if mark[v] == 1:
+            deg = float(row_lens[v])
+            if l2_skip:
+                if v == ei and _sorted_has_buf(row_buf, row_lens, ei, ej):
+                    deg -= 1.0
+                if v == ej and _sorted_has_buf(row_buf, row_lens, ej, ei):
+                    deg -= 1.0
+            total += deg
+    return total
+
+
+@njit(cache=True)
+def _incremental_h_buf(
+    row_buf: np.ndarray, row_lens: np.ndarray, i: int, j: int, d: int, n: int,
+    l2_skip: bool, alpha_gwesp: float,
+) -> float:
+    if d == 0:
+        return 0.0
+    if d == 1:
+        c = _common_neighbors_buf(row_buf, row_lens, i, j, l2_skip)
+        if c <= 0:
+            return 0.0
+        return alpha_gwesp * (1.0 - (1.0 - 1.0 / alpha_gwesp) ** c)
+    dist_i = np.empty(n, dtype=np.int16)
+    dist_j = np.empty(n, dtype=np.int16)
+    _bfs_distances_buf(row_buf, row_lens, i, d, n, dist_i, l2_skip, i, j)
+    _bfs_distances_buf(row_buf, row_lens, j, d, n, dist_j, l2_skip, i, j)
+    c_d = _count_common_within_dist(dist_i, dist_j, n, i, j, d)
+    c_dm1 = _count_common_within_dist(dist_i, dist_j, n, i, j, d - 1)
+    delta = c_d - c_dm1
+    if delta < 0:
+        delta = 0
+    return math.log(1.0 + delta)
+
+
+@njit(cache=True)
+def _common_dhop_buf(
+    row_buf: np.ndarray, row_lens: np.ndarray, i: int, j: int, depth: int, n: int,
+    l2_skip: bool,
+) -> int:
+    if depth == 0:
+        return 0
+    if depth == 1:
+        return _common_neighbors_buf(row_buf, row_lens, i, j, l2_skip)
+    dist_i = np.empty(n, dtype=np.int16)
+    dist_j = np.empty(n, dtype=np.int16)
+    _bfs_distances_buf(row_buf, row_lens, i, depth, n, dist_i, l2_skip, i, j)
+    _bfs_distances_buf(row_buf, row_lens, j, depth, n, dist_j, l2_skip, i, j)
+    return _count_common_within_dist(dist_i, dist_j, n, i, j, depth)
+
+
+@njit(cache=True)
+def pair_feature_layer2_row_buf(
+    row_buf: np.ndarray, row_lens: np.ndarray, i: int, j: int, d: int, n: int,
+    mode_code: int, had_edge: bool, alpha_gwesp: float,
+) -> float:
+    l2 = had_edge
+    if mode_code == 0:
+        si = _sum_ball_degree_buf(row_buf, row_lens, i, d, n, l2, i, j)
+        sj = _sum_ball_degree_buf(row_buf, row_lens, j, d, n, l2, i, j)
+        return si + sj
+    if mode_code == 1:
+        si = _sum_ball_degree_buf(row_buf, row_lens, i, d, n, l2, i, j)
+        sj = _sum_ball_degree_buf(row_buf, row_lens, j, d, n, l2, i, j)
+        return math.log(1.0 + si) + math.log(1.0 + sj)
+    if mode_code == 2:
+        return _incremental_h_buf(row_buf, row_lens, i, j, d, n, l2, alpha_gwesp)
+    c = _common_dhop_buf(row_buf, row_lens, i, j, d, n, l2)
+    return math.log(1.0 + c)
+
+
+@njit(cache=True)
+def run_gibbs_numba_buf(
+    row_buf: np.ndarray,
+    row_lens: np.ndarray,
     draws: np.ndarray,
     d: int,
     mode_code: int,
@@ -408,7 +739,7 @@ def run_gibbs_numba(
     alpha_gwesp: float,
     n: int,
 ) -> None:
-    """Run all Gibbs steps in one compiled loop (``draws`` shape (n_iter, 3))."""
+    """Run Gibbs steps with in-place CSR row buffers (no per-flip allocations)."""
     n_iter = draws.shape[0]
     for t in range(n_iter):
         i_raw = draws[t, 0]
@@ -418,24 +749,20 @@ def run_gibbs_numba(
         j = int(j_raw)
         if j >= i:
             j += 1
-        had = _sorted_has(rows[i], j)
-        feat = pair_feature_layer2_skip_rows(
-            rows, i, j, d, n, mode_code, had, alpha_gwesp,
+        had = _sorted_has_buf(row_buf, row_lens, i, j)
+        feat = pair_feature_layer2_row_buf(
+            row_buf, row_lens, i, j, d, n, mode_code, had, alpha_gwesp,
         )
         logit = sigma + alpha * beta * feat
         p = _expit(logit)
         new_val = u < p
         if new_val != had:
             if new_val:
-                rows[i] = _sorted_add(rows[i], j)
-                rows[j] = _sorted_add(rows[j], i)
-                degrees[i] += 1
-                degrees[j] += 1
+                _sorted_add_buf(row_buf, row_lens, i, j)
+                _sorted_add_buf(row_buf, row_lens, j, i)
             else:
-                rows[i] = _sorted_remove(rows[i], j)
-                rows[j] = _sorted_remove(rows[j], i)
-                degrees[i] -= 1
-                degrees[j] -= 1
+                _sorted_remove_buf(row_buf, row_lens, i, j)
+                _sorted_remove_buf(row_buf, row_lens, j, i)
 
 
 # ---------------------------------------------------------------------------
@@ -585,8 +912,8 @@ class FastGibbsGraph:
     """Adjacency-only Gibbs state with incremental CSR + Numba features."""
 
     __slots__ = (
-        "n", "rows", "degrees", "edge_count",
-        "d", "mode_code", "sigma", "alpha", "beta", "alpha_gwesp",
+        "n", "rows", "row_buf", "row_lens", "degrees", "edge_count",
+        "d", "mode_code", "sigma", "alpha", "beta", "alpha_gwesp", "_max_deg",
     )
 
     def __init__(
@@ -610,6 +937,7 @@ class FastGibbsGraph:
         self.beta = float(beta)
         self.alpha_gwesp = float(alpha_gwesp)
         self.mode_code = MODE_TO_CODE[feature_mode]
+        self._max_deg = max(n - 1, 1)
 
         if adj is not None:
             self.rows = rows_from_adj(adj)
@@ -626,16 +954,22 @@ class FastGibbsGraph:
                         nbs.append(j)
                 self.rows.append(np.sort(np.asarray(nbs, dtype=np.int32)))
 
-        self.degrees = np.asarray([r.shape[0] for r in self.rows], dtype=np.int32)
+        self.row_buf, self.row_lens = _rows_list_to_row_buf(
+            self.rows, n, self._max_deg,
+        )
+        self.degrees = self.row_lens.copy()
         self.edge_count = int(self.degrees.sum() // 2)
 
+    def to_rows_list(self) -> list:
+        return _row_buf_to_rows_list(self.row_buf, self.row_lens, self.n)
+
     def to_adjacency(self) -> np.ndarray:
-        return adj_from_rows(self.rows, self.n)
+        return adj_from_rows(self.to_rows_list(), self.n)
 
     def run_from_draws(self, draws: np.ndarray) -> None:
-        run_gibbs_numba(
-            self.rows,
-            self.degrees,
+        run_gibbs_numba_buf(
+            self.row_buf,
+            self.row_lens,
             draws,
             self.d,
             self.mode_code,
@@ -645,6 +979,8 @@ class FastGibbsGraph:
             self.alpha_gwesp,
             self.n,
         )
+        self.degrees = self.row_lens.copy()
+        self.rows = self.to_rows_list()
         self.edge_count = int(self.degrees.sum() // 2)
 
     def run_steps(self, n_iter: int, rng: np.random.Generator) -> None:
@@ -707,7 +1043,7 @@ def build_multi_d_pair_datasets_fast(
     offsets_2d, labels = build_multi_d_pair_dataset_skip_rows(
         rows, n, d_arr, MODE_TO_CODE[mode], alpha_gwesp,
     )
-    offsets_by_d = {int(d): offsets_2d[i].copy() for i, d in enumerate(d_arr)}
+    offsets_by_d = {int(d): offsets_2d[i] for i, d in enumerate(d_arr)}
     return labels.astype(int), offsets_by_d
 
 

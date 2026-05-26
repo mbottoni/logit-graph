@@ -17,6 +17,11 @@ class SigmaSweepConfig:
     feature_mode_gen: str = "incremental"
     feature_mode_est: str = "incremental"
     seed_base: int = 0
+    adaptive_stopping: bool = False
+    adaptive_check_interval: int = 20_000
+    adaptive_patience: int = 3
+    adaptive_cv_tol: float = 0.02
+    adaptive_min_iter: int = 20_000
 
 
 @dataclass
@@ -162,9 +167,15 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             iter_cap=None,
         ),
         "sigma": SigmaSweepConfig(
-            n_values=[10, 50, 100, 200, 500, 1000, 2000],
-            n_reps=15,
+            sigma_values=[-2.0, -4.0, -6.0],
+            n_values=[10, 50, 100, 200, 500, 1000],
+            n_reps=3,
             iter_cap=None,
+            adaptive_stopping=True,
+            adaptive_check_interval=25_000,
+            adaptive_patience=4,
+            adaptive_cv_tol=0.015,
+            adaptive_min_iter=50_000,
         ),
         "aic": AICSweepConfig(
             n_sizes=[100, 500, 1000],
