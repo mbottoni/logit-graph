@@ -1,8 +1,22 @@
 # data
 # images/*
-__pycache__/*
-.ipynb_checkpoints/*
 data/*
+
+# python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# experiment run artifacts
+*.npy
+*.npz
+*.log
+
+.ipynb_checkpoints/*
 
 # vscode
 .DS_Store
@@ -19,9 +33,6 @@ data/*
 */.Rhistory
 .Rproj.user
 *.csv
-
-# c
-*.pyc
 
 deprecated/
 
@@ -43,8 +54,8 @@ statGraph/
 *.tar.gz
 
 notebooks/runs/*
+.env
 *.gif
-src/logit_graph.egg-info/*
 *.pdf
 
 notebooks/anova/runs/

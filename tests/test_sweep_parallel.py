@@ -1,0 +1,92 @@
+"""Serial vs parallel sweep identity tests."""
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pandas as pd
+
+from logit_graph.experiments.presets import ROCSweepConfig
+from logit_graph.experiments.sweeps import collect_anova_pvalues, run_aic_d_sweep, run_roc_sweeps, run_sigma_sweep
+
+
+def _sort_sigma(df: pd.DataFrame) -> pd.DataFrame:
+    cols = ["d", "sigma_true", "n"]
+    return df.sort_values(cols).reset_index(drop=True)
+
+
+def test_sigma_sweep_serial_vs_parallel(tiny_sigma_cfg, tmp_path):
+    serial = run_sigma_sweep(
+        tiny_sigma_cfg, tmp_path / "serial", use_cache=False, n_jobs=1,
+    )
+    parallel = run_sigma_sweep(
+        replace(tiny_sigma_cfg, seed_base=0),
+        tmp_path / "parallel", use_cache=False, n_jobs=2,
+    )
+    pd.testing.assert_frame_equal(
+        _sort_sigma(serial), _sort_sigma(parallel), check_exact=False, rtol=1e-9,
+    )
+
+
+def test_aic_sweep_serial_vs_parallel(tiny_aic_cfg, tmp_path):
+    _, conf_serial = run_aic_d_sweep(
+        tiny_aic_cfg, tmp_path / "serial", use_cache=False, n_jobs=1,
+    )
+    df_parallel, conf_parallel = run_aic_d_sweep(
+        tiny_aic_cfg, tmp_path / "parallel", use_cache=False, n_jobs=2,
+    )
+    assert conf_serial == conf_parallel
+    assert len(df_parallel) == tiny_aic_cfg.n_runs * len(tiny_aic_cfg.d_true_values)
+
+
+def test_roc_anova_serial_vs_rep_parallel(tmp_path):
+    """Rep-level thread parallelism should match serial p-values."""
+    common = dict(
+        n=30,
+        d=1,
+        sigma1=-1.0,
+        sigma2=-1.5,
+        n_reps=2,
+        n_experiments=3,
+        n_iter=400,
+        feature_mode_gen="incremental",
+        feature_mode_est="incremental",
+        target_density=0.10,
+        signal=0.5,
+        seed_base=42,
+        n_jobs=1,
+        rep_use_threads=True,
+    )
+    serial = collect_anova_pvalues(**common, rep_jobs=1)
+    parallel = collect_anova_pvalues(**common, rep_jobs=2)
+    assert serial.shape == parallel.shape
+    assert serial.tolist() == parallel.tolist()
+
+
+def test_roc_sweep_serial_vs_cell_parallel(tmp_path):
+    cfg = ROCSweepConfig(
+        n_effect=30,
+        sigma2_values=[-1.0],
+        n_values=[30],
+        d_values=[0, 1],
+        n_reps=2,
+        n_experiments=3,
+        iter_cap=400,
+        seed_base=0,
+    )
+    eff_s, samp_s = run_roc_sweeps(cfg, tmp_path / "serial", use_cache=False, n_jobs=1)
+    eff_p, samp_p = run_roc_sweeps(
+        replace(cfg, seed_base=0),
+        tmp_path / "parallel",
+        use_cache=False,
+        n_jobs=2,
+        cell_jobs=2,
+    )
+    serial = pd.concat([eff_s, samp_s], ignore_index=True)
+    parallel = pd.concat([eff_p, samp_p], ignore_index=True)
+    keys = ["sweep", "d", "n", "sigma2", "alpha"]
+    pd.testing.assert_frame_equal(
+        serial.sort_values(keys).reset_index(drop=True),
+        parallel.sort_values(keys).reset_index(drop=True),
+        check_exact=False,
+        rtol=1e-9,
+    )

@@ -2,166 +2,137 @@ from __future__ import annotations
 
 import os
 import gc
+import math
+import random
 from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
 import networkx as nx
+from scipy.special import expit
 from tqdm import tqdm
 
 # Relative package imports
 from . import graph
+from .lg_features import FeatureMode, build_pair_dataset
 from . import logit_estimator as estimator
 from . import gic
 from . import model_selection as ms
-from .degrees_counts import get_sum_degrees as _get_sum_degrees
+
+
+def _warm_start_er_p(sigma: float, lo: float = 0.02, hi: float = 0.5) -> float:
+    """ER seed density clipped near the d>=1 equilibrium expit(sigma).
+
+    Starting the Gibbs chain at this density dramatically reduces burn-in
+    for sparse regimes (very negative sigma).
+    """
+    return float(np.clip(expit(sigma), lo, hi))
+
+
+def _direct_er_at_sigma(n: int, sigma: float, seed: Optional[int]) -> np.ndarray:
+    """Sample Erdős–Rényi adjacency at p = expit(sigma).
+
+    This is the exact equilibrium of d=0 Gibbs with no degree feedback —
+    used to short-circuit Gibbs sampling whenever d=0.
+    """
+    p = float(expit(sigma))
+    rng = np.random.default_rng(seed)
+    upper = rng.random((n, n)) < p
+    upper = np.triu(upper, k=1)
+    return (upper | upper.T).astype(float)
 
 
 
 ### Helper Functions ###
-def _build_features_labels_sampled(
-    graph_input: Union[np.ndarray, nx.Graph],
-    d: int,
-    max_edges: Optional[int] = None,
-    max_non_edges: Optional[int] = None,
-    random_state: Optional[int] = None,
-    verbose: bool = False,
-) -> tuple[np.ndarray, list[int]]:
-    """
-    Build a sampled feature matrix and labels for logistic regression without enumerating all non-edges.
-
-    Args:
-        graph_input: numpy adjacency array or networkx.Graph
-        d (int): neighborhood depth used in degree features
-        max_edges (int|None): number of positive samples (edges) to include. If None, use all edges
-        max_non_edges (int|None): number of negative samples (non-edges) to include. If None, uses same as max_edges
-        random_state (int|None): RNG seed
-        verbose (bool): print progress
-
-    Returns:
-        features (np.ndarray), labels (list[int])
-    """
-    rng = np.random.default_rng(random_state)
-
-    # Ensure numpy adjacency
+def _as_adj(graph_input: Union[np.ndarray, nx.Graph]) -> np.ndarray:
     if isinstance(graph_input, nx.Graph):
-        adj = nx.to_numpy_array(graph_input)
-    else:
-        adj = np.array(graph_input)
+        return nx.to_numpy_array(graph_input)
+    return np.asarray(graph_input, dtype=float)
 
-    n = adj.shape[0]
-    G = nx.from_numpy_array(adj)
-
-    # Edges list (i<j)
-    edges_all = list(G.edges())
-    if max_edges is not None and len(edges_all) > max_edges:
-        edges_idx = rng.choice(len(edges_all), size=max_edges, replace=False)
-        edges_sample = [edges_all[i] for i in edges_idx]
-    else:
-        edges_sample = edges_all
-
-    # Precompute adjacency set for quick lookup
-    edge_set = set((min(i, j), max(i, j)) for i, j in edges_all)
-
-    # Decide negatives to draw
-    if max_non_edges is None:
-        max_non_edges = len(edges_sample)
-
-    non_edges_sample = []
-    attempts = 0
-    max_attempts = max_non_edges * 50 if max_non_edges is not None else n * 50
-    while len(non_edges_sample) < max_non_edges and attempts < max_attempts:
-        i = int(rng.integers(0, n))
-        j = int(rng.integers(0, n))
-        if i == j:
-            attempts += 1
-            continue
-        a, b = (i, j) if i < j else (j, i)
-        if (a, b) not in edge_set:
-            non_edges_sample.append((a, b))
-        attempts += 1
-    if verbose and len(non_edges_sample) < max_non_edges:
-        print(f"Warning: requested {max_non_edges} non-edges, sampled {len(non_edges_sample)}")
-
-    # Precompute degree-sum features per node
-    sum_degrees = np.zeros(n)
-    for v in range(n):
-        sum_degrees[v] = _get_sum_degrees(adj, vertex=v, d=d)
-
-    pairs = edges_sample + non_edges_sample
-    labels = [1] * len(edges_sample) + [0] * len(non_edges_sample)
-
-    # Build feature matrix with intercept first (constant), then symmetric feature
-    feats = np.array([sum_degrees[i] + sum_degrees[j] for (i, j) in pairs], dtype=float).reshape(-1, 1)
-    ones = np.ones((feats.shape[0], 1), dtype=float)
-    features = np.concatenate([ones, feats], axis=1)
-
-    return features, labels
 
 def estimate_sigma_only(
     graph_input: Union[np.ndarray, nx.Graph],
     d: int,
+    max_pairs: Optional[int] = None,
+    feature_mode: FeatureMode = "incremental",
+    random_state: Optional[int] = None,
+    verbose: bool = False,
+    # Deprecated kwargs kept for backwards compatibility ------------------
     max_edges: Optional[int] = None,
     max_non_edges: Optional[int] = None,
     l1_wt: float = 1,
     alpha: float = 0,
-    random_state: Optional[int] = None,
-    verbose: bool = False,
 ) -> tuple[float, Any]:
-    """
-    Estimate sigma via LogitRegEstimator WITHOUT simulating any graph.
+    """Estimate sigma via Layer-2 offset logit (paper formulation).
+
+    Uses :func:`build_pair_dataset` with ``layer2=True`` and a bounded
+    feature mode so the estimator is consistent with how graphs are
+    generated. The legacy `max_edges`/`max_non_edges`/`l1_wt`/`alpha`
+    parameters are accepted for backwards compatibility but only
+    `max_pairs` (= ``max_edges + max_non_edges``) is used.
 
     Args:
-        graph_input: numpy adjacency array or networkx.Graph
-        d (int): neighborhood depth used in degree features
-        max_edges (int|None): number of edge samples to use
-        max_non_edges (int|None): number of non-edge samples to use
-        l1_wt (float): regularization L1 weight (1=L1, 0=L2)
-        alpha (float): regularization strength
-        random_state (int|None): RNG seed
-        verbose (bool): print progress
+        graph_input: numpy adjacency array or ``networkx.Graph``.
+        d: Neighborhood depth used in pair features.
+        max_pairs: Optional cap on total (edge + non-edge) pairs to sample
+            for the offset logit. If ``None`` all pairs are used.
+        feature_mode: Pair feature mode (default ``"incremental"``).
+        random_state: RNG seed for pair sampling.
+        verbose: Print progress.
 
     Returns:
-        float: estimated sigma (intercept)
+        Tuple of ``(sigma_hat, fit_result)``.
     """
-    # Ensure numpy adjacency
-    if isinstance(graph_input, nx.Graph):
-        adj = nx.to_numpy_array(graph_input)
-    else:
-        adj = np.array(graph_input)
+    del l1_wt, alpha  # accepted for backwards compatibility, unused
 
-    # Build sampled features
-    features, labels = _build_features_labels_sampled(
-        adj, d=d, max_edges=max_edges, max_non_edges=max_non_edges, random_state=random_state, verbose=verbose
+    if max_pairs is None and (max_edges is not None or max_non_edges is not None):
+        max_pairs = (max_edges or 0) + (max_non_edges or 0) or None
+
+    adj = _as_adj(graph_input)
+
+    est = estimator.LogitRegEstimator(
+        adj, d=d, layer2=True, feature_mode=feature_mode, verbose=verbose,
     )
-
-    est = estimator.LogitRegEstimator(adj, d=d, verbose=False)
-    result, params, _ = est.estimate_parameters(l1_wt=l1_wt, alpha=alpha, features=features, labels=labels)
-    sigma = float(params[0])
+    offsets, labels_arr = build_pair_dataset(
+        adj, d=d, mode=feature_mode, layer2=True,
+        max_pairs=max_pairs, seed=random_state,
+    )
+    result = est._fit_offset_logit(offsets, np.asarray(labels_arr, dtype=int))
+    sigma = float(result.params[0])
     return sigma, result
+
 
 def estimate_sigma_many(
     graph_input: Union[np.ndarray, nx.Graph],
     d: int,
     n_repeats: int = 30,
+    max_pairs: Optional[int] = None,
+    feature_mode: FeatureMode = "incremental",
+    seed: int = 42,
+    verbose: bool = False,
+    # Deprecated kwargs kept for backwards compatibility ------------------
     max_edges: Optional[int] = None,
     max_non_edges: Optional[int] = None,
     l1_wt: float = 1,
     alpha: float = 0,
-    seed: int = 42,
-    verbose: bool = False,
 ) -> list[float]:
-    """
-    Repeat sigma estimation n_repeats times (with different RNG seeds) without simulation.
+    """Repeat Layer-2 sigma estimation ``n_repeats`` times with different seeds.
 
-    Returns list of sigma values (floats).
+    Returns a list of ``sigma_hat`` values. Variability comes from the random
+    sampling of pairs in :func:`build_pair_dataset` when ``max_pairs`` is set;
+    if ``max_pairs`` is ``None`` and the graph is small enough to enumerate all
+    pairs, every repetition yields the same estimate.
     """
-    sigmas = []
+    del l1_wt, alpha
+    if max_pairs is None and (max_edges is not None or max_non_edges is not None):
+        max_pairs = (max_edges or 0) + (max_non_edges or 0) or None
+
+    sigmas: list[float] = []
     for r in tqdm(range(int(n_repeats))):
         rs = None if seed is None else (seed + r)
         sigma_r, _result = estimate_sigma_only(
-            graph_input, d=d, max_edges=max_edges, max_non_edges=max_non_edges,
-            l1_wt=l1_wt, alpha=alpha, random_state=rs, verbose=verbose
+            graph_input, d=d, max_pairs=max_pairs,
+            feature_mode=feature_mode, random_state=rs, verbose=verbose,
         )
         sigmas.append(sigma_r)
     return sigmas
@@ -330,19 +301,45 @@ class LogitGraphFitter:
         """
         Internal method to estimate parameters and generate the graph.
         """
-        est = estimator.LogitRegEstimator(real_graph_arr, d=self.d)
+        est = estimator.LogitRegEstimator(
+            real_graph_arr, d=self.d, layer2=True, feature_mode="incremental",
+        )
         features, labels = est.get_features_labels()
         _, params, _ = est.estimate_parameters(features=features, labels=labels)
-        sigma = params[0]
+        sigma = float(params[0])
 
         n = real_graph_arr.shape[0]
-        graph_model = graph.GraphModel(n=n, d=self.d, sigma=sigma, er_p=self.er_p, init_graph=self.init_graph)
+
+        if self.d == 0:
+            best_graph_arr = _direct_er_at_sigma(n, sigma, seed=None)
+            best_graph_nx = nx.from_numpy_array(best_graph_arr)
+            gic_value = gic.GraphInformationCriterion(
+                graph=nx.from_numpy_array(real_graph_arr),
+                log_graph=best_graph_nx,
+                model='LG',
+                dist=self.dist_type,
+            ).calculate_gic()
+            real_edges = np.sum(real_graph_arr) / 2
+            edge_diff = abs(np.sum(best_graph_arr) / 2 - real_edges)
+            return (
+                best_graph_arr, sigma, gic_value, [0.0], [edge_diff], 0,
+                [best_graph_arr], [gic_value],
+            )
+
+        warm_start_p = (
+            _warm_start_er_p(sigma) if self.init_graph is None else self.er_p
+        )
+        graph_model = graph.GraphModel(
+            n=n, d=self.d, sigma=sigma, er_p=warm_start_p,
+            init_graph=self.init_graph,
+            layer2=True, feature_mode="incremental",
+        )
 
         if self.verbose:
             print(f"Running LG generation for d={self.d}...")
 
         graphs, _, spectrum_diffs, best_iteration, best_graph_arr, gic_values = graph_model.populate_edges_spectrum_min_gic(
-            er_p=self.er_p,
+            er_p=warm_start_p,
             max_iterations=self.n_iteration,
             patience=self.patience,
             real_graph=real_graph_arr,
@@ -393,6 +390,9 @@ class LogitGraphSimulation:
         spectrum_cv_tol: float = 0.02,
         verbose: bool = True,
         init_graph: Optional[nx.Graph] = None,
+        layer2: bool = True,
+        feature_mode: FeatureMode = "bounded",
+        fast_mode: bool = False,
     ) -> None:
         """
         Initializes the LogitGraphSimulation with model and run parameters.
@@ -431,13 +431,23 @@ class LogitGraphSimulation:
         self.spectrum_cv_tol = spectrum_cv_tol
         self.verbose = verbose
         self.init_graph = init_graph
+        self.layer2 = layer2
+        self.feature_mode = feature_mode
+        self.fast_mode = fast_mode
 
         self.simulated_graph = None
         self.metadata = {}
 
     def simulate(self) -> LogitGraphSimulation:
-        """
-        Runs the simulation and stores the resulting NetworkX graph and metadata.
+        """Run the simulation and store the resulting graph and metadata.
+
+        For ``d=0`` this short-circuits Gibbs and samples directly from
+        ER(``p = expit(sigma)``) — the exact equilibrium of the d=0 model.
+        For ``d>=1`` the Gibbs chain is warm-started near ``expit(sigma)``
+        (clipped to [0.02, 0.5]) which dramatically reduces burn-in for
+        sparse regimes. If the caller passes a custom ``init_graph`` or a
+        non-default ``er_p`` (i.e. ``er_p != 0.05``), that override is
+        honoured.
 
         Returns:
             self
@@ -458,15 +468,38 @@ class LogitGraphSimulation:
         }
 
         try:
+            if self.d == 0:
+                final_graph_arr = _direct_er_at_sigma(self.n, self.sigma, seed=None)
+                self.simulated_graph = nx.from_numpy_array(final_graph_arr)
+                self.metadata.update({
+                    'simulate_success': True,
+                    'iterations_ran': 0,
+                    'final_nodes': self.simulated_graph.number_of_nodes(),
+                    'final_edges': self.simulated_graph.number_of_edges(),
+                    'final_spectrum': None,
+                    'sampler': 'direct_er',
+                })
+                if self.verbose:
+                    print(
+                        f"d=0: direct ER at p=expit({self.sigma:.3f})={expit(self.sigma):.4f} — "
+                        f"Nodes={self.metadata['final_nodes']}, Edges={self.metadata['final_edges']}"
+                    )
+                return self
+
+            user_override = self.init_graph is not None or not math.isclose(self.er_p, 0.05)
+            warm_start_p = self.er_p if user_override else _warm_start_er_p(self.sigma)
+
             graph_model = graph.GraphModel(
-                n=self.n, d=self.d, sigma=self.sigma, alpha=self.alpha, beta=self.beta, er_p=self.er_p, init_graph=self.init_graph
+                n=self.n, d=self.d, sigma=self.sigma, alpha=self.alpha, beta=self.beta,
+                er_p=warm_start_p, init_graph=self.init_graph,
+                layer2=self.layer2, feature_mode=self.feature_mode,
             )
 
-            # Use baseline simulator (no reference/real graph needed)
             graphs, spectra = graph_model.populate_edges_baseline(
                 warm_up=self.warm_up, max_iterations=self.n_iteration,
                 patience=self.patience, check_interval=self.check_interval,
                 edge_cv_tol=self.edge_cv_tol, spectrum_cv_tol=self.spectrum_cv_tol,
+                fast_mode=self.fast_mode,
             )
 
             final_graph_arr = graphs[-1] if graphs else graph_model.graph
@@ -478,10 +511,15 @@ class LogitGraphSimulation:
                 'final_nodes': self.simulated_graph.number_of_nodes(),
                 'final_edges': self.simulated_graph.number_of_edges(),
                 'final_spectrum': spectra,
+                'warm_start_er_p': float(warm_start_p),
+                'sampler': 'gibbs_layer2',
             })
 
             if self.verbose:
-                print(f"Simulation successful - Nodes: {self.metadata['final_nodes']}, Edges: {self.metadata['final_edges']}")
+                print(
+                    f"Simulation successful (warm_start_p={warm_start_p:.4f}) — "
+                    f"Nodes: {self.metadata['final_nodes']}, Edges: {self.metadata['final_edges']}"
+                )
 
         except Exception as e:
             print(f"Error simulating logit graph: {e}")
@@ -505,6 +543,7 @@ class GraphModelComparator:
         verbose: bool = True,
         other_models: Optional[list[str]] = None,
         other_model_grid_points: int = 5,
+        random_state: Optional[int] = 42,
     ) -> None:
         """
         Initializes the GraphModelComparator.
@@ -516,19 +555,22 @@ class GraphModelComparator:
             other_model_params (list, optional): Parameters for other models. Defaults to [].
             dist_type (str): Distance type for GIC calculation.
             verbose (bool): Whether to print progress information.
+            random_state (int, optional): Seed for all stochastic steps (LG Gibbs, baselines).
+                Set to ``None`` for non-reproducible runs.
         """
         self.d_list = d_list
         self.lg_params = lg_params
         self.other_model_n_runs = other_model_n_runs
-        if other_model_params is None:
-            self.other_model_params = [
-                {'lo': 0.01, 'hi': 0.25},  # ER: p
-                {'k': {'lo': 2, 'hi': 10, 'step': 2}, 'p': {'lo': 0.01, 'hi': 0.5}},  # WS: k, p
-                {'lo': 0.05, 'hi': 0.3},   # GRG: r
-                {'lo': 1, 'hi': 8}         # BA: m
-            ]
-        else:
-            self.other_model_params = other_model_params
+        self.random_state = random_state
+        # ``other_model_params`` may be:
+        #   - ``None``: per-model defaults are looked up by name in
+        #     ``_fit_other_models`` (recommended; robust to any subset of
+        #     ``other_models``).
+        #   - ``list``: positional pairing with ``other_models`` (legacy;
+        #     the list must be in the same order as ``other_models``).
+        #   - ``dict``: keyed by model name (recommended for explicit
+        #     overrides).
+        self.other_model_params = other_model_params
         self.dist_type = dist_type
         self.verbose = verbose
         # Allow selecting which other models to evaluate and how dense the parameter grid should be
@@ -552,6 +594,10 @@ class GraphModelComparator:
         """
         if self.verbose:
             print(f"\n{'='*30} Processing Graph: {os.path.basename(graph_filepath)} {'='*30}")
+
+        if self.random_state is not None:
+            random.seed(self.random_state)
+            np.random.seed(self.random_state)
         
         self.fitted_graphs_data = {
             'Original': {
@@ -626,26 +672,59 @@ class GraphModelComparator:
     def _get_logit_graph_for_d(
         self, real_graph: Union[np.ndarray, nx.Graph], d: int
     ) -> tuple[np.ndarray, float, float, int, list[float], list[float], list[float]]:
-        """Estimates parameters and generates a graph for a specific `d`."""
+        """Estimates parameters and generates a graph for a specific `d`.
+
+        d=0 short-circuits to a direct ER sample at p=expit(sigma_hat); d>=1
+        warm-starts Gibbs at clip(expit(sigma_hat), 0.02, 0.5) unless the
+        caller supplied an explicit ``init_graph``.
+        """
         if isinstance(real_graph, nx.Graph):
             real_graph = nx.to_numpy_array(real_graph)
 
-        est = estimator.LogitRegEstimator(real_graph, d=d)
+        est = estimator.LogitRegEstimator(
+            real_graph, d=d, layer2=True, feature_mode="incremental",
+        )
         features, labels = est.get_features_labels()
         _, params, _ = est.estimate_parameters(features=features, labels=labels)
-        sigma = params[0]
+        sigma = float(params[0])
 
         n = real_graph.shape[0]
         init_graph = self.lg_params.get('init_graph') if isinstance(self.lg_params, dict) else None
-        graph_model = graph.GraphModel(n=n, d=d, sigma=sigma, er_p=self.lg_params['er_p'], init_graph=init_graph)
+
+        lg_seed = None if self.random_state is None else self.random_state + d
+
+        if d == 0:
+            best_graph_arr = _direct_er_at_sigma(n, sigma, seed=lg_seed)
+            best_graph_nx = nx.from_numpy_array(best_graph_arr)
+            gic_value = gic.GraphInformationCriterion(
+                graph=nx.from_numpy_array(real_graph),
+                log_graph=best_graph_nx,
+                model='LG',
+                dist=self.dist_type,
+            ).calculate_gic()
+            real_edges = np.sum(real_graph) / 2
+            edge_diff = abs(np.sum(best_graph_arr) / 2 - real_edges)
+            return (
+                best_graph_arr, sigma, gic_value, 0, [gic_value],
+                [0.0], [edge_diff],
+            )
+
+        warm_start_p = (
+            _warm_start_er_p(sigma) if init_graph is None
+            else float(self.lg_params.get('er_p', 0.05))
+        )
+        graph_model = graph.GraphModel(
+            n=n, d=d, sigma=sigma, er_p=warm_start_p,
+            init_graph=init_graph,
+            layer2=True, feature_mode="incremental",
+            seed=lg_seed,
+        )
 
         if self.verbose:
-            print(f"Running LG generation for d={d}...")
-        
-        lg_params = self.lg_params.copy()
+            print(f"Running LG generation for d={d} (warm_start_p={warm_start_p:.4f})...")
 
-        # Ensure that gic_dist_type and verbose are not passed twice.
-        # The values from the comparator instance are given priority.
+        lg_params = self.lg_params.copy()
+        lg_params['er_p'] = warm_start_p  # propagate warm-start into populate_edges
         lg_params['gic_dist_type'] = self.dist_type
         lg_params['verbose'] = self.verbose
 
@@ -689,19 +768,32 @@ class GraphModelComparator:
                 if self.verbose:
                     print("Could not parse sigma from LG metadata, defaulting to 1.0")
         
-        # TODO: Remove from here
         default_params = {
             'ER': {'lo': 0.01, 'hi': 0.25},
             'WS': {'k': {'lo': 2, 'hi': 10, 'step': 2}, 'p': {'lo': 0.01, 'hi': 0.5}},
             'GRG': {'lo': 0.05, 'hi': 0.3},
-            'BA': {'lo': 1, 'hi': 8}
+            'BA': {'lo': 1, 'hi': 8},
         }
-        default_param_map = {}
-        for i, model in enumerate(self.other_models):
-            if i < len(self.other_model_params):
-                default_param_map[model] = self.other_model_params[i]
-            elif model in default_params:
-                default_param_map[model] = default_params[model]
+        default_param_map: dict[str, Any] = {}
+        if self.other_model_params is None:
+            # No overrides: look up each model's range by name.
+            for model in self.other_models:
+                if model in default_params:
+                    default_param_map[model] = default_params[model]
+        elif isinstance(self.other_model_params, dict):
+            # Explicit name->params dict; fall back to defaults for any missing key.
+            for model in self.other_models:
+                if model in self.other_model_params:
+                    default_param_map[model] = self.other_model_params[model]
+                elif model in default_params:
+                    default_param_map[model] = default_params[model]
+        else:
+            # Legacy positional list — must be in the same order as ``self.other_models``.
+            for i, model in enumerate(self.other_models):
+                if i < len(self.other_model_params):
+                    default_param_map[model] = self.other_model_params[i]
+                elif model in default_params:
+                    default_param_map[model] = default_params[model]
         filtered_params = [default_param_map[m] for m in self.other_models if m in default_param_map]
 
         selector = ms.GraphModelSelection(
@@ -711,7 +803,8 @@ class GraphModelComparator:
             models=self.other_models,
             n_runs=self.other_model_n_runs,
             parameters=filtered_params,
-            grid_points=self.other_model_grid_points
+            grid_points=self.other_model_grid_points,
+            random_state=self.random_state,
         )
         
         model_results = selector.select_model_avg_spectrum()
@@ -722,8 +815,7 @@ class GraphModelComparator:
                 param = clean_and_convert_param(estimate['param'])
                 gic_value = estimate['GIC']
                 
-                func = selector.model_function(model_name=model_name)
-                fitted_graph = func(original_graph.number_of_nodes(), param)
+                fitted_graph = selector._generate_graph(model_name, param, seed_offset=0)
                 
                 self.fitted_graphs_data[model_name] = {
                     'graph': fitted_graph,
