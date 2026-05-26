@@ -359,11 +359,9 @@ class GraphModel:
                 adj=self.graph,
             )
             fg.run_steps(max_iterations, self._rng)
-            self._csr_rows = fg.rows
-            self.graph = fg.to_adjacency()
-            self._init_cache()
-            spectra = self.calculate_spectrum(self.graph)
-            return [self.graph.copy()], spectra
+            self._csr_rows = fg.to_rows_list()
+            # Sweeps consume CSR rows directly; skip O(n²) adjacency + O(n³) spectrum.
+            return [], np.empty(0, dtype=np.float64)
 
         graphs = deque(maxlen=max(patience + 10, 200))
         graphs.append(self.graph.copy())

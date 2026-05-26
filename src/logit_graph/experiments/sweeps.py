@@ -81,6 +81,11 @@ def _run_sigma_reps(
     seed_base: int,
     n_jobs: int,
     use_threads: bool = False,
+    adaptive_stopping: bool = False,
+    adaptive_check_interval: int = 20_000,
+    adaptive_patience: int = 3,
+    adaptive_cv_tol: float = 0.02,
+    adaptive_min_iter: int = 20_000,
 ) -> tuple[list[float], list[float], list[float], list[float]]:
     from .workers import sigma_rep_job
 
@@ -96,6 +101,11 @@ def _run_sigma_reps(
             "target_density": target_density,
             "signal": signal,
             "seed": seed_base + hash((d, sigma_true, n, rep)) % (2**31 - 1),
+            "adaptive_stopping": adaptive_stopping,
+            "adaptive_check_interval": adaptive_check_interval,
+            "adaptive_patience": adaptive_patience,
+            "adaptive_cv_tol": adaptive_cv_tol,
+            "adaptive_min_iter": adaptive_min_iter,
         }
         for rep in range(n_reps)
     ]
@@ -158,6 +168,32 @@ def _roc_parallel_plan(
     return exp_jobs, inner
 
 
+def _sigma_parallel_plan(
+    n_reps: int,
+    n_jobs: int,
+    cell_jobs: Optional[int] = None,
+) -> tuple[int, int]:
+    """Split CPU budget between cell- and rep-level sigma sweep parallelism."""
+    from .workers import rep_parallel_workers
+
+    cpus = max(1, (os.cpu_count() or 2) - 1)
+    budget = max(1, min(n_jobs, cpus))
+
+    if cell_jobs is not None:
+        outer = max(1, min(int(cell_jobs), budget))
+        return outer, rep_parallel_workers(outer, n_reps)
+
+    if budget <= 1:
+        return 1, rep_parallel_workers(1, n_reps)
+
+    if n_reps >= 8:
+        return 1, min(n_reps, budget)
+
+    outer = max(1, min(budget // 2, 8))
+    inner = max(1, min(n_reps, budget // outer))
+    return outer, inner
+
+
 def _iter_count(
     n: int,
     cap: Optional[int],
@@ -166,7 +202,28 @@ def _iter_count(
     base = recommended_iterations(n)
     if sigma_true is not None and sigma_true <= -6.0:
         base = int(1.5 * base)
+    # Very sparse small graphs (n≈10, σ≪0) need extra Gibbs mixing.
+    if sigma_true is not None:
+        if n <= 50 and sigma_true <= -6.0:
+            base = max(base, 250_000)
+        elif n <= 50 and sigma_true <= -4.0:
+            base = max(base, 150_000)
+        elif n <= 100 and sigma_true <= -6.0:
+            base = max(base, 120_000)
     return min(base, cap) if cap is not None else base
+
+
+def _sigma_adaptive_enabled(
+    cfg: SigmaSweepConfig,
+    n: int,
+    sigma_true: float,
+) -> bool:
+    """Adaptive early-stop only when chains are long; small sparse cells run full budget."""
+    if not cfg.adaptive_stopping:
+        return False
+    if n <= 100 and sigma_true <= -4.0:
+        return False
+    return True
 
 
 def _roc_iter_count(
@@ -276,6 +333,47 @@ def _sample_er_at_sigma(
     return adj
 
 
+def _run_adaptive_gibbs(
+    fg: Any,
+    rng: np.random.Generator,
+    max_iter: int,
+    *,
+    d: int,
+    feature_mode_est: FeatureMode,
+    check_interval: int,
+    patience: int,
+    cv_tol: float,
+    min_iter: int,
+) -> tuple[list, int]:
+    """Run Gibbs in blocks; stop when recent sigma_hat estimates stabilize."""
+    from ..lg_features_fast import adj_from_rows
+
+    history: list[float] = []
+    done = 0
+    mode_est: FeatureMode = "incremental" if d == 0 else feature_mode_est
+    n = fg.n
+    while done < max_iter:
+        chunk = min(check_interval, max_iter - done)
+        fg.run_steps(chunk, rng)
+        done += chunk
+        if done < min_iter:
+            continue
+        csr_rows = fg.to_rows_list()
+        adj = adj_from_rows(csr_rows, n)
+        sh = estimate_sigma_from_graph(
+            adj, d, feature_mode=mode_est, csr_rows=csr_rows,
+        )
+        history.append(float(sh))
+        if len(history) >= patience:
+            recent = np.asarray(history[-patience:], dtype=float)
+            mean = float(np.mean(recent))
+            std = float(np.std(recent, ddof=1)) if len(recent) > 1 else 0.0
+            cv = std / abs(mean) if abs(mean) > 1e-12 else std
+            if cv <= cv_tol:
+                break
+    return fg.to_rows_list(), done
+
+
 def simulate_graph(
     n: int,
     d: int,
@@ -288,6 +386,13 @@ def simulate_graph(
     signal: float = 0.5,
     seed: Optional[int] = None,
     return_meta: bool = False,
+    collect_feature_mean: bool = False,
+    feature_mode_est: Optional[FeatureMode] = None,
+    adaptive_stopping: bool = False,
+    adaptive_check_interval: int = 20_000,
+    adaptive_patience: int = 3,
+    adaptive_cv_tol: float = 0.02,
+    adaptive_min_iter: int = 20_000,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, float]]:
     """Generate a graph at fixed sigma.
 
@@ -330,6 +435,8 @@ def simulate_graph(
     # but never below a minimum that lets d>=1 features (ball overlaps) be
     # populated enough to inform Gibbs updates.
     er_init = float(np.clip(_expit(sigma), 0.02, 0.5))
+    est_mode: FeatureMode = feature_mode_est or gen_mode
+    n_iter_used = n_iter
 
     gm = graph_mod.GraphModel(
         n=n,
@@ -343,36 +450,73 @@ def simulate_graph(
         seed=seed,
     )
 
-    gm.populate_edges_baseline(
-        warm_up=0,
-        max_iterations=n_iter,
-        patience=10,
-        check_interval=10**9,
-        fast_mode=True,
-    )
-    csr_rows = getattr(gm, "_csr_rows", None)
-    adj = gm.graph.copy()
+    if adaptive_stopping and d >= 1:
+        from ..lg_features_fast import FastGibbsGraph
+
+        fg = FastGibbsGraph(
+            n,
+            d,
+            sigma,
+            er_p=er_init,
+            rng=gm._rng,
+            feature_mode=gen_mode,
+            alpha=1.0,
+            beta=float(use_beta),
+            adj=gm.graph,
+        )
+        csr_rows, n_iter_used = _run_adaptive_gibbs(
+            fg,
+            gm._rng,
+            n_iter,
+            d=d,
+            feature_mode_est=est_mode,
+            check_interval=adaptive_check_interval,
+            patience=adaptive_patience,
+            cv_tol=adaptive_cv_tol,
+            min_iter=adaptive_min_iter,
+        )
+    else:
+        gm.populate_edges_baseline(
+            warm_up=0,
+            max_iterations=n_iter,
+            patience=10,
+            check_interval=10**9,
+            fast_mode=True,
+        )
+        csr_rows = getattr(gm, "_csr_rows", None)
+    from ..lg_features_fast import adj_from_rows, density_from_rows
+
+    if csr_rows is not None:
+        adj = adj_from_rows(csr_rows, n)
+    else:
+        adj = gm.graph.copy()
+
     if not return_meta:
         return adj
 
-    feat_seed = seed if seed is not None else 0
-    if csr_rows is not None and d >= 1:
-        from ..lg_features_fast import build_pair_dataset_from_rows, density_from_rows
+    density = (
+        density_from_rows(csr_rows, n) if csr_rows is not None else _graph_density(adj)
+    )
+    if collect_feature_mean:
+        feat_seed = seed if seed is not None else 0
+        if csr_rows is not None and d >= 1:
+            from ..lg_features_fast import build_pair_dataset_from_rows
 
-        offsets, _ = build_pair_dataset_from_rows(
-            csr_rows, d, mode=gen_mode,
-        )
-        feat_mean = float(np.mean(offsets))
-        density = density_from_rows(csr_rows, n)
+            offsets, _ = build_pair_dataset_from_rows(
+                csr_rows, d, mode=gen_mode,
+            )
+            feat_mean = float(np.mean(offsets))
+        else:
+            feat_mean = _mean_pair_feature(adj, d, gen_mode, feat_seed)
     else:
-        feat_mean = _mean_pair_feature(adj, d, gen_mode, feat_seed)
-        density = _graph_density(adj)
+        feat_mean = 0.0
 
     meta = {
         "sigma": float(sigma),
         "beta": float(use_beta),
         "density": density,
         "feature_mean": feat_mean,
+        "n_iter_used": float(n_iter_used),
     }
     if csr_rows is not None:
         meta["csr_rows"] = csr_rows
@@ -399,14 +543,17 @@ def _aic_ensemble(
     d_est: int,
     feature_mode: FeatureMode,
     extra_penalty: float = 0.0,
+    *,
+    csr_rows_list: Optional[list[Optional[list]]] = None,
 ) -> dict[str, float]:
     from ..lg_features_fast import build_multi_d_pair_datasets_fast
 
     all_off: list[np.ndarray] = []
     all_lab: list[np.ndarray] = []
-    for g in graphs:
+    for idx, g in enumerate(graphs):
+        rows = None if csr_rows_list is None else csr_rows_list[idx]
         labels, offsets_by_d = build_multi_d_pair_datasets_fast(
-            g, [d_est], mode=feature_mode,
+            g, [d_est], mode=feature_mode, rows=rows,
         )
         all_lab.append(labels)
         all_off.append(offsets_by_d[d_est])
@@ -420,6 +567,8 @@ def select_d_ensemble(
     d_candidates: list[int],
     feature_mode: FeatureMode,
     extra_penalty_per_d: float = 0.0,
+    *,
+    csr_rows_list: Optional[list[Optional[list]]] = None,
 ) -> tuple[int, dict[int, dict[str, float]]]:
     from ..lg_features_fast import build_multi_d_pair_datasets_fast
 
@@ -427,9 +576,10 @@ def select_d_ensemble(
     offsets_acc: dict[int, list[np.ndarray]] = {d: [] for d in d_candidates}
     labels_acc: list[np.ndarray] = []
 
-    for g in graphs:
+    for idx, g in enumerate(graphs):
+        rows = None if csr_rows_list is None else csr_rows_list[idx]
         labels, offsets_by_d = build_multi_d_pair_datasets_fast(
-            g, d_sorted, mode=feature_mode,
+            g, d_sorted, mode=feature_mode, rows=rows,
         )
         labels_acc.append(labels)
         for d in d_candidates:
@@ -488,6 +638,7 @@ def run_anova_pvalue(
     rep_use_threads: bool = True,
 ) -> float:
     """One Monte Carlo replicate: two groups of sigma_hat, one-way ANOVA p-value."""
+    from concurrent.futures import ThreadPoolExecutor
     from scipy import stats
 
     common = dict(
@@ -502,10 +653,15 @@ def run_anova_pvalue(
         n_jobs=rep_jobs,
         use_threads=rep_use_threads,
     )
-    g1, _, _, _ = _run_sigma_reps(sigma_true=sigma1, seed_base=seed, **common)
-    g2, _, _, _ = _run_sigma_reps(
-        sigma_true=sigma2, seed_base=seed + 10_000, **common,
-    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut1 = pool.submit(
+            _run_sigma_reps, sigma_true=sigma1, seed_base=seed, **common,
+        )
+        fut2 = pool.submit(
+            _run_sigma_reps, sigma_true=sigma2, seed_base=seed + 10_000, **common,
+        )
+        g1, _, _, _ = fut1.result()
+        g2, _, _, _ = fut2.result()
     _, p_val = stats.f_oneway(g1, g2)
     return float(p_val)
 
@@ -1008,12 +1164,48 @@ def plot_roc_sample_size(
     plt.close(fig)
 
 
+def _sigma_adaptive_kwargs(
+    cfg: SigmaSweepConfig,
+    n: int,
+    sigma_true: float,
+) -> dict[str, Any]:
+    enabled = _sigma_adaptive_enabled(cfg, n, sigma_true)
+    return {
+        "adaptive_stopping": enabled,
+        "adaptive_check_interval": cfg.adaptive_check_interval,
+        "adaptive_patience": cfg.adaptive_patience,
+        "adaptive_cv_tol": cfg.adaptive_cv_tol,
+        "adaptive_min_iter": cfg.adaptive_min_iter,
+    }
+
+
+def _load_sigma_cell_record(
+    cell_path: Path,
+    *,
+    d: int,
+    sigma_true: float,
+    n: int,
+    nit: int,
+    n_reps: int,
+) -> dict[str, Any]:
+    data = np.load(cell_path)
+    hats = data["hats"].tolist()
+    densities = data["densities"].tolist()
+    betas = data["betas"].tolist()
+    features = data["features"].tolist()
+    return _aggregate_sigma_cell(
+        hats, densities, betas, features,
+        d=d, sigma_true=sigma_true, n=n, nit=nit, n_reps=n_reps,
+    )
+
+
 def run_sigma_sweep(
     cfg: SigmaSweepConfig,
     out_dir: Path,
     *,
     use_cache: bool = True,
     n_jobs: int = 1,
+    cell_jobs: Optional[int] = None,
 ) -> pd.DataFrame:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1026,9 +1218,13 @@ def run_sigma_sweep(
         if len(cached) >= expected_cells:
             return cached
 
-    records: list[dict[str, Any]] = []
+    outer_jobs, rep_jobs = _sigma_parallel_plan(cfg.n_reps, n_jobs, cell_jobs)
+
+    pending: list[dict[str, Any]] = []
+    records_by_idx: dict[int, dict[str, Any]] = {}
     total_cells = expected_cells
     cell_idx = 0
+
     for d in cfg.d_values:
         for sigma_true in cfg.sigma_values:
             for n in cfg.n_values:
@@ -1042,44 +1238,57 @@ def run_sigma_sweep(
                         f"d={d} sigma={sigma_true} n={n}",
                         flush=True,
                     )
-                    data = np.load(cell_path)
-                    hats = data["hats"].tolist()
-                    densities = data["densities"].tolist()
-                    betas = data["betas"].tolist()
-                    features = data["features"].tolist()
-                else:
-                    print(
-                        f"[sigma sweep {cell_idx}/{total_cells}] d={d} sigma={sigma_true} n={n} "
-                        f"iters={nit} reps={cfg.n_reps} jobs={n_jobs}",
-                        flush=True,
-                    )
-                    hats, densities, betas, features = _run_sigma_reps(
-                        d=d,
-                        sigma_true=sigma_true,
-                        n=n,
-                        n_reps=cfg.n_reps,
-                        nit=nit,
-                        feature_mode_gen=cfg.feature_mode_gen,
-                        feature_mode_est=cfg.feature_mode_est,
-                        target_density=cfg.target_density,
-                        signal=cfg.signal,
-                        seed_base=cfg.seed_base,
-                        n_jobs=n_jobs,
-                    )
-                    np.savez(
+                    records_by_idx[cell_idx] = _load_sigma_cell_record(
                         cell_path,
-                        hats=np.asarray(hats, dtype=float),
-                        densities=np.asarray(densities, dtype=float),
-                        betas=np.asarray(betas, dtype=float),
-                        features=np.asarray(features, dtype=float),
+                        d=d, sigma_true=sigma_true, n=n, nit=nit, n_reps=cfg.n_reps,
                     )
+                else:
+                    pending.append({
+                        "cell_idx": cell_idx,
+                        "total_cells": total_cells,
+                        "d": d,
+                        "sigma_true": sigma_true,
+                        "n": n,
+                        "nit": nit,
+                        "n_reps": cfg.n_reps,
+                        "cell_path": str(cell_path),
+                        "seed_base": cfg.seed_base,
+                        "feature_mode_gen": cfg.feature_mode_gen,
+                        "feature_mode_est": cfg.feature_mode_est,
+                        "target_density": cfg.target_density,
+                        "signal": cfg.signal,
+                        "rep_jobs": rep_jobs,
+                        **_sigma_adaptive_kwargs(cfg, n, sigma_true),
+                    })
 
-                records.append(_aggregate_sigma_cell(
-                    hats, densities, betas, features,
-                    d=d, sigma_true=sigma_true, n=n, nit=nit, n_reps=cfg.n_reps,
-                ))
-                pd.DataFrame(records).to_csv(cache_path, index=False)
+    if pending:
+        from .workers import sigma_cell_job
 
+        if outer_jobs <= 1 or len(pending) <= 1:
+            for payload in pending:
+                records_by_idx[payload["cell_idx"]] = sigma_cell_job(payload)
+                interim = [records_by_idx[i] for i in sorted(records_by_idx)]
+                pd.DataFrame(interim).to_csv(cache_path, index=False)
+        else:
+            from concurrent.futures import ProcessPoolExecutor, as_completed
+
+            print(
+                f"[sigma sweep] cell parallel: {len(pending)} cells, "
+                f"cell_jobs={outer_jobs} rep_jobs={rep_jobs}",
+                flush=True,
+            )
+            with ProcessPoolExecutor(max_workers=outer_jobs) as pool:
+                futures = {
+                    pool.submit(sigma_cell_job, payload): payload["cell_idx"]
+                    for payload in pending
+                }
+                for fut in as_completed(futures):
+                    idx = futures[fut]
+                    records_by_idx[idx] = fut.result()
+                    interim = [records_by_idx[i] for i in sorted(records_by_idx)]
+                    pd.DataFrame(interim).to_csv(cache_path, index=False)
+
+    records = [records_by_idx[i] for i in sorted(records_by_idx)]
     df = pd.DataFrame(records)
     save_sigma_sweep_artifacts(cfg, out_dir, df)
     return df
@@ -1283,6 +1492,11 @@ def save_sigma_sweep_artifacts(
         "n_values": cfg.n_values,
         "n_reps": cfg.n_reps,
         "iter_cap": cfg.iter_cap,
+        "adaptive_stopping": cfg.adaptive_stopping,
+        "adaptive_check_interval": cfg.adaptive_check_interval,
+        "adaptive_patience": cfg.adaptive_patience,
+        "adaptive_cv_tol": cfg.adaptive_cv_tol,
+        "adaptive_min_iter": cfg.adaptive_min_iter,
     }
     sigma_sweep_results_json_path(out_dir, cfg).write_text(
         json.dumps(meta, indent=2) + "\n",

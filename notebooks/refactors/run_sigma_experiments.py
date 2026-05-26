@@ -34,18 +34,25 @@ def main() -> None:
     RUN_ABLATION = os.environ.get("LG_SIGMA_ABLATION", "0") == "1"
     USE_CACHE = os.environ.get("LG_SIGMA_USE_CACHE", "1") == "1"
     N_JOBS = int(os.environ.get("LG_SIGMA_JOBS", _default_jobs()))
+    CELL_JOBS = os.environ.get("LG_SIGMA_CELL_JOBS")
+    cell_jobs = int(CELL_JOBS) if CELL_JOBS is not None else None
 
     cfg = PRESETS[MODE]["sigma"]
     if "LG_SIGMA_ITER_CAP" in os.environ:
         cfg.iter_cap = int(os.environ["LG_SIGMA_ITER_CAP"])
     elif os.environ.get("LG_SIGMA_ITER_CAP", "").lower() == "none":
         cfg.iter_cap = None
+    if os.environ.get("LG_SIGMA_ADAPTIVE", "").lower() in ("0", "false", "no"):
+        cfg.adaptive_stopping = False
     print(
         f"Mode={MODE}, n={cfg.n_values}, reps={cfg.n_reps}, iter_cap={cfg.iter_cap}, "
-        f"cache={USE_CACHE}, jobs={N_JOBS}",
+        f"adaptive={cfg.adaptive_stopping}, cache={USE_CACHE}, jobs={N_JOBS}"
+        + (f", cell_jobs={cell_jobs}" if cell_jobs is not None else ", cell_jobs=auto"),
     )
 
-    df = run_sigma_sweep(cfg, OUT, use_cache=USE_CACHE, n_jobs=N_JOBS)
+    df = run_sigma_sweep(
+        cfg, OUT, use_cache=USE_CACHE, n_jobs=N_JOBS, cell_jobs=cell_jobs,
+    )
     plot_convergence_sigma(df, OUT / "convergence_sigma.png")
     print(f"Saved {OUT / 'convergence_sigma.png'}")
     print(f"Data CSV: {sigma_sweep_csv_path(OUT, cfg)}")
