@@ -109,7 +109,10 @@ def test_roc_sweep_serial_vs_cell_parallel(tmp_path):
     )
     serial = pd.concat([eff_s, samp_s], ignore_index=True)
     parallel = pd.concat([eff_p, samp_p], ignore_index=True)
-    for sweep in ("effect", "sample"):
-        s = serial[serial.sweep == sweep].sort_values(["d", "n", "sigma2", "alpha"])
-        p = parallel[parallel.sweep == sweep].sort_values(["d", "n", "sigma2", "alpha"])
-        pd.testing.assert_frame_equal(s, p, check_exact=False, rtol=1e-9)
+    keys = ["sweep", "d", "n", "sigma2", "alpha"]
+    pd.testing.assert_frame_equal(
+        serial.sort_values(keys).reset_index(drop=True),
+        parallel.sort_values(keys).reset_index(drop=True),
+        check_exact=False,
+        rtol=1e-9,
+    )
