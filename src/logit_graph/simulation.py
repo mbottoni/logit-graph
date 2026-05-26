@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import gc
 import math
+import random
 from typing import Any, Optional, Union
 
 import numpy as np
@@ -542,6 +543,7 @@ class GraphModelComparator:
         verbose: bool = True,
         other_models: Optional[list[str]] = None,
         other_model_grid_points: int = 5,
+        random_state: Optional[int] = 42,
     ) -> None:
         """
         Initializes the GraphModelComparator.
@@ -553,10 +555,13 @@ class GraphModelComparator:
             other_model_params (list, optional): Parameters for other models. Defaults to [].
             dist_type (str): Distance type for GIC calculation.
             verbose (bool): Whether to print progress information.
+            random_state (int, optional): Seed for all stochastic steps (LG Gibbs, baselines).
+                Set to ``None`` for non-reproducible runs.
         """
         self.d_list = d_list
         self.lg_params = lg_params
         self.other_model_n_runs = other_model_n_runs
+        self.random_state = random_state
         # ``other_model_params`` may be:
         #   - ``None``: per-model defaults are looked up by name in
         #     ``_fit_other_models`` (recommended; robust to any subset of
@@ -589,6 +594,10 @@ class GraphModelComparator:
         """
         if self.verbose:
             print(f"\n{'='*30} Processing Graph: {os.path.basename(graph_filepath)} {'='*30}")
+
+        if self.random_state is not None:
+            random.seed(self.random_state)
+            np.random.seed(self.random_state)
         
         self.fitted_graphs_data = {
             'Original': {
@@ -682,8 +691,10 @@ class GraphModelComparator:
         n = real_graph.shape[0]
         init_graph = self.lg_params.get('init_graph') if isinstance(self.lg_params, dict) else None
 
+        lg_seed = None if self.random_state is None else self.random_state + d
+
         if d == 0:
-            best_graph_arr = _direct_er_at_sigma(n, sigma, seed=None)
+            best_graph_arr = _direct_er_at_sigma(n, sigma, seed=lg_seed)
             best_graph_nx = nx.from_numpy_array(best_graph_arr)
             gic_value = gic.GraphInformationCriterion(
                 graph=nx.from_numpy_array(real_graph),
@@ -706,6 +717,7 @@ class GraphModelComparator:
             n=n, d=d, sigma=sigma, er_p=warm_start_p,
             init_graph=init_graph,
             layer2=True, feature_mode="incremental",
+            seed=lg_seed,
         )
 
         if self.verbose:
@@ -791,7 +803,8 @@ class GraphModelComparator:
             models=self.other_models,
             n_runs=self.other_model_n_runs,
             parameters=filtered_params,
-            grid_points=self.other_model_grid_points
+            grid_points=self.other_model_grid_points,
+            random_state=self.random_state,
         )
         
         model_results = selector.select_model_avg_spectrum()
@@ -802,8 +815,7 @@ class GraphModelComparator:
                 param = clean_and_convert_param(estimate['param'])
                 gic_value = estimate['GIC']
                 
-                func = selector.model_function(model_name=model_name)
-                fitted_graph = func(original_graph.number_of_nodes(), param)
+                fitted_graph = selector._generate_graph(model_name, param, seed_offset=0)
                 
                 self.fitted_graphs_data[model_name] = {
                     'graph': fitted_graph,
