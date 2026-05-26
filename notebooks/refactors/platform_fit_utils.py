@@ -1,6 +1,7 @@
 """Shared batch-fit helpers for platform refactor notebooks."""
 from __future__ import annotations
 
+import json
 import logging
 import pickle
 import random
@@ -38,11 +39,13 @@ class PlatformConfig:
     platform: str
     glob_pattern: str
     min_nodes: int = 0
+    max_nodes: Optional[int] = 500
     d_candidates: list[int] = field(default_factory=lambda: [0, 1, 2, 3])
     seed: int = 0
     other_model_n_runs: int = 2
     other_model_grid_points: int = 5
     display_plots: bool = False
+    use_cache: bool = True
     data_root: Path = field(default_factory=lambda: Path("..") / ".." / "data")
     run_dir: Path = field(default_factory=lambda: Path("runs"))
 
@@ -95,6 +98,7 @@ def discover_graph_files(cfg: PlatformConfig) -> list[Path]:
     paths = [p for p in paths if p.suffix == ".edges" and p.is_file()]
     kept: list[tuple[Path, int]] = []
     skipped: list[tuple[str, str]] = []
+    skipped_large: list[tuple[str, int]] = []
 
     for p in paths:
         try:
@@ -102,8 +106,13 @@ def discover_graph_files(cfg: PlatformConfig) -> list[Path]:
         except (ValueError, OSError, nx.NetworkXError) as exc:
             skipped.append((p.name, str(exc)))
             continue
-        if G.number_of_nodes() >= cfg.min_nodes:
-            kept.append((p, G.number_of_nodes()))
+        n = G.number_of_nodes()
+        if n < cfg.min_nodes:
+            continue
+        if cfg.max_nodes is not None and n > cfg.max_nodes:
+            skipped_large.append((p.name, n))
+            continue
+        kept.append((p, n))
 
     kept.sort(key=lambda x: x[1])
     if skipped:
@@ -112,15 +121,72 @@ def discover_graph_files(cfg: PlatformConfig) -> list[Path]:
             print(f"  {name}: {reason}")
         if len(skipped) > 5:
             print(f"  ... and {len(skipped) - 5} more")
+    if skipped_large:
+        cap = cfg.max_nodes
+        print(f"Skipped {len(skipped_large)} graphs with n > {cap} (MAX_NODES)")
+        for name, n in skipped_large[:5]:
+            print(f"  {name}: n={n}")
+        if len(skipped_large) > 5:
+            print(f"  ... and {len(skipped_large) - 5} more")
     return [p for p, _ in kept]
 
 
 def print_discovery(cfg: PlatformConfig, graph_files: list[Path]) -> None:
+    max_label = cfg.max_nodes if cfg.max_nodes is not None else "∞"
     print(f"PLATFORM={cfg.platform}  RUN_DIR={cfg.run_dir.resolve()}")
-    print(f"Found {len(graph_files)} networks (MIN_NODES={cfg.min_nodes})")
+    print(
+        f"Found {len(graph_files)} networks "
+        f"(MIN_NODES={cfg.min_nodes}, MAX_NODES={max_label}, USE_CACHE={cfg.use_cache})"
+    )
     for p in graph_files:
         G = load_edges(p)
-        print(f"  {p.name:>30s}  n={G.number_of_nodes():>5d}  |E|={G.number_of_edges():>7d}")
+        cached = "  [cached]" if cfg.use_cache and _cache_valid(cfg.run_dir / p.stem) else ""
+        print(
+            f"  {p.name:>30s}  n={G.number_of_nodes():>5d}  "
+            f"|E|={G.number_of_edges():>7d}{cached}"
+        )
+
+
+def _cache_valid(net_dir: Path) -> bool:
+    return (net_dir / "comparator.pkl").is_file() and (net_dir / "summary.csv").is_file()
+
+
+def load_cached_result(net_dir: Path, graph_name: str) -> Optional[dict[str, Any]]:
+    if not (net_dir / "comparator.pkl").is_file() or not (net_dir / "summary.csv").is_file():
+        return None
+    with open(net_dir / "comparator.pkl", "rb") as f:
+        comparator = pickle.load(f)
+    summary = pd.read_csv(net_dir / "summary.csv")
+    meta_path = net_dir / "fit_meta.json"
+    if meta_path.is_file():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    else:
+        scored = summary[summary["model"] != "Original"].dropna(subset=["gic_value"])
+        best = scored.sort_values("gic_value").iloc[0]
+        orig = summary[summary["model"] == "Original"].iloc[0]
+        meta = {
+            "graph": graph_name,
+            "n_nodes": int(orig.get("nodes", np.nan)),
+            "n_edges": int(orig.get("edges", np.nan)),
+            "best_model": str(best["model"]),
+            "best_gic": float(best["gic_value"]),
+            "cached": True,
+        }
+        lg = comparator.fitted_graphs_data.get("LG", {}).get("metadata", {})
+        if lg.get("d") is not None:
+            meta["d_hat"] = int(lg["d"])
+        if lg.get("sigma") is not None:
+            meta["sigma_hat"] = float(lg["sigma"])
+        _save_fit_meta(net_dir, meta)
+    meta.setdefault("graph", graph_name)
+    meta["cached"] = True
+    return {"comparator": comparator, "summary": summary, "meta": meta}
+
+
+def _save_fit_meta(net_dir: Path, meta: dict[str, Any]) -> None:
+    (net_dir / "fit_meta.json").write_text(
+        json.dumps(meta, indent=2), encoding="utf-8",
+    )
 
 
 def _aic_table(aic_stats: dict[int, dict[str, Any]], d_hat: int) -> pd.DataFrame:
@@ -355,19 +421,24 @@ def fit_one_network(
         plt.show()
         plt.close(fig)
 
+    meta = {
+        "graph": graph_name,
+        "n_nodes": n,
+        "n_edges": m,
+        "d_hat": int(d_hat),
+        "sigma_hat": sigma_hat,
+        "best_model": str(best["model"]),
+        "best_gic": float(best["gic_value"]),
+        "elapsed_s": time.perf_counter() - t0,
+        "seed": cfg.seed,
+        "cached": False,
+    }
+    _save_fit_meta(net_dir, meta)
+
     return {
         "comparator": comparator,
         "summary": summary,
-        "meta": {
-            "graph": graph_name,
-            "n_nodes": n,
-            "n_edges": m,
-            "d_hat": int(d_hat),
-            "sigma_hat": sigma_hat,
-            "best_model": str(best["model"]),
-            "best_gic": float(best["gic_value"]),
-            "elapsed_s": time.perf_counter() - t0,
-        },
+        "meta": meta,
     }
 
 
@@ -376,40 +447,65 @@ def fit_all_networks(
     cfg: PlatformConfig,
 ) -> tuple[list[GraphModelComparator], pd.DataFrame, pd.DataFrame, list[dict]]:
     logger = setup_platform_logging(cfg.run_dir)
-    logger.info("=== %s batch fit  (%d networks) ===", cfg.platform, len(graph_files))
+    max_label = cfg.max_nodes if cfg.max_nodes is not None else "∞"
+    logger.info(
+        "=== %s batch fit  (%d networks, MAX_NODES=%s, cache=%s) ===",
+        cfg.platform, len(graph_files), max_label, cfg.use_cache,
+    )
 
     comparators: list[GraphModelComparator] = []
     summary_rows: list[pd.DataFrame] = []
     fit_meta_rows: list[dict] = []
     failures: list[dict] = []
+    n_cached = 0
 
     for i, edge_path in enumerate(graph_files, start=1):
+        graph_name = edge_path.stem
+        net_dir = cfg.run_dir / graph_name
         try:
+            if cfg.use_cache:
+                cached = load_cached_result(net_dir, graph_name)
+                if cached is not None:
+                    n_cached += 1
+                    logger.info(
+                        "[%d/%d] %s  CACHED  (n=%s, best=%s, GIC=%.3f)",
+                        i, len(graph_files), graph_name,
+                        cached["meta"].get("n_nodes"),
+                        cached["meta"].get("best_model"),
+                        cached["meta"].get("best_gic", float("nan")),
+                    )
+                    comparators.append(cached["comparator"])
+                    summary_rows.append(cached["summary"])
+                    fit_meta_rows.append({**cached["meta"], "cached": True})
+                    continue
+
             result = fit_one_network(edge_path, cfg, logger, i, len(graph_files))
             comparators.append(result["comparator"])
             summary_rows.append(result["summary"])
             fit_meta_rows.append(result["meta"])
-            with open(cfg.run_dir / f"comparators_{edge_path.stem}.pkl", "wb") as f:
-                pickle.dump(comparators, f)
         except Exception as exc:
-            logger.error("  FAILED %s: %s", edge_path.stem, exc)
+            logger.error("  FAILED %s: %s", graph_name, exc)
             traceback.print_exc()
-            failures.append({"graph": edge_path.stem, "error": str(exc)})
+            failures.append({"graph": graph_name, "error": str(exc)})
 
     if failures:
         pd.DataFrame(failures).to_csv(cfg.run_dir / "failures.csv", index=False)
         logger.warning("%d network(s) failed — see failures.csv", len(failures))
 
     if not summary_rows:
-        raise RuntimeError("No networks were processed — check DATA_ROOT / MIN_NODES.")
+        raise RuntimeError(
+            "No networks were processed — check DATA_ROOT / MIN_NODES / MAX_NODES."
+        )
 
     summary_all = pd.concat(summary_rows, ignore_index=True)
     fit_meta = pd.DataFrame(fit_meta_rows)
     summary_all.to_csv(cfg.run_dir / "summary_all.csv", index=False)
     fit_meta.to_csv(cfg.run_dir / "fit_meta_all.csv", index=False)
+    n_fitted = len(summary_rows) - n_cached
     logger.info(
-        "Done — %d/%d networks OK. Outputs in %s",
-        len(summary_rows), len(graph_files), cfg.run_dir.resolve(),
+        "Done — %d/%d networks (%d cached, %d fitted). Outputs in %s",
+        len(summary_rows), len(graph_files), n_cached, n_fitted,
+        cfg.run_dir.resolve(),
     )
     return comparators, summary_all, fit_meta, failures
 
