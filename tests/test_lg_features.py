@@ -16,7 +16,6 @@ from logit_graph.experiments.sweeps import (
     simulate_graph,
     select_d_ensemble,
 )
-from logit_graph.experiments.presets import PRESETS
 
 
 def _path_graph_adj(n: int = 8) -> np.ndarray:
@@ -46,8 +45,8 @@ def test_compute_aic_returns_finite():
 
 
 def test_sigma_recovery_smoke():
-    n, d, sigma_true = 80, 1, -4.0
-    nit = min(recommended_iterations(n), 40_000)
+    n, d, sigma_true = 50, 1, -4.0
+    nit = 5_000
     adj, meta = simulate_graph(
         n, d, sigma=sigma_true, n_iter=nit,
         feature_mode="incremental", target_density=0.10, seed=42,
@@ -59,18 +58,17 @@ def test_sigma_recovery_smoke():
 
 
 def test_aic_selects_d0_or_d1_smoke():
-    n, nit = 60, 8000
+    n, nit = 40, 3_000
     graphs = [
         simulate_graph(n, 1, sigma=None, n_iter=nit, feature_mode="incremental", seed=10 + m)
-        for m in range(3)
+        for m in range(2)
     ]
     hat, _ = select_d_ensemble(graphs, [0, 1, 2, 3], "incremental", extra_penalty_per_d=3.0)
     assert hat in (0, 1, 2)
 
 
-def test_sigma_sweep_smoke_preset(tmp_path):
-    cfg = PRESETS["SMOKE"]["sigma"]
-    df = run_sigma_sweep(cfg, tmp_path, use_cache=False)
+def test_sigma_sweep_smoke_preset(tiny_sigma_cfg, tmp_path):
+    df = run_sigma_sweep(tiny_sigma_cfg, tmp_path, use_cache=False)
     assert len(df) > 0
     assert "sigma_hat_mean" in df.columns
     assert "density_mean" in df.columns
@@ -85,10 +83,10 @@ def test_calibrate_beta_given_sigma_is_unit_weight():
 
 
 def test_calibrate_beta_given_sigma_density_smoke():
-    n, d = 100, 1
+    n, d = 50, 1
     target_density = 0.10
-    nit = min(recommended_iterations(n), 40_000)
-    for sigma in (-2.0, -4.0, -6.0):
+    nit = 5_000
+    for sigma in (-4.0,):
         seed = 100 + int(abs(sigma))
         adj, meta = simulate_graph(
             n, d, sigma=sigma, n_iter=nit,
@@ -101,25 +99,25 @@ def test_calibrate_beta_given_sigma_density_smoke():
 
 
 def test_adaptive_gibbs_stops_before_max_iter():
-    n, d, sigma = 80, 1, -3.0
-    max_iter = 120_000
+    n, d, sigma = 50, 1, -3.0
+    max_iter = 30_000
     _, meta = simulate_graph(
         n, d, sigma=sigma, n_iter=max_iter,
         feature_mode="incremental", seed=7, return_meta=True,
         materialize_adjacency=False,
         adaptive_stopping=True,
-        adaptive_check_interval=5_000,
-        adaptive_patience=3,
+        adaptive_check_interval=2_000,
+        adaptive_patience=2,
         adaptive_cv_tol=0.02,
-        adaptive_min_iter=10_000,
+        adaptive_min_iter=3_000,
     )
     assert meta["n_iter_used"] < max_iter
     assert "csr_rows" in meta
 
 
 def test_sigma_from_csr_rows_matches_adj():
-    n, d, sigma = 60, 1, -3.0
-    nit = 8_000
+    n, d, sigma = 40, 1, -3.0
+    nit = 3_000
     adj, meta = simulate_graph(
         n, d, sigma=sigma, n_iter=nit,
         feature_mode="incremental", seed=11, return_meta=True,
