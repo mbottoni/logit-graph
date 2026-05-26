@@ -226,6 +226,46 @@ def _sigma_adaptive_enabled(
     return True
 
 
+def _roc_adaptive_enabled(
+    cfg: ROCSweepConfig,
+    n: int,
+    d: int,
+) -> bool:
+    """Adaptive early-stop for d>=1; skip d=0 (direct ER) and cheap small-n cells."""
+    if not cfg.adaptive_stopping or d == 0:
+        return False
+    if n < 200:
+        return False
+    return True
+
+
+def _roc_adaptive_kwargs(cfg: ROCSweepConfig, n: int, d: int) -> dict[str, Any]:
+    return {
+        "adaptive_stopping": _roc_adaptive_enabled(cfg, n, d),
+        "adaptive_check_interval": cfg.adaptive_check_interval,
+        "adaptive_patience": cfg.adaptive_patience,
+        "adaptive_cv_tol": cfg.adaptive_cv_tol,
+        "adaptive_min_iter": cfg.adaptive_min_iter,
+    }
+
+
+def _roc_intra_cell_plan(
+    n: int,
+    n_reps: int,
+    n_jobs: int,
+    rep_jobs: Optional[int],
+    *,
+    cell_parallel: bool,
+) -> tuple[int, int]:
+    """Experiment- vs rep-level plan inside one ROC cell."""
+    from .workers import rep_parallel_workers
+
+    if cell_parallel:
+        inner = rep_jobs if rep_jobs is not None else rep_parallel_workers(1, n_reps)
+        return 1, inner
+    return _roc_parallel_plan(n, n_reps, n_jobs, rep_jobs)
+
+
 def _roc_iter_count(
     cfg: ROCSweepConfig,
     n: int,
@@ -338,37 +378,33 @@ def _run_adaptive_gibbs(
     rng: np.random.Generator,
     max_iter: int,
     *,
-    d: int,
-    feature_mode_est: FeatureMode,
     check_interval: int,
     patience: int,
     cv_tol: float,
     min_iter: int,
 ) -> tuple[list, int]:
-    """Run Gibbs in blocks; stop when recent sigma_hat estimates stabilize."""
-    from ..lg_features_fast import adj_from_rows
+    """Run Gibbs in blocks; stop when edge-count CV stabilizes.
 
-    history: list[float] = []
+    Uses ``fg.edge_count`` (cheap) instead of refitting :math:`\\hat\\sigma`
+    on every checkpoint.
+    """
+    edge_history: list[int] = []
     done = 0
-    mode_est: FeatureMode = "incremental" if d == 0 else feature_mode_est
-    n = fg.n
     while done < max_iter:
         chunk = min(check_interval, max_iter - done)
         fg.run_steps(chunk, rng)
         done += chunk
         if done < min_iter:
             continue
-        csr_rows = fg.to_rows_list()
-        adj = adj_from_rows(csr_rows, n)
-        sh = estimate_sigma_from_graph(
-            adj, d, feature_mode=mode_est, csr_rows=csr_rows,
-        )
-        history.append(float(sh))
-        if len(history) >= patience:
-            recent = np.asarray(history[-patience:], dtype=float)
-            mean = float(np.mean(recent))
-            std = float(np.std(recent, ddof=1)) if len(recent) > 1 else 0.0
-            cv = std / abs(mean) if abs(mean) > 1e-12 else std
+        edge_history.append(int(fg.edge_count))
+        if len(edge_history) >= patience:
+            recent = np.asarray(edge_history[-patience:], dtype=float)
+            mean_e = float(np.mean(recent))
+            cv = (
+                float(np.std(recent, ddof=1) / mean_e)
+                if mean_e > 0
+                else 0.0
+            )
             if cv <= cv_tol:
                 break
     return fg.to_rows_list(), done
@@ -387,6 +423,7 @@ def simulate_graph(
     seed: Optional[int] = None,
     return_meta: bool = False,
     collect_feature_mean: bool = False,
+    materialize_adjacency: bool = True,
     feature_mode_est: Optional[FeatureMode] = None,
     adaptive_stopping: bool = False,
     adaptive_check_interval: int = 20_000,
@@ -435,7 +472,6 @@ def simulate_graph(
     # but never below a minimum that lets d>=1 features (ball overlaps) be
     # populated enough to inform Gibbs updates.
     er_init = float(np.clip(_expit(sigma), 0.02, 0.5))
-    est_mode: FeatureMode = feature_mode_est or gen_mode
     n_iter_used = n_iter
 
     gm = graph_mod.GraphModel(
@@ -468,8 +504,6 @@ def simulate_graph(
             fg,
             gm._rng,
             n_iter,
-            d=d,
-            feature_mode_est=est_mode,
             check_interval=adaptive_check_interval,
             patience=adaptive_patience,
             cv_tol=adaptive_cv_tol,
@@ -487,11 +521,13 @@ def simulate_graph(
     from ..lg_features_fast import adj_from_rows, density_from_rows
 
     if csr_rows is not None:
-        adj = adj_from_rows(csr_rows, n)
+        adj = adj_from_rows(csr_rows, n) if materialize_adjacency else None
     else:
         adj = gm.graph.copy()
 
     if not return_meta:
+        if adj is None:
+            adj = adj_from_rows(csr_rows, n)
         return adj
 
     density = (
@@ -601,7 +637,7 @@ def select_d_ensemble(
 
 
 def estimate_sigma_from_graph(
-    adj: np.ndarray,
+    adj: Optional[np.ndarray],
     d: int,
     feature_mode: FeatureMode = "incremental",
     beta: float = 1.0,
@@ -616,6 +652,8 @@ def estimate_sigma_from_graph(
         offsets, labels = build_pair_dataset_from_rows(csr_rows, d, mode=feature_mode)
         sigma_hat, _ = fit_offset_logit_fast(offsets, labels)
         return float(sigma_hat)
+    if adj is None:
+        raise ValueError("adj required when csr_rows is not provided")
     est = LogitRegEstimator(adj, d=d, layer2=True, feature_mode=feature_mode)
     stats = est.compute_aic(d_est=d, feature_mode=feature_mode)
     return float(stats["sigma_hat"])
@@ -636,6 +674,11 @@ def run_anova_pvalue(
     seed: int,
     rep_jobs: int = 1,
     rep_use_threads: bool = True,
+    adaptive_stopping: bool = False,
+    adaptive_check_interval: int = 20_000,
+    adaptive_patience: int = 3,
+    adaptive_cv_tol: float = 0.02,
+    adaptive_min_iter: int = 20_000,
 ) -> float:
     """One Monte Carlo replicate: two groups of sigma_hat, one-way ANOVA p-value."""
     from concurrent.futures import ThreadPoolExecutor
@@ -652,6 +695,11 @@ def run_anova_pvalue(
         n_reps=n_reps,
         n_jobs=rep_jobs,
         use_threads=rep_use_threads,
+        adaptive_stopping=adaptive_stopping,
+        adaptive_check_interval=adaptive_check_interval,
+        adaptive_patience=adaptive_patience,
+        adaptive_cv_tol=adaptive_cv_tol,
+        adaptive_min_iter=adaptive_min_iter,
     )
     with ThreadPoolExecutor(max_workers=2) as pool:
         fut1 = pool.submit(
@@ -694,8 +742,13 @@ def collect_anova_pvalues(
     n_jobs: int = 1,
     rep_jobs: Optional[int] = None,
     rep_use_threads: bool = True,
+    adaptive_stopping: bool = False,
+    adaptive_check_interval: int = 20_000,
+    adaptive_patience: int = 3,
+    adaptive_cv_tol: float = 0.02,
+    adaptive_min_iter: int = 20_000,
     checkpoint_path: Optional[Path] = None,
-    checkpoint_every: int = 10,
+    checkpoint_every: int = 1,
 ) -> np.ndarray:
     from .workers import anova_experiment_job
 
@@ -732,6 +785,11 @@ def collect_anova_pvalues(
             "seed": _anova_experiment_seed(n, d, sigma1, sigma2, exp, seed_base),
             "rep_jobs": inner_rep_jobs,
             "rep_use_threads": rep_use_threads,
+            "adaptive_stopping": adaptive_stopping,
+            "adaptive_check_interval": adaptive_check_interval,
+            "adaptive_patience": adaptive_patience,
+            "adaptive_cv_tol": adaptive_cv_tol,
+            "adaptive_min_iter": adaptive_min_iter,
         }
         for exp in range(start, n_experiments)
     ]
@@ -883,6 +941,72 @@ def _load_rows_from_cell_caches(
     return rows
 
 
+def _roc_cell_key(sweep: str, d: int, *, sigma2: Optional[float] = None, n: Optional[int] = None) -> str:
+    if sweep == "effect":
+        return f"effect:d{d}:s2{sigma2}"
+    return f"sample:d{d}:n{n}"
+
+
+def _run_roc_pending_cells(
+    pending: list[dict[str, Any]],
+    *,
+    outer_jobs: int,
+    results: dict[str, np.ndarray],
+    cache_path: Path,
+    rows: list[dict[str, Any]],
+    cfg: ROCSweepConfig,
+) -> None:
+    from .workers import roc_cell_job
+
+    if not pending:
+        return
+
+    def _merge_cell(payload: dict[str, Any], pvals: np.ndarray) -> None:
+        key = payload["cell_key"]
+        results[key] = pvals
+        sweep = payload["sweep"]
+        d = payload["d"]
+        n = payload["n"]
+        sigma2 = payload["sigma2"]
+        rows[:] = [
+            r for r in rows
+            if not (
+                (sweep == "sample" and r["sweep"] == "sample" and r["d"] == d and r["n"] == n)
+                or (sweep == "effect" and r["sweep"] == "effect" and r["d"] == d and r["sigma2"] == sigma2)
+            )
+        ]
+        rows.extend(_roc_rows_from_pvalues(
+            pvals,
+            sweep=sweep,
+            d=d,
+            sigma1=cfg.sigma1,
+            sigma2=sigma2,
+            n=n,
+            n_reps=cfg.n_reps,
+            n_experiments=cfg.n_experiments,
+        ))
+        pd.DataFrame(rows).to_csv(cache_path, index=False)
+
+    if outer_jobs <= 1 or len(pending) <= 1:
+        for payload in pending:
+            out = roc_cell_job(payload)
+            _merge_cell(payload, out["pvals"])
+        return
+
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    print(
+        f"[roc sweep] cell parallel: {len(pending)} cells, cell_jobs={outer_jobs}",
+        flush=True,
+    )
+    with ProcessPoolExecutor(max_workers=outer_jobs) as pool:
+        futures = {pool.submit(roc_cell_job, payload): payload for payload in pending}
+        for fut in as_completed(futures):
+            payload = futures[fut]
+            out = fut.result()
+            _merge_cell(payload, out["pvals"])
+
+
 def run_roc_sweeps(
     cfg: ROCSweepConfig,
     out_dir: Path,
@@ -891,6 +1015,7 @@ def run_roc_sweeps(
     n_jobs: int = 1,
     rep_jobs: Optional[int] = None,
     rep_use_threads: bool = True,
+    cell_jobs: Optional[int] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run effect-size and sample-size ROC sweeps; return long-form DataFrames."""
     out_dir = Path(out_dir)
@@ -904,66 +1029,55 @@ def run_roc_sweeps(
         sample = df[df.sweep == "sample"].copy()
         return effect, sample
 
+    outer_jobs, _ = _sigma_parallel_plan(cfg.n_reps, n_jobs, cell_jobs)
+    cell_parallel = outer_jobs > 1
+
     rows: list[dict[str, Any]] = _load_rows_from_cell_caches(cfg, out_dir, cfg_hash)
+    pvals_by_key: dict[str, np.ndarray] = {}
+    pending: list[dict[str, Any]] = []
     gen_mode: FeatureMode = cfg.feature_mode_gen
     est_mode: FeatureMode = cfg.feature_mode_est
 
-    # Sample-size sweep first (small n cells finish sooner).
     total_sample = len(cfg.d_values) * len(cfg.n_values)
     cell = 0
     for d in cfg.d_values:
         for n in sorted(cfg.n_values):
             cell += 1
-            cell_path = _roc_cell_pvalues_path(
-                out_dir, cfg_hash, "sample", d, n=n,
-            )
-            ckpt_path = cell_path.with_suffix(".partial.npy")
+            cell_path = _roc_cell_pvalues_path(out_dir, cfg_hash, "sample", d, n=n)
+            key = _roc_cell_key("sample", d, n=n)
             nit = _roc_iter_count(cfg, n, sigma_true=cfg.sigma1)
             if use_cache and cell_path.is_file():
                 print(
                     f"[roc sample {cell}/{total_sample}] cache hit d={d} n={n}",
                     flush=True,
                 )
-                pvals = np.load(cell_path)
+                pvals_by_key[key] = np.load(cell_path)
             else:
-                exp_jobs, inner_rep = _roc_parallel_plan(n, cfg.n_reps, n_jobs, rep_jobs)
-                print(
-                    f"[roc sample {cell}/{total_sample}] d={d} n={n} "
-                    f"iters={nit} exps={cfg.n_experiments} "
-                    f"exp_jobs={exp_jobs} rep_jobs={inner_rep}",
-                    flush=True,
+                exp_jobs, inner_rep = _roc_intra_cell_plan(
+                    n, cfg.n_reps, n_jobs, rep_jobs, cell_parallel=cell_parallel,
                 )
-                seed = cfg.seed_base + 5000 + d * 1000 + n
-                pvals = collect_anova_pvalues(
-                    n, d, cfg.sigma1, cfg.sigma2_fixed,
-                    n_reps=cfg.n_reps,
-                    n_experiments=cfg.n_experiments,
-                    n_iter=nit,
-                    feature_mode_gen=gen_mode,
-                    feature_mode_est=est_mode,
-                    target_density=cfg.target_density,
-                    signal=cfg.signal,
-                    seed_base=seed,
-                    n_jobs=exp_jobs,
-                    rep_jobs=inner_rep,
-                    rep_use_threads=rep_use_threads,
-                    checkpoint_path=ckpt_path,
-                )
-                np.save(cell_path, pvals)
-                if ckpt_path.is_file():
-                    ckpt_path.unlink()
-            rows = [r for r in rows if not (r["sweep"] == "sample" and r["d"] == d and r["n"] == n)]
-            rows.extend(_roc_rows_from_pvalues(
-                pvals,
-                sweep="sample",
-                d=d,
-                sigma1=cfg.sigma1,
-                sigma2=cfg.sigma2_fixed,
-                n=n,
-                n_reps=cfg.n_reps,
-                n_experiments=cfg.n_experiments,
-            ))
-            pd.DataFrame(rows).to_csv(cache_path, index=False)
+                pending.append({
+                    "cell_key": key,
+                    "label": f"roc sample {cell}/{total_sample}",
+                    "sweep": "sample",
+                    "d": d,
+                    "n": n,
+                    "sigma1": cfg.sigma1,
+                    "sigma2": cfg.sigma2_fixed,
+                    "n_reps": cfg.n_reps,
+                    "n_experiments": cfg.n_experiments,
+                    "n_iter": nit,
+                    "feature_mode_gen": gen_mode,
+                    "feature_mode_est": est_mode,
+                    "target_density": cfg.target_density,
+                    "signal": cfg.signal,
+                    "seed_base": cfg.seed_base + 5000 + d * 1000 + n,
+                    "cell_path": str(cell_path),
+                    "exp_jobs": exp_jobs,
+                    "rep_jobs": inner_rep,
+                    "rep_use_threads": rep_use_threads,
+                    **_roc_adaptive_kwargs(cfg, n, d),
+                })
 
     total_effect = len(cfg.d_values) * len(cfg.sigma2_values)
     cell = 0
@@ -974,57 +1088,77 @@ def run_roc_sweeps(
             cell_path = _roc_cell_pvalues_path(
                 out_dir, cfg_hash, "effect", d, sigma2=sigma2,
             )
-            ckpt_path = cell_path.with_suffix(".partial.npy")
+            key = _roc_cell_key("effect", d, sigma2=sigma2)
             if use_cache and cell_path.is_file():
                 print(
                     f"[roc effect {cell}/{total_effect}] cache hit d={d} sigma2={sigma2}",
                     flush=True,
                 )
-                pvals = np.load(cell_path)
+                pvals_by_key[key] = np.load(cell_path)
             else:
-                exp_jobs, inner_rep = _roc_parallel_plan(
+                exp_jobs, inner_rep = _roc_intra_cell_plan(
                     cfg.n_effect, cfg.n_reps, n_jobs, rep_jobs,
+                    cell_parallel=cell_parallel,
                 )
-                print(
-                    f"[roc effect {cell}/{total_effect}] d={d} sigma2={sigma2} "
-                    f"n={cfg.n_effect} iters={nit} exps={cfg.n_experiments} "
-                    f"exp_jobs={exp_jobs} rep_jobs={inner_rep}",
-                    flush=True,
-                )
-                seed = cfg.seed_base + d * 100 + int(10 * sigma2)
-                pvals = collect_anova_pvalues(
-                    cfg.n_effect, d, cfg.sigma1, sigma2,
-                    n_reps=cfg.n_reps,
-                    n_experiments=cfg.n_experiments,
-                    n_iter=nit,
-                    feature_mode_gen=gen_mode,
-                    feature_mode_est=est_mode,
-                    target_density=cfg.target_density,
-                    signal=cfg.signal,
-                    seed_base=seed,
-                    n_jobs=exp_jobs,
-                    rep_jobs=inner_rep,
-                    rep_use_threads=rep_use_threads,
-                    checkpoint_path=ckpt_path,
-                )
-                np.save(cell_path, pvals)
-                if ckpt_path.is_file():
-                    ckpt_path.unlink()
-            rows = [
-                r for r in rows
-                if not (r["sweep"] == "effect" and r["d"] == d and r["sigma2"] == sigma2)
-            ]
-            rows.extend(_roc_rows_from_pvalues(
-                pvals,
-                sweep="effect",
-                d=d,
-                sigma1=cfg.sigma1,
-                sigma2=sigma2,
-                n=cfg.n_effect,
-                n_reps=cfg.n_reps,
-                n_experiments=cfg.n_experiments,
-            ))
-            pd.DataFrame(rows).to_csv(cache_path, index=False)
+                pending.append({
+                    "cell_key": key,
+                    "label": f"roc effect {cell}/{total_effect}",
+                    "sweep": "effect",
+                    "d": d,
+                    "n": cfg.n_effect,
+                    "sigma1": cfg.sigma1,
+                    "sigma2": sigma2,
+                    "n_reps": cfg.n_reps,
+                    "n_experiments": cfg.n_experiments,
+                    "n_iter": nit,
+                    "feature_mode_gen": gen_mode,
+                    "feature_mode_est": est_mode,
+                    "target_density": cfg.target_density,
+                    "signal": cfg.signal,
+                    "seed_base": cfg.seed_base + d * 100 + int(10 * sigma2),
+                    "cell_path": str(cell_path),
+                    "exp_jobs": exp_jobs,
+                    "rep_jobs": inner_rep,
+                    "rep_use_threads": rep_use_threads,
+                    **_roc_adaptive_kwargs(cfg, cfg.n_effect, d),
+                })
+
+    _run_roc_pending_cells(
+        pending,
+        outer_jobs=outer_jobs,
+        results=pvals_by_key,
+        cache_path=cache_path,
+        rows=rows,
+        cfg=cfg,
+    )
+
+    if not rows:
+        for d in cfg.d_values:
+            for sigma2 in cfg.sigma2_values:
+                key = _roc_cell_key("effect", d, sigma2=sigma2)
+                path = _roc_cell_pvalues_path(out_dir, cfg_hash, "effect", d, sigma2=sigma2)
+                pvals = pvals_by_key.get(key)
+                if pvals is None and path.is_file():
+                    pvals = np.load(path)
+                if pvals is not None:
+                    rows.extend(_roc_rows_from_pvalues(
+                        pvals, sweep="effect", d=d,
+                        sigma1=cfg.sigma1, sigma2=sigma2, n=cfg.n_effect,
+                        n_reps=cfg.n_reps, n_experiments=cfg.n_experiments,
+                    ))
+        for d in cfg.d_values:
+            for n in cfg.n_values:
+                key = _roc_cell_key("sample", d, n=n)
+                path = _roc_cell_pvalues_path(out_dir, cfg_hash, "sample", d, n=n)
+                pvals = pvals_by_key.get(key)
+                if pvals is None and path.is_file():
+                    pvals = np.load(path)
+                if pvals is not None:
+                    rows.extend(_roc_rows_from_pvalues(
+                        pvals, sweep="sample", d=d,
+                        sigma1=cfg.sigma1, sigma2=cfg.sigma2_fixed, n=n,
+                        n_reps=cfg.n_reps, n_experiments=cfg.n_experiments,
+                    ))
 
     df = pd.DataFrame(rows)
     df.to_csv(cache_path, index=False)

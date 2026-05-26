@@ -62,6 +62,7 @@ def sigma_rep_job(payload: dict[str, Any]) -> dict[str, Any]:
 
     d = payload["d"]
     mode_est = "incremental" if d == 0 else payload["feature_mode_est"]
+    need_adj = d == 0
     adj, meta = simulate_graph(
         payload["n"],
         d,
@@ -72,7 +73,8 @@ def sigma_rep_job(payload: dict[str, Any]) -> dict[str, Any]:
         signal=payload["signal"],
         seed=payload["seed"],
         return_meta=True,
-        collect_feature_mean=True,
+        collect_feature_mean=False,
+        materialize_adjacency=need_adj,
         feature_mode_est=mode_est,
         adaptive_stopping=payload.get("adaptive_stopping", False),
         adaptive_check_interval=payload.get("adaptive_check_interval", 20_000),
@@ -80,18 +82,19 @@ def sigma_rep_job(payload: dict[str, Any]) -> dict[str, Any]:
         adaptive_cv_tol=payload.get("adaptive_cv_tol", 0.02),
         adaptive_min_iter=payload.get("adaptive_min_iter", 20_000),
     )
+    csr_rows = meta.get("csr_rows")
     sh = estimate_sigma_from_graph(
         adj,
         d,
         feature_mode=mode_est,
-        csr_rows=meta.get("csr_rows"),
+        csr_rows=csr_rows,
     )
     return {
         "rep": payload["rep"],
         "sigma_hat": float(sh),
         "density": float(meta["density"]),
         "beta": float(meta["beta"]),
-        "feature_mean": float(meta["feature_mean"]),
+        "feature_mean": 0.0,
         "n_iter_used": float(meta.get("n_iter_used", payload["n_iter"])),
     }
 
@@ -208,4 +211,60 @@ def anova_experiment_job(payload: dict[str, Any]) -> float:
         seed=payload["seed"],
         rep_jobs=payload.get("rep_jobs", 1),
         rep_use_threads=payload.get("rep_use_threads", True),
+        adaptive_stopping=payload.get("adaptive_stopping", False),
+        adaptive_check_interval=payload.get("adaptive_check_interval", 20_000),
+        adaptive_patience=payload.get("adaptive_patience", 3),
+        adaptive_cv_tol=payload.get("adaptive_cv_tol", 0.02),
+        adaptive_min_iter=payload.get("adaptive_min_iter", 20_000),
     )
+
+
+def roc_cell_job(payload: dict[str, Any]) -> dict[str, Any]:
+    """One ROC sweep cell: all ANOVA p-values, save npy, return metadata."""
+    _pin_blas_threads()
+    from pathlib import Path
+
+    from .sweeps import collect_anova_pvalues
+
+    cell_path = Path(payload["cell_path"])
+    ckpt_path = cell_path.with_suffix(".partial.npy")
+    adaptive = payload.get("adaptive_stopping", False)
+    print(
+        f"[{payload['label']}] d={payload['d']} n={payload['n']} "
+        f"sigma2={payload['sigma2']} iters={payload['n_iter']} "
+        f"exps={payload['n_experiments']} exp_jobs={payload['exp_jobs']} "
+        f"rep_jobs={payload['rep_jobs']}"
+        + (" adaptive=1" if adaptive else ""),
+        flush=True,
+    )
+    pvals = collect_anova_pvalues(
+        payload["n"],
+        payload["d"],
+        payload["sigma1"],
+        payload["sigma2"],
+        n_reps=payload["n_reps"],
+        n_experiments=payload["n_experiments"],
+        n_iter=payload["n_iter"],
+        feature_mode_gen=payload["feature_mode_gen"],
+        feature_mode_est=payload["feature_mode_est"],
+        target_density=payload["target_density"],
+        signal=payload["signal"],
+        seed_base=payload["seed_base"],
+        n_jobs=payload["exp_jobs"],
+        rep_jobs=payload["rep_jobs"],
+        rep_use_threads=payload.get("rep_use_threads", True),
+        adaptive_stopping=adaptive,
+        adaptive_check_interval=payload.get("adaptive_check_interval", 20_000),
+        adaptive_patience=payload.get("adaptive_patience", 3),
+        adaptive_cv_tol=payload.get("adaptive_cv_tol", 0.02),
+        adaptive_min_iter=payload.get("adaptive_min_iter", 20_000),
+        checkpoint_path=ckpt_path,
+        checkpoint_every=1,
+    )
+    np.save(cell_path, pvals)
+    if ckpt_path.is_file():
+        ckpt_path.unlink()
+    return {
+        "cell_key": payload["cell_key"],
+        "pvals": pvals,
+    }

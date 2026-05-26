@@ -98,3 +98,34 @@ def test_calibrate_beta_given_sigma_density_smoke():
         sh = estimate_sigma_from_graph(adj, d, "incremental")
         assert abs(sh - sigma) < 0.65, f"sigma={sigma} sh={sh:.2f}"
         assert meta["beta"] == 1.0
+
+
+def test_adaptive_gibbs_stops_before_max_iter():
+    n, d, sigma = 80, 1, -3.0
+    max_iter = 120_000
+    _, meta = simulate_graph(
+        n, d, sigma=sigma, n_iter=max_iter,
+        feature_mode="incremental", seed=7, return_meta=True,
+        materialize_adjacency=False,
+        adaptive_stopping=True,
+        adaptive_check_interval=5_000,
+        adaptive_patience=3,
+        adaptive_cv_tol=0.02,
+        adaptive_min_iter=10_000,
+    )
+    assert meta["n_iter_used"] < max_iter
+    assert "csr_rows" in meta
+
+
+def test_sigma_from_csr_rows_matches_adj():
+    n, d, sigma = 60, 1, -3.0
+    nit = 8_000
+    adj, meta = simulate_graph(
+        n, d, sigma=sigma, n_iter=nit,
+        feature_mode="incremental", seed=11, return_meta=True,
+    )
+    sh_adj = estimate_sigma_from_graph(adj, d, "incremental")
+    sh_csr = estimate_sigma_from_graph(
+        None, d, "incremental", csr_rows=meta["csr_rows"],
+    )
+    assert sh_adj == sh_csr

@@ -6,8 +6,8 @@ from dataclasses import replace
 import pandas as pd
 import pytest
 
-from logit_graph.experiments.presets import AICSweepConfig, SigmaSweepConfig
-from logit_graph.experiments.sweeps import collect_anova_pvalues, run_aic_d_sweep, run_sigma_sweep
+from logit_graph.experiments.presets import AICSweepConfig, ROCSweepConfig, SigmaSweepConfig
+from logit_graph.experiments.sweeps import collect_anova_pvalues, run_aic_d_sweep, run_roc_sweeps, run_sigma_sweep
 
 
 @pytest.fixture()
@@ -86,3 +86,30 @@ def test_roc_anova_serial_vs_rep_parallel(tmp_path):
     parallel = collect_anova_pvalues(**common, rep_jobs=2)
     assert serial.shape == parallel.shape
     assert serial.tolist() == parallel.tolist()
+
+
+def test_roc_sweep_serial_vs_cell_parallel(tmp_path):
+    cfg = ROCSweepConfig(
+        n_effect=30,
+        sigma2_values=[-1.0, -1.5],
+        n_values=[30],
+        d_values=[0, 1],
+        n_reps=3,
+        n_experiments=4,
+        iter_cap=500,
+        seed_base=0,
+    )
+    eff_s, samp_s = run_roc_sweeps(cfg, tmp_path / "serial", use_cache=False, n_jobs=1)
+    eff_p, samp_p = run_roc_sweeps(
+        replace(cfg, seed_base=0),
+        tmp_path / "parallel",
+        use_cache=False,
+        n_jobs=2,
+        cell_jobs=2,
+    )
+    serial = pd.concat([eff_s, samp_s], ignore_index=True)
+    parallel = pd.concat([eff_p, samp_p], ignore_index=True)
+    for sweep in ("effect", "sample"):
+        s = serial[serial.sweep == sweep].sort_values(["d", "n", "sigma2", "alpha"])
+        p = parallel[parallel.sweep == sweep].sort_values(["d", "n", "sigma2", "alpha"])
+        pd.testing.assert_frame_equal(s, p, check_exact=False, rtol=1e-9)

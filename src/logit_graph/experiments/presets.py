@@ -42,6 +42,11 @@ class ROCSweepConfig:
     feature_mode_gen: str = "incremental"
     feature_mode_est: str = "incremental"
     seed_base: int = 2000
+    adaptive_stopping: bool = False
+    adaptive_check_interval: int = 20_000
+    adaptive_patience: int = 3
+    adaptive_cv_tol: float = 0.02
+    adaptive_min_iter: int = 20_000
 
 
 @dataclass
@@ -64,6 +69,20 @@ class AICSweepConfig:
 
 
 PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]] = {
+    "FAST": {
+        "sigma": SigmaSweepConfig(n_values=[80], n_reps=2, iter_cap=20_000),
+        "roc": ROCSweepConfig(n_effect=80, n_values=[80], n_reps=5, n_experiments=25, iter_cap=20_000),
+        "aic": AICSweepConfig(
+            d_true_values=[0, 1, 2, 3],
+            d_est_values=[0, 1, 2, 3],
+            n_sizes=[40, 70, 100],
+            n_runs=5,
+            m_ensemble=1,
+            iter_cap=None,
+            aic_penalty_per_d=0.0,
+            sigma_gen=-3.0,
+        ),
+    },
     "INSIGHT_SCALING": {
         "roc": ROCSweepConfig(
             n_effect=200,
@@ -165,6 +184,11 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             n_reps=30,
             n_experiments=500,
             iter_cap=None,
+            adaptive_stopping=True,
+            adaptive_check_interval=25_000,
+            adaptive_patience=4,
+            adaptive_cv_tol=0.015,
+            adaptive_min_iter=50_000,
         ),
         "sigma": SigmaSweepConfig(
             sigma_values=[-2.0, -4.0, -6.0],
