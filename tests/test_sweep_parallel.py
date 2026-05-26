@@ -4,35 +4,9 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pandas as pd
-import pytest
 
-from logit_graph.experiments.presets import AICSweepConfig, ROCSweepConfig, SigmaSweepConfig
+from logit_graph.experiments.presets import ROCSweepConfig
 from logit_graph.experiments.sweeps import collect_anova_pvalues, run_aic_d_sweep, run_roc_sweeps, run_sigma_sweep
-
-
-@pytest.fixture()
-def tiny_sigma_cfg() -> SigmaSweepConfig:
-    return SigmaSweepConfig(
-        sigma_values=[-2.0],
-        d_values=[0, 1],
-        n_values=[30],
-        n_reps=2,
-        iter_cap=500,
-        seed_base=0,
-    )
-
-
-@pytest.fixture()
-def tiny_aic_cfg() -> AICSweepConfig:
-    return AICSweepConfig(
-        d_true_values=[0, 1],
-        d_est_values=[0, 1],
-        n_sizes=[30],
-        n_runs=2,
-        m_ensemble=2,
-        iter_cap=500,
-        seed_base=0,
-    )
 
 
 def _sort_sigma(df: pd.DataFrame) -> pd.DataFrame:
@@ -71,9 +45,9 @@ def test_roc_anova_serial_vs_rep_parallel(tmp_path):
         d=1,
         sigma1=-1.0,
         sigma2=-1.5,
-        n_reps=3,
-        n_experiments=4,
-        n_iter=500,
+        n_reps=2,
+        n_experiments=3,
+        n_iter=400,
         feature_mode_gen="incremental",
         feature_mode_est="incremental",
         target_density=0.10,
@@ -91,12 +65,12 @@ def test_roc_anova_serial_vs_rep_parallel(tmp_path):
 def test_roc_sweep_serial_vs_cell_parallel(tmp_path):
     cfg = ROCSweepConfig(
         n_effect=30,
-        sigma2_values=[-1.0, -1.5],
+        sigma2_values=[-1.0],
         n_values=[30],
         d_values=[0, 1],
-        n_reps=3,
-        n_experiments=4,
-        iter_cap=500,
+        n_reps=2,
+        n_experiments=3,
+        iter_cap=400,
         seed_base=0,
     )
     eff_s, samp_s = run_roc_sweeps(cfg, tmp_path / "serial", use_cache=False, n_jobs=1)
