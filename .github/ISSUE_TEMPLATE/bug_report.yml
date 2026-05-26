@@ -1,0 +1,54 @@
+name: Bug report
+description: Report incorrect behavior, crashes, or reproducibility issues
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Include versions and a minimal repro when possible.
+        For **GIC / model comparison** issues, set `random_state` and share the seed.
+
+  - type: input
+    id: version
+    attributes:
+      label: logit-graph version
+      placeholder: "0.1.4 (output of pip show logit-graph)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: python
+    attributes:
+      label: Python version
+      options:
+        - "3.9"
+        - "3.10"
+        - "3.11"
+        - "3.12+"
+        - "other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Code snippet, graph size, and `random_state` if applicable
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Traceback / logs
+      render: shell

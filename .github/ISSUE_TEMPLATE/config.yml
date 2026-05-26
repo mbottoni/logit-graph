@@ -1,0 +1,8 @@
+blank_issues: false
+contact_links:
+  - name: PyPI package
+    url: https://pypi.org/project/logit-graph/
+    about: Install releases from PyPI
+  - name: Changelog
+    url: https://github.com/mbottoni/logit-graph/blob/main/CHANGELOG.md
+    about: See what changed between versions
