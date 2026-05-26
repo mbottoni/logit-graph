@@ -1,5 +1,9 @@
+# Local-only assets (kept on disk, not versioned)
+/images/
+/docs/
+/data/connectomes/
+
 # data
-# images/*
 data/*
 
 # python bytecode / caches
