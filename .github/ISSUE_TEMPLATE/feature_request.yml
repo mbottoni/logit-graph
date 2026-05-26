@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest an enhancement or new capability
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem you're trying to solve and how you'd like the API to look.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      placeholder: "I'm trying to compare LG on batch datasets from ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      placeholder: "Add a helper that ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: "I tried using GraphModelComparator with ..."
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Area
+      options:
+        - label: Estimation (AIC / σ̂)
+        - label: Simulation / Gibbs
+        - label: GIC / model comparison
+        - label: Notebooks / docs
+        - label: Performance

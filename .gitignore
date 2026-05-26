@@ -1,6 +1,8 @@
 # Local-only assets (kept on disk, not versioned)
 /images/
-/docs/
+/docs/connectomes.md
+/docs/connectomes.pdf
+/docs/good_connectomes.md
 /data/connectomes/
 
 # data
@@ -48,6 +50,9 @@ deprecated/
 
 *.parquet
 *.png
+!docs/
+!docs/assets/
+!docs/assets/banner.png
 
 .pkl
 *.pkl
