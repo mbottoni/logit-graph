@@ -54,6 +54,7 @@ statGraph/
 *.tar.gz
 
 notebooks/runs/*
+.env
 *.gif
 *.pdf
 
