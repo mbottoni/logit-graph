@@ -62,13 +62,11 @@ deprecated/
 statGraph/
 *.tar.gz
 
-notebooks/runs/*
+# experiment run artifacts (any notebooks/**/runs/ tree)
+**/runs/
+
 .env
 *.gif
 *.pdf
 
-notebooks/anova/runs/
 notebooks/changes_article/
-*/runs/*
-notebooks/misc_datasets/runs/
-notebooks/citation/runs/citation_kpm_sensitivity/
