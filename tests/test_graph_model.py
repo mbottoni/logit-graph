@@ -21,13 +21,12 @@ def test_calculate_spectrum_sorted_nonnegative():
 
 
 def test_add_remove_edge_changes_edge_count():
-    gm = GraphModel(n=12, d=1, sigma=0.0, er_p=0.1)
-    before = np.sum(np.triu(gm.graph))
-    for _ in range(10):
+    gm = GraphModel(n=12, d=1, sigma=0.0, er_p=0.1, seed=42)
+    counts = {int(np.sum(np.triu(gm.graph)))}
+    for _ in range(200):
         gm.add_remove_edge()
-    after = np.sum(np.triu(gm.graph))
-    # Probabilistic, but across 10 steps should change at least sometimes
-    assert before != after or np.sum(gm.graph) in [0, gm.graph.size]
+        counts.add(int(np.sum(np.triu(gm.graph))))
+    assert len(counts) > 1, "Edge count never changed across 200 steps"
 
 
 def test_convergence_checks_do_not_crash():
