@@ -152,11 +152,13 @@ def sigma_cell_job(payload: dict[str, Any]) -> dict[str, Any]:
 
 def aic_run_job(payload: dict[str, Any]) -> dict[str, Any]:
     """One AIC selection run: ensemble graphs + d_hat."""
+    import time
     _pin_blas_threads()
     from concurrent.futures import ThreadPoolExecutor
 
     from .sweeps import select_d_ensemble
 
+    t_start = time.time()
     m = payload["m_ensemble"]
     n_jobs = int(payload.get("n_jobs", 1))
     ensemble_jobs = int(
@@ -181,11 +183,24 @@ def aic_run_job(payload: dict[str, Any]) -> dict[str, Any]:
         extra_penalty_per_d=payload["aic_penalty_per_d"],
         csr_rows_list=csr_rows_list,
     )
+
+    # Diagnostics: mean density across ensemble + wall time.
+    # Useful to detect phase transitions (density blowing up) and to ETA-track.
+    n = int(payload["n"])
+    densities = []
+    for adj in graphs:
+        if adj is not None:
+            densities.append(float(np.asarray(adj).sum()) / (n * (n - 1)))
+    mean_density = float(np.mean(densities)) if densities else 0.0
+    elapsed = float(time.time() - t_start)
+
     row: dict[str, Any] = {
         "n": payload["n"],
         "d_true": payload["d_true"],
         "run": payload["run"],
         "hat_d": hat_d,
+        "density": mean_density,
+        "elapsed_s": elapsed,
     }
     for de in payload["d_est_values"]:
         row[f"aic_d{de}"] = aic_stats[de]["aic"]

@@ -66,9 +66,55 @@ class AICSweepConfig:
     # Paper-strict: fixed sigma + beta=1 in generation (matches estimator).
     # Sigma is also used for d=0 ER baseline.
     sigma_gen: float = -3.0
+    # Per-d absolute iter cap overrides (overrides iter_cap for specific d_true values).
+    # d=2 needs a small cap to stay in the transient regime before the phase transition
+    # to high density (the phase transition happens at ~600-1000 absolute Gibbs steps).
+    iter_cap_by_d: Optional[dict] = None
+    # Per-n sigma override: {n: sigma_gen_for_that_n}. Overrides sigma_gen for jobs
+    # with that n value. Needed when a fixed sigma saturates d=3 balls at large n
+    # (e.g. sigma=-4.0 works at n=100 but 3-hop ball covers 80%+ of n=500 nodes).
+    sigma_gen_per_n: Optional[dict] = None
+    # Per-(n, d_true) ensemble size override. Each value is either an int (flat per d)
+    # or a dict {n: m}. Lets us drop m_ensemble at the most expensive cells (e.g.,
+    # n=1000 d=2 with cascade-density BFS) without sacrificing ensemble averaging
+    # at cheap cells. Accuracy at expensive cells already has headroom — e.g., 4/4
+    # cached d=2 at n=1000 with m=3 — so m=1 here saves 3x with negligible quality loss.
+    m_ensemble_by_d: Optional[dict] = None
 
 
 PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]] = {
+    # EFFICIENT: runs in ~1 min single-core on an M1 (or ~15s with 4 jobs).
+    # Uses n<=100 so iter_cap=None is safe — recommended_iterations(100)=49.5k
+    # takes only 0.27s per graph even for d=2,3.
+    # NOTE: d=2 shows 0% accuracy by design — the d=2 GWESP model at sigma=-3
+    # has a phase transition to 71% density (no moderate-density equilibrium
+    # exists at any sigma). AIC correctly classifies those as high-density ER.
+    # d=0, d=1, d=3 all discriminate correctly with these parameters.
+    "EFFICIENT": {
+        "sigma": SigmaSweepConfig(n_values=[80, 100], n_reps=3, iter_cap=50_000),
+        "roc": ROCSweepConfig(
+            n_effect=100,
+            sigma2_values=[-1.0, -1.5, -2.0],
+            n_values=[10, 100, 500],
+            n_reps=8,
+            n_experiments=60,
+            iter_cap=30_000,
+        ),
+        "aic": AICSweepConfig(
+            d_true_values=[0, 1, 2, 3],
+            d_est_values=[0, 1, 2, 3],
+            n_sizes=[50, 100],
+            n_runs=10,
+            m_ensemble=5,
+            iter_cap=None,
+            # d=2 GWESP at sigma=-3 hits a phase transition to 71% density after
+            # ~1000 Gibbs steps regardless of n. Capping at 800 keeps d=2 graphs
+            # in the 7-13% density transient where they are identifiable.
+            iter_cap_by_d={2: 800},
+            aic_penalty_per_d=2.0,
+            sigma_gen=-3.0,
+        ),
+    },
     "FAST": {
         "sigma": SigmaSweepConfig(n_values=[80], n_reps=2, iter_cap=20_000),
         "roc": ROCSweepConfig(n_effect=80, n_values=[80], n_reps=5, n_experiments=25, iter_cap=20_000),
@@ -80,6 +126,34 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             m_ensemble=1,
             iter_cap=None,
             aic_penalty_per_d=0.0,
+            sigma_gen=-3.0,
+        ),
+    },
+    "SCALED": {
+        "sigma": SigmaSweepConfig(n_values=[100, 250, 500], n_reps=3, iter_cap=30_000),
+        "roc": ROCSweepConfig(n_effect=250, n_values=[100, 250, 500], n_reps=10, n_experiments=100, iter_cap=30_000),
+        "aic": AICSweepConfig(
+            d_true_values=[0, 1, 2, 3],
+            d_est_values=[0, 1, 2, 3],
+            n_sizes=[100, 250, 500],
+            n_runs=10,
+            m_ensemble=3,
+            iter_cap=30_000,
+            aic_penalty_per_d=0.0,
+            sigma_gen=-3.0,
+        ),
+    },
+    "TWO_HOUR": {
+        "sigma": SigmaSweepConfig(n_values=[100, 500], n_reps=3, iter_cap=100_000),
+        "roc": ROCSweepConfig(n_effect=500, n_values=[100, 500, 1000], n_reps=15, n_experiments=100, iter_cap=100_000),
+        "aic": AICSweepConfig(
+            d_true_values=[0, 1, 2, 3],
+            d_est_values=[0, 1, 2, 3],
+            n_sizes=[100, 500, 1000],
+            n_runs=8,
+            m_ensemble=3,
+            iter_cap=10_000_000,
+            aic_penalty_per_d=3.0,
             sigma_gen=-3.0,
         ),
     },
@@ -174,6 +248,50 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             n_runs=8,
             m_ensemble=5,
             iter_cap=120_000,
+        ),
+    },
+    # PAPER_FAST: paper-quality n=[100,500,1000] within ~25 min on 4 cores (M1).
+    #
+    # Key challenge: with fixed sigma, the d=3 3-hop ball saturates at large n.
+    # At sigma=-4.0, avg_degree≈9 at n=500 → 3-hop ball covers 80%+ of nodes →
+    # d=3 feature is nearly constant across all pairs → AIC can't distinguish d=3
+    # from d=0. Same sigma that gives excellent d=3 accuracy at n=100 fails at n=500.
+    #
+    # Solution: sigma_gen_per_n scales sigma with n to keep the 3-hop ball at
+    # ~10-30% of n, ensuring d=3 features remain informative across all n values.
+    #   n=100: sigma=-4.0 → avg_degree≈1.8, 3-hop ball≈12 nodes (12%) — proven 100%
+    #   n=500: sigma=-4.8 → avg_degree≈4.1, 3-hop ball≈76 nodes (15%) — informative
+    #   n=1000: sigma=-5.3 → avg_degree≈5.0, 3-hop ball≈133 nodes (13%) — informative
+    #
+    # iter_cap_by_d caps d=2 and d=3 for speed; d=2 cap avoids metastable escape
+    # to high-density at sigma=-4.0 for n=500 (seed-dependent issue).
+    "PAPER_FAST": {
+        "sigma": SigmaSweepConfig(n_values=[100, 500, 1000], n_reps=3, iter_cap=None),
+        "roc": ROCSweepConfig(
+            n_effect=500,
+            n_values=[100, 500, 1000],
+            n_reps=10,
+            n_experiments=100,
+            iter_cap=100_000,
+        ),
+        "aic": AICSweepConfig(
+            d_true_values=[0, 1, 2, 3],
+            d_est_values=[0, 1, 2, 3],
+            n_sizes=[100, 500, 1000],
+            n_runs=10,
+            m_ensemble=3,
+            iter_cap=None,
+            sigma_gen=-4.0,  # fallback; overridden per n by sigma_gen_per_n
+            sigma_gen_per_n={100: -4.0, 500: -4.8, 1000: -5.3},
+            # d=2 needs ~2-3 Gibbs sweeps for GWESP cascade to develop. At
+            # n=1000 with 300k absolute cap that's only 0.6 sweeps → graph
+            # stays near-empty → d=2 unidentifiable. Per-n cap scales mixing
+            # time with graph size.
+            iter_cap_by_d={
+                2: {500: 300_000, 1000: 1_500_000},
+                3: 500_000,
+            },
+            aic_penalty_per_d=1.0,
         ),
     },
     "PAPER": {
