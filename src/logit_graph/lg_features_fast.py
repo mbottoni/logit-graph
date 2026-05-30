@@ -594,16 +594,18 @@ def _bfs_distances_buf(
     max_depth: int,
     n: int,
     dist: np.ndarray,
+    frontier: np.ndarray,
     l2_skip: bool,
     ei: int,
     ej: int,
-) -> None:
+) -> int:
+    # Init dist only for the previous frontier — but we don't know it here,
+    # so reset all n entries (caller-owned buffer reused across steps).
     for v in range(n):
         dist[v] = -1
     dist[source] = 0
-    frontier = np.empty(n, dtype=np.int32)
-    frontier_len = 1
     frontier[0] = source
+    frontier_len = 1
     head = 0
     while head < frontier_len:
         v = int(frontier[head])
@@ -621,6 +623,41 @@ def _bfs_distances_buf(
                 dist[u] = dv + 1
                 frontier[frontier_len] = u
                 frontier_len += 1
+    return frontier_len
+
+
+@njit(cache=True)
+def _intersect_both_d(
+    small_frontier: np.ndarray,
+    small_len: int,
+    small_dist: np.ndarray,
+    other_dist: np.ndarray,
+    i: int,
+    j: int,
+    d: int,
+) -> tuple:
+    """O(ball) intersection: count |B_d(i) ∩ B_d(j) \\ {i,j}| and same for d-1.
+
+    Iterates the smaller of the two BFS frontiers instead of all n nodes.
+    Returns (c_d, c_dm1).
+    """
+    c_d = 0
+    c_dm1 = 0
+    dm1 = d - 1
+    for k in range(small_len):
+        v = int(small_frontier[k])
+        if v == i or v == j:
+            continue
+        ov = int(other_dist[v])
+        if ov < 0 or ov > d:
+            continue
+        # v is reachable from `source` within depth d (it's in the frontier).
+        # Check membership in d-ball of other vertex.
+        c_d += 1
+        sv = int(small_dist[v])
+        if sv <= dm1 and ov <= dm1:
+            c_dm1 += 1
+    return c_d, c_dm1
 
 
 @njit(cache=True)
@@ -670,6 +707,8 @@ def _sum_ball_degree_buf(
 def _incremental_h_buf(
     row_buf: np.ndarray, row_lens: np.ndarray, i: int, j: int, d: int, n: int,
     l2_skip: bool, alpha_gwesp: float,
+    dist_i: np.ndarray, dist_j: np.ndarray,
+    frontier_i: np.ndarray, frontier_j: np.ndarray,
 ) -> float:
     if d == 0:
         return 0.0
@@ -678,12 +717,27 @@ def _incremental_h_buf(
         if c <= 0:
             return 0.0
         return alpha_gwesp * (1.0 - (1.0 - 1.0 / alpha_gwesp) ** c)
-    dist_i = np.empty(n, dtype=np.int16)
-    dist_j = np.empty(n, dtype=np.int16)
-    _bfs_distances_buf(row_buf, row_lens, i, d, n, dist_i, l2_skip, i, j)
-    _bfs_distances_buf(row_buf, row_lens, j, d, n, dist_j, l2_skip, i, j)
-    c_d = _count_common_within_dist(dist_i, dist_j, n, i, j, d)
-    c_dm1 = _count_common_within_dist(dist_i, dist_j, n, i, j, d - 1)
+    # Fast path: if either endpoint has no neighbors, the d-ball collapses to {v}
+    # and any intersection (excluding i,j) is empty → feature is 0.
+    if row_lens[i] == 0 or row_lens[j] == 0:
+        return 0.0
+    fl_i = _bfs_distances_buf(
+        row_buf, row_lens, i, d, n, dist_i, frontier_i, l2_skip, i, j,
+    )
+    fl_j = _bfs_distances_buf(
+        row_buf, row_lens, j, d, n, dist_j, frontier_j, l2_skip, i, j,
+    )
+    # Iterate over the smaller ball for O(min(|B_i|, |B_j|)) intersection.
+    if fl_i <= fl_j:
+        c_d, c_dm1 = _intersect_both_d(
+            frontier_i, fl_i, dist_i, dist_j, i, j, d,
+        )
+    else:
+        c_d, c_dm1 = _intersect_both_d(
+            frontier_j, fl_j, dist_j, dist_i, i, j, d,
+        )
+    if c_d == 0:
+        return 0.0
     delta = c_d - c_dm1
     if delta < 0:
         delta = 0
@@ -694,22 +748,38 @@ def _incremental_h_buf(
 def _common_dhop_buf(
     row_buf: np.ndarray, row_lens: np.ndarray, i: int, j: int, depth: int, n: int,
     l2_skip: bool,
+    dist_i: np.ndarray, dist_j: np.ndarray,
+    frontier_i: np.ndarray, frontier_j: np.ndarray,
 ) -> int:
     if depth == 0:
         return 0
     if depth == 1:
         return _common_neighbors_buf(row_buf, row_lens, i, j, l2_skip)
-    dist_i = np.empty(n, dtype=np.int16)
-    dist_j = np.empty(n, dtype=np.int16)
-    _bfs_distances_buf(row_buf, row_lens, i, depth, n, dist_i, l2_skip, i, j)
-    _bfs_distances_buf(row_buf, row_lens, j, depth, n, dist_j, l2_skip, i, j)
-    return _count_common_within_dist(dist_i, dist_j, n, i, j, depth)
+    if row_lens[i] == 0 or row_lens[j] == 0:
+        return 0
+    fl_i = _bfs_distances_buf(
+        row_buf, row_lens, i, depth, n, dist_i, frontier_i, l2_skip, i, j,
+    )
+    fl_j = _bfs_distances_buf(
+        row_buf, row_lens, j, depth, n, dist_j, frontier_j, l2_skip, i, j,
+    )
+    if fl_i <= fl_j:
+        c_d, _c_dm1 = _intersect_both_d(
+            frontier_i, fl_i, dist_i, dist_j, i, j, depth,
+        )
+    else:
+        c_d, _c_dm1 = _intersect_both_d(
+            frontier_j, fl_j, dist_j, dist_i, i, j, depth,
+        )
+    return c_d
 
 
 @njit(cache=True)
 def pair_feature_layer2_row_buf(
     row_buf: np.ndarray, row_lens: np.ndarray, i: int, j: int, d: int, n: int,
     mode_code: int, had_edge: bool, alpha_gwesp: float,
+    dist_i: np.ndarray, dist_j: np.ndarray,
+    frontier_i: np.ndarray, frontier_j: np.ndarray,
 ) -> float:
     l2 = had_edge
     if mode_code == 0:
@@ -721,8 +791,14 @@ def pair_feature_layer2_row_buf(
         sj = _sum_ball_degree_buf(row_buf, row_lens, j, d, n, l2, i, j)
         return math.log(1.0 + si) + math.log(1.0 + sj)
     if mode_code == 2:
-        return _incremental_h_buf(row_buf, row_lens, i, j, d, n, l2, alpha_gwesp)
-    c = _common_dhop_buf(row_buf, row_lens, i, j, d, n, l2)
+        return _incremental_h_buf(
+            row_buf, row_lens, i, j, d, n, l2, alpha_gwesp,
+            dist_i, dist_j, frontier_i, frontier_j,
+        )
+    c = _common_dhop_buf(
+        row_buf, row_lens, i, j, d, n, l2,
+        dist_i, dist_j, frontier_i, frontier_j,
+    )
     return math.log(1.0 + c)
 
 
@@ -739,8 +815,18 @@ def run_gibbs_numba_buf(
     alpha_gwesp: float,
     n: int,
 ) -> None:
-    """Run Gibbs steps with in-place CSR row buffers (no per-flip allocations)."""
+    """Run Gibbs steps with in-place CSR row buffers (no per-flip allocations).
+
+    BFS scratch buffers (dist + frontier for each of i,j) are allocated once
+    here and reused across all n_iter steps — avoids ~4 * n_iter Numba
+    allocations which dominate at large n with sparse density.
+    """
     n_iter = draws.shape[0]
+    # Pre-allocate BFS scratch space once per chain.
+    dist_i = np.empty(n, dtype=np.int16)
+    dist_j = np.empty(n, dtype=np.int16)
+    frontier_i = np.empty(n, dtype=np.int32)
+    frontier_j = np.empty(n, dtype=np.int32)
     for t in range(n_iter):
         i_raw = draws[t, 0]
         j_raw = draws[t, 1]
@@ -752,6 +838,7 @@ def run_gibbs_numba_buf(
         had = _sorted_has_buf(row_buf, row_lens, i, j)
         feat = pair_feature_layer2_row_buf(
             row_buf, row_lens, i, j, d, n, mode_code, had, alpha_gwesp,
+            dist_i, dist_j, frontier_i, frontier_j,
         )
         logit = sigma + alpha * beta * feat
         p = _expit(logit)

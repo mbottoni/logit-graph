@@ -81,11 +81,17 @@ def fit_offset_logit_numba(
         return sigma, ll
 
     y_sum = 0.0
+    off_mean = 0.0
     for i in range(n):
         y_sum += labels[i]
+        off_mean += offsets[i]
     p_hat = y_sum / n
     p_hat = min(max(p_hat, 1e-15), 1.0 - 1e-15)
-    sigma = _logit(p_hat)
+    # Subtract mean offset from init so Newton starts near the MLE regardless
+    # of offset scale. Without this, large mean offsets (d=2 features can reach
+    # ~4-5) cause the clamped step to oscillate between init and far overshoot.
+    off_mean /= n
+    sigma = _logit(p_hat) - off_mean
 
     for _ in range(max_iter):
         ll, grad, hess = _loglik_grad_hess(sigma, offsets, labels)
