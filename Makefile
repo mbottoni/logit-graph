@@ -108,6 +108,13 @@ aic-paper-fast-fresh:  ## PAPER_FAST sweep, force-discard cache (~1.5h)
 	LG_AIC_JOBS=$(JOBS) \
 		$(UV) run python notebooks/refactors/run_aic_experiments.py
 
+convergence-diagnostics:  ## Run MCMC convergence diagnostics (n=750, ~30 min)
+	$(UV) run python notebooks/refactors/run_convergence_diagnostics.py
+
+convergence-diagnostics-quick:  ## Quick smoke (n=200, 50k iter, ~1 min)
+	LG_CONV_QUICK=1 \
+		$(UV) run python notebooks/refactors/run_convergence_diagnostics.py
+
 # ─────────────────────────────────────────────────────────────
 #  Cleanup
 # ─────────────────────────────────────────────────────────────
