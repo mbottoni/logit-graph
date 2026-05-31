@@ -1996,7 +1996,11 @@ def plot_aic_confusion(
     n_sizes = sorted(conf.keys())
     nd = len(d_values)
     ncols = len(n_sizes)
-    fig, axes = plt.subplots(1, ncols, figsize=(5.5 * ncols, 5.2))
+    # constrained_layout coordinates colorbar placement; +0.8" leaves room
+    # so the colorbar sits to the right of the last panel rather than over it.
+    fig, axes = plt.subplots(
+        1, ncols, figsize=(5.5 * ncols + 0.8, 5.2), constrained_layout=True,
+    )
     if ncols == 1:
         axes = [axes]
 
@@ -2041,17 +2045,16 @@ def plot_aic_confusion(
             fontsize=13, pad=8,
         )
 
-    # Single colorbar on the far right
+    # Single colorbar on the far right; constrained_layout reserves the slot.
     if im_ref is not None:
-        cbar = fig.colorbar(im_ref, ax=axes, fraction=0.02, pad=0.02)
+        cbar = fig.colorbar(im_ref, ax=axes, shrink=0.85, pad=0.02)
         cbar.ax.tick_params(labelsize=10)
         cbar.set_label(r"$\Pr(\hat{d} = d_{\mathrm{est}} \mid d_{\mathrm{true}})$",
                        fontsize=10, rotation=270, labelpad=16)
 
     fig.suptitle(
         "AIC-based selection of $d$: accuracy improves with graph size $n$",
-        fontsize=14, y=1.02,
+        fontsize=14,
     )
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    fig.savefig(out_path, dpi=200)
     plt.close(fig)
