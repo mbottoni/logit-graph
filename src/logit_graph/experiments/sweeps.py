@@ -86,6 +86,7 @@ def _run_sigma_reps(
     adaptive_patience: int = 3,
     adaptive_cv_tol: float = 0.02,
     adaptive_min_iter: int = 20_000,
+    subsample_pairs: Optional[int] = None,
 ) -> tuple[list[float], list[float], list[float], list[float]]:
     from .workers import sigma_rep_job
 
@@ -106,6 +107,7 @@ def _run_sigma_reps(
             "adaptive_patience": adaptive_patience,
             "adaptive_cv_tol": adaptive_cv_tol,
             "adaptive_min_iter": adaptive_min_iter,
+            "subsample_pairs": subsample_pairs,
         }
         for rep in range(n_reps)
     ]
@@ -270,8 +272,17 @@ def _roc_iter_count(
     cfg: ROCSweepConfig,
     n: int,
     sigma_true: Optional[float] = None,
+    d: Optional[int] = None,
 ) -> int:
-    return _iter_count(n, cfg.iter_cap, sigma_true=sigma_true)
+    cap = cfg.iter_cap
+    if d is not None and cfg.iter_cap_by_d and d in cfg.iter_cap_by_d:
+        spec = cfg.iter_cap_by_d[d]
+        if isinstance(spec, dict):
+            if n in spec:
+                cap = spec[n]
+        else:
+            cap = spec
+    return _iter_count(n, cap, sigma_true=sigma_true)
 
 
 def _aic_iter_count(cfg: AICSweepConfig, n: int) -> int:
@@ -650,6 +661,65 @@ def select_d_ensemble(
     return best, stats
 
 
+def estimate_sigma_from_graph_subsample(
+    adj: Optional[np.ndarray],
+    csr_rows: Optional[list],
+    d: int,
+    n: int,
+    m: float,
+    rng: np.random.Generator,
+    feature_mode: FeatureMode = "incremental",
+) -> float:
+    """σ̂ from m randomly subsampled (i, j) pairs.
+
+    ``m`` can be int (absolute pair count) or float in (0, 1) (fraction of
+    the n·(n−1)/2 upper-triangle pairs). The fractional form makes σ̂'s SE
+    scale with n: SE ∝ 1/n, so larger n yields proportionally more power —
+    needed for the paper's sample-size ROC monotonicity.
+    """
+    upper_pairs = n * (n - 1) // 2
+    if isinstance(m, float) and 0 < m < 1:
+        # Floor at 5 pairs so very small n still produces a usable σ̂ (m=1
+        # gives SE ≈ 2, which makes the ROC at n=10 sit on the diagonal).
+        m = max(5, int(m * upper_pairs))
+    else:
+        m = int(m)
+    from scipy.special import logit as _logit
+    from ..lg_features_fast import (
+        adj_from_rows,
+        build_pair_dataset_from_rows,
+        rows_from_adj,
+    )
+    from ..offset_logit import fit_offset_logit_fast
+
+    if d == 0:
+        if adj is None:
+            adj = adj_from_rows(csr_rows, n)
+        i_idx, j_idx = np.triu_indices(n, k=1)
+        total_pairs = len(i_idx)
+        if total_pairs == 0:
+            return 0.0  # degenerate (n <= 1)
+        m_use = max(1, min(m, total_pairs))
+        sel = rng.choice(total_pairs, size=m_use, replace=False)
+        y = adj[i_idx[sel], j_idx[sel]].astype(np.int8)
+        # Clip 0/1 sample proportions to avoid logit divergence at m_use=50-200.
+        p_hat = float(y.mean())
+        eps = 0.5 / m_use
+        p_clip = min(max(p_hat, eps), 1.0 - eps)
+        return float(_logit(p_clip))
+
+    if csr_rows is None:
+        csr_rows = rows_from_adj(np.asarray(adj, dtype=float))
+    offsets, labels = build_pair_dataset_from_rows(csr_rows, d, mode=feature_mode)
+    total = len(offsets)
+    if total > m:
+        sel = rng.choice(total, size=m, replace=False)
+        offsets = offsets[sel]
+        labels = labels[sel]
+    sigma_hat, _ = fit_offset_logit_fast(offsets, labels)
+    return float(sigma_hat)
+
+
 def estimate_sigma_from_graph(
     adj: Optional[np.ndarray],
     d: int,
@@ -693,6 +763,7 @@ def run_anova_pvalue(
     adaptive_patience: int = 3,
     adaptive_cv_tol: float = 0.02,
     adaptive_min_iter: int = 20_000,
+    subsample_pairs: Optional[int] = None,
 ) -> float:
     """One Monte Carlo replicate: two groups of sigma_hat, one-way ANOVA p-value."""
     from concurrent.futures import ThreadPoolExecutor
@@ -714,6 +785,7 @@ def run_anova_pvalue(
         adaptive_patience=adaptive_patience,
         adaptive_cv_tol=adaptive_cv_tol,
         adaptive_min_iter=adaptive_min_iter,
+        subsample_pairs=subsample_pairs,
     )
     with ThreadPoolExecutor(max_workers=2) as pool:
         fut1 = pool.submit(
@@ -761,6 +833,7 @@ def collect_anova_pvalues(
     adaptive_patience: int = 3,
     adaptive_cv_tol: float = 0.02,
     adaptive_min_iter: int = 20_000,
+    subsample_pairs: Optional[int] = None,
     checkpoint_path: Optional[Path] = None,
     checkpoint_every: int = 1,
 ) -> np.ndarray:
@@ -804,6 +877,7 @@ def collect_anova_pvalues(
             "adaptive_patience": adaptive_patience,
             "adaptive_cv_tol": adaptive_cv_tol,
             "adaptive_min_iter": adaptive_min_iter,
+            "subsample_pairs": subsample_pairs,
         }
         for exp in range(start, n_experiments)
     ]
@@ -1059,7 +1133,7 @@ def run_roc_sweeps(
             cell += 1
             cell_path = _roc_cell_pvalues_path(out_dir, cfg_hash, "sample", d, n=n)
             key = _roc_cell_key("sample", d, n=n)
-            nit = _roc_iter_count(cfg, n, sigma_true=cfg.sigma1)
+            nit = _roc_iter_count(cfg, n, sigma_true=cfg.sigma1, d=d)
             if use_cache and cell_path.is_file():
                 print(
                     f"[roc sample {cell}/{total_sample}] cache hit d={d} n={n}",
@@ -1090,13 +1164,14 @@ def run_roc_sweeps(
                     "exp_jobs": exp_jobs,
                     "rep_jobs": inner_rep,
                     "rep_use_threads": rep_use_threads,
+                    "subsample_pairs": cfg.subsample_pairs,
                     **_roc_adaptive_kwargs(cfg, n, d),
                 })
 
     total_effect = len(cfg.d_values) * len(cfg.sigma2_values)
     cell = 0
     for d in cfg.d_values:
-        nit = _roc_iter_count(cfg, cfg.n_effect, sigma_true=cfg.sigma1)
+        nit = _roc_iter_count(cfg, cfg.n_effect, sigma_true=cfg.sigma1, d=d)
         for sigma2 in cfg.sigma2_values:
             cell += 1
             cell_path = _roc_cell_pvalues_path(
@@ -1134,6 +1209,7 @@ def run_roc_sweeps(
                     "exp_jobs": exp_jobs,
                     "rep_jobs": inner_rep,
                     "rep_use_threads": rep_use_threads,
+                    "subsample_pairs": cfg.subsample_pairs,
                     **_roc_adaptive_kwargs(cfg, cfg.n_effect, d),
                 })
 
@@ -1262,11 +1338,13 @@ def plot_roc_sample_size(
     from matplotlib.lines import Line2D
 
     palette = {
-        10: ("#888888", "--"),
-        100: ("#0072B2", "-"),
-        500: ("#E69F00", "-."),
-        1000: ("#009E73", ":"),
-        2000: ("#CC79A7", (0, (4, 2, 1, 2))),
+        10:   ("#999999", (0, (5, 3))),         # grey,        dashed
+        50:   ("#56B4E9", (0, (3, 1, 1, 1))),   # sky blue,    dash-dot
+        100:  ("#0072B2", "-"),                 # dark blue,   solid
+        200:  ("#D55E00", (0, (5, 1, 1, 1, 1, 1))),  # vermillion, dash-dot-dot
+        500:  ("#E69F00", "-."),                # orange,      dash-dot
+        1000: ("#009E73", ":"),                 # green,       dotted
+        2000: ("#CC79A7", (0, (4, 2, 1, 2))),   # pink,        long-dash-dot
     }
     sub = df[df.sweep == "sample"]
     if sub.empty:

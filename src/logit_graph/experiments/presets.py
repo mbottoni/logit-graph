@@ -59,6 +59,15 @@ class ROCSweepConfig:
     adaptive_patience: int = 3
     adaptive_cv_tol: float = 0.02
     adaptive_min_iter: int = 20_000
+    # Per-d iter_cap override; int (flat) or {n: int} (per-(d, n)).
+    # Used to bound d=2 BFS² cost at large n.
+    iter_cap_by_d: Optional[dict] = None
+    # When set, σ̂ is recomputed from a random subset of (i, j) pairs instead
+    # of the full graph. Adds principled noise: SE(σ̂) ~ 1/√(m·p·(1-p)).
+    # Accepts either int (fixed m) or float in (0, 1) (fraction of upper-
+    # triangle pairs — m scales with n²). The fractional form is required
+    # for the sample-size ROC (Fig 4) to be monotone in n.
+    subsample_pairs: Optional[float] = None
 
 
 @dataclass
@@ -340,6 +349,61 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             # the d=3 LL gap (typically 5-9 vs d=0) couldn't beat 2+2.5×3=9.5
             # → 60% accuracy. At 1.5 the gap is 2+1.5×3=6.5 → d=3 stays ~85-95%.
             aic_penalty_per_d=1.5,
+        ),
+    },
+    # PAPER_ROC_SMOKE: fast probe (~30s) for iterating on curve shape.
+    # Same sigma/d grid as PAPER_ROC but with tiny n_effect and n_values
+    # so we can quickly see whether the ROC curves match the paper's
+    # gradient (range from near-diagonal to high power) vs being saturated.
+    "PAPER_ROC_SMOKE": {
+        "roc": ROCSweepConfig(
+            sigma1=-1.0,
+            d_values=[0, 1, 2],
+            sigma2_values=[-1.0, -1.5, -2.0, -2.5],
+            n_effect=200,
+            sigma2_fixed=-1.5,
+            n_values=[10, 50, 100, 200],
+            n_reps=3,
+            n_experiments=100,
+            iter_cap=3_000,
+            iter_cap_by_d=None,
+            adaptive_stopping=True,
+            adaptive_check_interval=500,
+            adaptive_patience=2,
+            adaptive_cv_tol=0.05,
+            adaptive_min_iter=500,
+            # Fraction of upper-triangle pairs: gives m ∝ n² so SE(σ̂) ∝ 1/n
+            # and power scales monotonically with n. At n=200 σ=-1: m≈100
+            # → SE≈0.22; at n=10 → m=1 (clipped) → near-zero power.
+            subsample_pairs=0.005,
+        ),
+    },
+    # PAPER_ROC: reproduce paper Fig 3 (effect size at n=500) + Fig 4 (sample
+    # size at σ₂=-1.5). Tuned for ~3 min on 4 cores.
+    # - n_reps=3: low ANOVA power so curves aren't step-functions
+    # - subsample_pairs=0.005: σ̂ from a random 0.5% of pair-indices → SE ∝ 1/n
+    #   so the test is not saturated at small |Δ| and power increases with n
+    #   (matches paper Fig 3 gradient + Fig 4 monotonicity)
+    # - adaptive stopping cuts at ~1k iter once edge count stabilizes
+    # - Bottleneck: d=2 n=2000 ≈ 100s/cell (cell-parallel can't split a cell)
+    "PAPER_ROC": {
+        "roc": ROCSweepConfig(
+            sigma1=-1.0,
+            d_values=[0, 1, 2],
+            sigma2_values=[-1.0, -1.5, -2.0, -2.5],
+            n_effect=500,
+            sigma2_fixed=-1.5,
+            n_values=[10, 100, 500, 1000, 2000],
+            n_reps=3,
+            n_experiments=50,
+            iter_cap=5_000,
+            iter_cap_by_d=None,
+            adaptive_stopping=True,
+            adaptive_check_interval=500,
+            adaptive_patience=2,
+            adaptive_cv_tol=0.05,
+            adaptive_min_iter=500,
+            subsample_pairs=0.005,
         ),
     },
     # PAPER_SIGMA_CONVERGENCE: σ̂ convergence to true σ for all (d, σ, n).

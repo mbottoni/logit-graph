@@ -115,6 +115,18 @@ convergence-diagnostics-quick:  ## Quick smoke (n=200, 50k iter, ~1 min)
 	LG_CONV_QUICK=1 \
 		$(UV) run python notebooks/refactors/run_convergence_diagnostics.py
 
+roc-paper-smoke:  ## Fast probe of ROC curve shape (~30s, n_eff=200, exps=20)
+	LG_EXPERIMENT_MODE=PAPER_ROC_SMOKE \
+	LG_ROC_USE_CACHE=0 \
+	LG_ROC_JOBS=$(JOBS) \
+		$(UV) run python notebooks/refactors/run_roc_experiments.py
+
+roc-paper:  ## Reproduce paper Fig 3 + Fig 4: ANOVA ROC curves (~5 min)
+	LG_EXPERIMENT_MODE=PAPER_ROC \
+	LG_ROC_USE_CACHE=1 \
+	LG_ROC_JOBS=$(JOBS) \
+		$(UV) run python notebooks/refactors/run_roc_experiments.py
+
 sigma-convergence:  ## Reproduce paper Fig 2: σ̂ → σ as n grows (~10-15 min)
 	LG_SIGMA_USE_CACHE=1 \
 	LG_SIGMA_JOBS=$(JOBS) \
