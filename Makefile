@@ -115,6 +115,17 @@ convergence-diagnostics-quick:  ## Quick smoke (n=200, 50k iter, ~1 min)
 	LG_CONV_QUICK=1 \
 		$(UV) run python notebooks/refactors/run_convergence_diagnostics.py
 
+sigma-convergence:  ## Reproduce paper Fig 2: σ̂ → σ as n grows (~10-15 min)
+	LG_SIGMA_USE_CACHE=1 \
+	LG_SIGMA_JOBS=$(JOBS) \
+		$(UV) run python notebooks/refactors/run_sigma_convergence.py
+
+sigma-convergence-quick:  ## Smoke (n∈{20,50,100}, n_reps=2, ~30 sec)
+	LG_SIGMA_QUICK=1 \
+	LG_SIGMA_USE_CACHE=0 \
+	LG_SIGMA_JOBS=$(JOBS) \
+		$(UV) run python notebooks/refactors/run_sigma_convergence.py
+
 # ─────────────────────────────────────────────────────────────
 #  Cleanup
 # ─────────────────────────────────────────────────────────────
