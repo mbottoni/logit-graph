@@ -115,6 +115,15 @@ convergence-diagnostics-quick:  ## Quick smoke (n=200, 50k iter, ~1 min)
 	LG_CONV_QUICK=1 \
 		$(UV) run python notebooks/refactors/run_convergence_diagnostics.py
 
+gic-human-connectomes:  ## Rank LG vs ER/WS/BA by GIC on OASIS-3 human brain nets (~3-5 min)
+	LG_HCONN_USE_CACHE=1 \
+		$(UV) run python notebooks/refactors/run_human_connectomes_gic.py
+
+gic-human-connectomes-quick:  ## Smoke run on coarse parcellation (~30s)
+	LG_HCONN_QUICK=1 \
+	LG_HCONN_USE_CACHE=0 \
+		$(UV) run python notebooks/refactors/run_human_connectomes_gic.py
+
 gic-connectomes:  ## Rank LG vs ER/WS/BA by GIC on animal connectomes (~3-5 min)
 	LG_CONN_USE_CACHE=1 \
 		$(UV) run python notebooks/refactors/run_connectomes_gic.py
