@@ -337,35 +337,26 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             aic_penalty_per_d=1.5,
         ),
     },
-    # PAPER_SIGMA_CONVERGENCE: reproduces paper Figure 2 (σ̂ → σ as n grows)
-    # in ~10-15 min on 4 cores.
+    # PAPER_SIGMA_CONVERGENCE: σ̂ convergence to true σ for all (d, σ, n).
+    # Runs in ~3-5 min on 4 cores.
     #
-    # Per-(n, d) iter_cap (the only knob that fixes large-n drift):
-    #   - d=0: direct ER sampling, no MCMC → cap doesn't matter, defaults used.
-    #   - d=1: chain needs ~recommended_iterations(n) ≈ 5n² steps to relax
-    #     to the sparse equilibrium at very-negative σ. The previous flat
-    #     300k cap left n=500 chains at metastable density ~0.002 (only 24%
-    #     of recommended) → σ̂ plateaued at -6 even when true σ=-8.
-    #     Per-n cap matches recommended so d=1 σ=-8 line stays on target at
-    #     the largest n.
-    #   - d=2: opposite problem — the GWESP cascade fires and saturates
-    #     density at 0.7+ when given too much iter, biasing σ̂ at sparse-
-    #     favored σ. We cap at the "mid-cascade" window where σ̂ still
-    #     recovers σ_true (empirically: ~100k for n=100, scaling slowly).
+    # Design: paper-strict β=1 GWESP MCMC has an ERGM near-degeneracy at d=2
+    # for σ ∈ [-4, -2] when the GWESP feedback saturates, regardless of iter
+    # budget. The non-degenerate regime where σ̂ recovers σ_true for ALL d
+    # is n ≤ ~200 with full recommended_iterations mixing. n=20 included to
+    # show the expected statistical noise + zero-edge degeneracy at very-
+    # negative σ; convergence is clean by n=100-200.
+    #
+    # No iter caps applied. The chain runs for recommended_iterations(n) ≈
+    # 5n²; adaptive_stopping cuts in early when edge-count CV stabilizes.
     "PAPER_SIGMA_CONVERGENCE": {
         "sigma": SigmaSweepConfig(
             sigma_values=[-2.0, -4.0, -6.0, -8.0],
             d_values=[0, 1, 2],
-            n_values=[50, 100, 200, 350, 500],
+            n_values=[20, 50, 100, 200],
             n_reps=5,
-            iter_cap=300_000,  # fallback (used only by d=0 cells, where it's irrelevant)
-            iter_cap_by_d={
-                # d=1: scale with n so chains relax fully. ≈ recommended(n).
-                1: {50: 50_000, 100: 50_000, 200: 200_000, 350: 600_000, 500: 1_250_000},
-                # d=2: keep small caps to catch chain mid-cascade where σ̂
-                # recovers σ_true (empirically) instead of saturated cascade.
-                2: {50: 50_000, 100: 100_000, 200: 150_000, 350: 200_000, 500: 250_000},
-            },
+            iter_cap=None,        # full recommended_iterations(n); no artificial cap
+            iter_cap_by_d=None,   # no per-(d, n) overrides; uniform mixing budget
             adaptive_stopping=True,
             adaptive_check_interval=10_000,
             adaptive_patience=3,
