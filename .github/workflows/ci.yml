@@ -1,5 +1,13 @@
 name: CI
 
+# Supply-chain hygiene:
+#   - All actions are pinned to a full 40-char commit SHA (mutable tags
+#     can be rewritten upstream). Update SHAs by running
+#     `gh api repos/<org>/<repo>/git/refs/tags/<tag> --jq .object.sha`.
+#   - Dependencies are installed from uv.lock with --frozen, which
+#     verifies every package against the sha256 hashes stored in the
+#     lockfile and refuses to update the lock at install time.
+
 on:
   push:
     branches: [ main ]
@@ -16,20 +24,23 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # actions/checkout v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        # actions/setup-python v5.6.0
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install package and test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .
+      - name: Install uv (pinned)
+        # astral-sh/setup-uv v8.1.0
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+
+      - name: Install dependencies from frozen lockfile
+        # --frozen: refuse to update uv.lock; install must match exactly.
+        # Hashes from the lockfile are enforced automatically.
+        run: uv sync --frozen --all-extras
 
       - name: Run tests
-        run: |
-          pytest -q
-
-
+        run: uv run pytest -q
