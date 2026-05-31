@@ -22,6 +22,13 @@ class SigmaSweepConfig:
     adaptive_patience: int = 3
     adaptive_cv_tol: float = 0.02
     adaptive_min_iter: int = 20_000
+    # Per-d iter_cap override. Each value is either an int (flat cap for all
+    # n at that d) or a dict {n: cap} for per-(n, d) caps. Used when one d
+    # needs a different mixing budget than another at the same n — e.g.,
+    # d=1 needs more iter at large n to relax sparse chains to equilibrium,
+    # while d=2 needs a smaller cap to avoid the GWESP cascade saturating
+    # at large n. Polymorphic shape mirrors AICSweepConfig.iter_cap_by_d.
+    iter_cap_by_d: Optional[dict] = None
 
 
 @dataclass
@@ -331,23 +338,34 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
         ),
     },
     # PAPER_SIGMA_CONVERGENCE: reproduces paper Figure 2 (σ̂ → σ as n grows)
-    # in ~5-10 min on 4 cores.
+    # in ~10-15 min on 4 cores.
     #
-    # Design rationale:
-    #   n_values: log-spaced, capped at 500. n=1000 is excluded because the
-    #     300k iter_cap (needed to prevent the d=2 cascade) is much smaller
-    #     than recommended_iterations(1000)=5M, leaving d=1 chains unmixed
-    #     at sparse σ and yielding biased σ̂ that plateaus at ~logit(0.02).
-    #   Lower bound n=50: avoids degenerate zero-edge graphs at small n +
-    #     very-negative σ (logit(0) → -∞ → σ̂ ≈ -34, stretches the y-axis).
-    #   iter_cap=300k: hard cap; same trick as PAPER_FAST AIC for d=2.
+    # Per-(n, d) iter_cap (the only knob that fixes large-n drift):
+    #   - d=0: direct ER sampling, no MCMC → cap doesn't matter, defaults used.
+    #   - d=1: chain needs ~recommended_iterations(n) ≈ 5n² steps to relax
+    #     to the sparse equilibrium at very-negative σ. The previous flat
+    #     300k cap left n=500 chains at metastable density ~0.002 (only 24%
+    #     of recommended) → σ̂ plateaued at -6 even when true σ=-8.
+    #     Per-n cap matches recommended so d=1 σ=-8 line stays on target at
+    #     the largest n.
+    #   - d=2: opposite problem — the GWESP cascade fires and saturates
+    #     density at 0.7+ when given too much iter, biasing σ̂ at sparse-
+    #     favored σ. We cap at the "mid-cascade" window where σ̂ still
+    #     recovers σ_true (empirically: ~100k for n=100, scaling slowly).
     "PAPER_SIGMA_CONVERGENCE": {
         "sigma": SigmaSweepConfig(
             sigma_values=[-2.0, -4.0, -6.0, -8.0],
             d_values=[0, 1, 2],
             n_values=[50, 100, 200, 350, 500],
             n_reps=5,
-            iter_cap=300_000,
+            iter_cap=300_000,  # fallback (used only by d=0 cells, where it's irrelevant)
+            iter_cap_by_d={
+                # d=1: scale with n so chains relax fully. ≈ recommended(n).
+                1: {50: 50_000, 100: 50_000, 200: 200_000, 350: 600_000, 500: 1_250_000},
+                # d=2: keep small caps to catch chain mid-cascade where σ̂
+                # recovers σ_true (empirically) instead of saturated cascade.
+                2: {50: 50_000, 100: 100_000, 200: 150_000, 350: 200_000, 500: 250_000},
+            },
             adaptive_stopping=True,
             adaptive_check_interval=10_000,
             adaptive_patience=3,
