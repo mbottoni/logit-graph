@@ -282,8 +282,22 @@ def _sigma_iter_count(
     cfg: SigmaSweepConfig,
     n: int,
     sigma_true: Optional[float] = None,
+    d: Optional[int] = None,
 ) -> int:
-    return _iter_count(n, cfg.iter_cap, sigma_true=sigma_true)
+    """Resolve the iter cap for a single (n, d) cell.
+
+    Precedence: ``cfg.iter_cap_by_d[d]`` (int or {n: int}) overrides the
+    global ``cfg.iter_cap`` when ``d`` is supplied and present in the dict.
+    """
+    cap = cfg.iter_cap
+    if d is not None and cfg.iter_cap_by_d and d in cfg.iter_cap_by_d:
+        spec = cfg.iter_cap_by_d[d]
+        if isinstance(spec, dict):
+            if n in spec:
+                cap = spec[n]
+        else:
+            cap = spec
+    return _iter_count(n, cap, sigma_true=sigma_true)
 
 
 def _graph_density(adj: np.ndarray) -> float:
@@ -1363,7 +1377,7 @@ def run_sigma_sweep(
         for sigma_true in cfg.sigma_values:
             for n in cfg.n_values:
                 cell_idx += 1
-                nit = _sigma_iter_count(cfg, n, sigma_true=sigma_true)
+                nit = _sigma_iter_count(cfg, n, sigma_true=sigma_true, d=d)
                 cell_path = _sigma_cell_cache_path(out_dir, cfg_hash, d, sigma_true, n)
 
                 if use_cache and cell_path.is_file():
@@ -1584,7 +1598,7 @@ def load_sigma_sweep_df(
                 cell_path = _sigma_cell_cache_path(out_dir, cfg_hash, d, sigma_true, n)
                 if not cell_path.is_file():
                     continue
-                nit = _sigma_iter_count(cfg, n, sigma_true=sigma_true)
+                nit = _sigma_iter_count(cfg, n, sigma_true=sigma_true, d=d)
                 data = np.load(cell_path)
                 records.append(_aggregate_sigma_cell(
                     data["hats"].tolist(),
