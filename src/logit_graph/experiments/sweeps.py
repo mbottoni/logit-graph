@@ -1752,22 +1752,75 @@ def run_aic_d_sweep(
                 f"({trials_path.name})",
                 flush=True,
             )
+            # Per-cell accuracy summary of cached trials.
+            resume_tally: dict[tuple[int, int], list[int]] = defaultdict(lambda: [0, 0])
+            for row in rows_by_key.values():
+                n_val = int(row["n"]); dt_val = int(row["d_true"])
+                hd_val = int(row.get("hat_d", -1))
+                resume_tally[(n_val, dt_val)][0] += int(hd_val == dt_val)
+                resume_tally[(n_val, dt_val)][1] += 1
+            cur_n = None
+            for (n_val, dt_val), (c, t) in sorted(resume_tally.items()):
+                if cur_n != n_val:
+                    if cur_n is not None:
+                        print()
+                    print(f"    cached n={n_val}:", end="")
+                    cur_n = n_val
+                acc = 100 * c / t if t else 0
+                print(f"  d={dt_val}:{c}/{t}({acc:.0f}%)", end="")
+            print(flush=True)
 
     jobs: list[dict[str, Any]] = []
     for n in cfg.n_sizes:
-        nit = _aic_iter_count(cfg, n)
+        nit_default = _aic_iter_count(cfg, n)
+        # Per-n sigma: scale sigma with n so d=3 3-hop balls stay ~10-30% of n.
+        sigma_for_n = (
+            cfg.sigma_gen_per_n[n]
+            if (cfg.sigma_gen_per_n and n in cfg.sigma_gen_per_n)
+            else cfg.sigma_gen
+        )
         for d_true in cfg.d_true_values:
+            # Per-d iter cap: allows d=2/d=3 to use smaller absolute caps for
+            # speed or to avoid metastable phase transitions. Each value is
+            # either an int (flat cap for all n) or a dict {n: cap} for per-n
+            # caps — useful when one d needs more sweeps at larger n.
+            if cfg.iter_cap_by_d and d_true in cfg.iter_cap_by_d:
+                cap_val = cfg.iter_cap_by_d[d_true]
+                if isinstance(cap_val, dict):
+                    cap = cap_val.get(n)
+                    nit = _iter_count(n, cap) if cap is not None else nit_default
+                else:
+                    nit = _iter_count(n, cap_val)
+            else:
+                nit = nit_default
+            # Per-(n, d_true) sigma cell override: takes precedence over the
+            # per-n sigma. Used when one cell needs a different sigma to stay
+            # identifiable (e.g., n=500 d=3 needs sigma=-4.8 instead of -4.3
+            # to avoid 3-hop ball saturation).
+            sigma_for_cell = sigma_for_n
+            if cfg.sigma_gen_per_n_d and d_true in cfg.sigma_gen_per_n_d:
+                cell_sigmas = cfg.sigma_gen_per_n_d[d_true]
+                if isinstance(cell_sigmas, dict) and n in cell_sigmas:
+                    sigma_for_cell = float(cell_sigmas[n])
             for run in range(cfg.n_runs):
                 key = (n, d_true, run)
                 if key in completed_keys:
                     continue
+                # Per-(n, d_true) m_ensemble override for speed at expensive cells.
+                m_for_cell = cfg.m_ensemble
+                if cfg.m_ensemble_by_d and d_true in cfg.m_ensemble_by_d:
+                    spec = cfg.m_ensemble_by_d[d_true]
+                    if isinstance(spec, dict):
+                        m_for_cell = int(spec.get(n, cfg.m_ensemble))
+                    else:
+                        m_for_cell = int(spec)
                 job = {
                     "n": n,
                     "d_true": d_true,
                     "run": run,
                     "n_iter": nit,
-                    "m_ensemble": cfg.m_ensemble,
-                    "sigma_gen": cfg.sigma_gen,
+                    "m_ensemble": m_for_cell,
+                    "sigma_gen": sigma_for_cell,
                     "feature_mode_gen": cfg.feature_mode_gen,
                     "feature_mode_est": cfg.feature_mode_est,
                     "target_density": cfg.target_density,
@@ -1797,6 +1850,68 @@ def run_aic_d_sweep(
         conf = _confusion_from_df(df, cfg)
         return df, conf
 
+    # Track per-(n,d_true) accuracy and timing for rich progress output and ETA.
+    import time as _time
+    cell_tally: dict[tuple[int, int], list[int]] = defaultdict(lambda: [0, 0])
+    cell_times: dict[tuple[int, int], list[float]] = defaultdict(list)
+    for row in rows_by_key.values():
+        n_val = int(row["n"]); dt_val = int(row["d_true"])
+        cell_tally[(n_val, dt_val)][0] += int(int(row.get("hat_d", -1)) == dt_val)
+        cell_tally[(n_val, dt_val)][1] += 1
+
+    def _eta_seconds(remaining_jobs: list[dict]) -> float:
+        """Estimate remaining wall time using observed time per (n, d_true) cell."""
+        if not cell_times:
+            return float("nan")
+        per_n_avg: dict[int, float] = {}
+        for (nn, dd), ts in cell_times.items():
+            per_n_avg.setdefault(nn, 0.0)
+        # Compute per-cell average; fallback to per-n average if cell unseen.
+        per_n_means: dict[int, list[float]] = defaultdict(list)
+        for (nn, dd), ts in cell_times.items():
+            if ts:
+                per_n_means[nn].extend(ts)
+        total = 0.0
+        for j in remaining_jobs:
+            key = (int(j["n"]), int(j["d_true"]))
+            if key in cell_times and cell_times[key]:
+                total += float(np.mean(cell_times[key]))
+            elif int(j["n"]) in per_n_means and per_n_means[int(j["n"])]:
+                total += float(np.mean(per_n_means[int(j["n"])]))
+            else:
+                # Last resort: use overall mean
+                all_ts = [t for ts in cell_times.values() for t in ts]
+                total += float(np.mean(all_ts)) if all_ts else 0.0
+        return total / max(n_jobs, 1)
+
+    def _log_row(row: dict, done: int) -> None:
+        n_val = int(row["n"]); dt_val = int(row["d_true"])
+        run_val = int(row["run"]); hd_val = int(row["hat_d"])
+        ok = hd_val == dt_val
+        cell_tally[(n_val, dt_val)][0] += int(ok)
+        cell_tally[(n_val, dt_val)][1] += 1
+        elapsed = float(row.get("elapsed_s", float("nan")))
+        density = float(row.get("density", float("nan")))
+        if not (elapsed != elapsed):  # not NaN
+            cell_times[(n_val, dt_val)].append(elapsed)
+        c, t = cell_tally[(n_val, dt_val)]
+        cell_str = f"{c}/{t} ({100 * c / t:.0f}%)"
+        remaining = [
+            jj for jj in jobs
+            if (int(jj["n"]), int(jj["d_true"]), int(jj["run"])) not in rows_by_key
+        ]
+        eta_s = _eta_seconds(remaining)
+        eta_str = f"{eta_s / 60:.1f}min" if eta_s == eta_s else "?"
+        icon = "✓" if ok else "✗"
+        rho_str = f"{density:.3f}" if density == density else "?"
+        elapsed_str = f"{elapsed:5.1f}s" if elapsed == elapsed else "    ?"
+        print(
+            f"  [{done:3d}/{n_expected}] n={n_val:>4d} d={dt_val} r={run_val:<2d}"
+            f" -> d_hat={hd_val} {icon}  rho={rho_str}  t={elapsed_str}"
+            f"  cell[n={n_val},d={dt_val}]={cell_str}  ETA~{eta_str}",
+            flush=True,
+        )
+
     done = len(completed_keys)
     if n_jobs <= 1:
         for idx, payload in enumerate(jobs):
@@ -1804,7 +1919,7 @@ def run_aic_d_sweep(
             rows_by_key[_aic_trial_key(row)] = row
             done += 1
             _persist()
-            print(f"  aic run {done}/{n_expected}", flush=True)
+            _log_row(row, done)
     else:
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -1818,7 +1933,7 @@ def run_aic_d_sweep(
                 rows_by_key[_aic_trial_key(row)] = row
                 done += 1
                 _persist()
-                print(f"  aic run {done}/{n_expected}", flush=True)
+                _log_row(row, done)
 
     df = pd.DataFrame(sorted(
         rows_by_key.values(),
@@ -1888,31 +2003,67 @@ def plot_aic_confusion(
     import numpy as np
 
     n_sizes = sorted(conf.keys())
-    fig, axes = plt.subplots(1, len(n_sizes), figsize=(5 * len(n_sizes), 5))
-    if len(n_sizes) == 1:
+    nd = len(d_values)
+    ncols = len(n_sizes)
+    # constrained_layout coordinates colorbar placement; +0.8" leaves room
+    # so the colorbar sits to the right of the last panel rather than over it.
+    fig, axes = plt.subplots(
+        1, ncols, figsize=(5.5 * ncols + 0.8, 5.2), constrained_layout=True,
+    )
+    if ncols == 1:
         axes = [axes]
-    for ax, n in zip(axes, n_sizes):
-        mat = np.zeros((len(d_values), len(d_values)))
+
+    im_ref = None
+    for col, (ax, n) in enumerate(zip(axes, n_sizes)):
+        mat = np.zeros((nd, nd))
         for i, dt in enumerate(d_values):
             total = sum(conf[n][dt].values())
             for j, de in enumerate(d_values):
                 mat[i, j] = conf[n][dt][de] / max(1, total)
-        im = ax.imshow(mat, cmap="Blues", vmin=0, vmax=1)
-        for i in range(len(d_values)):
-            for j in range(len(d_values)):
+
+        im = ax.imshow(mat, cmap="Blues", vmin=0, vmax=1, aspect="equal")
+        im_ref = im
+
+        for i in range(nd):
+            for j in range(nd):
                 v = mat[i, j]
-                ax.text(j, i, f"{v*100:.0f}%", ha="center", va="center",
-                        color="white" if v > 0.55 else "black",
-                        fontweight="bold" if i == j else "normal")
-        ax.set_xticks(range(len(d_values)))
-        ax.set_yticks(range(len(d_values)))
-        ax.set_xticklabels([str(d) for d in d_values])
-        ax.set_yticklabels([str(d) for d in d_values])
-        acc = np.trace(mat) / len(d_values)
-        ax.set_title(f"$n={n}$, acc={acc*100:.0f}%")
-        ax.set_xlabel(r"$\hat d$")
-        ax.set_ylabel(r"$d_{\mathrm{true}}$")
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+                ax.text(
+                    j, i, f"{v*100:.0f}%",
+                    ha="center", va="center", fontsize=13,
+                    color="white" if v > 0.55 else "black",
+                    fontweight="bold" if i == j else "normal",
+                )
+
+        ax.set_xticks(range(nd))
+        ax.set_yticks(range(nd))
+        ax.set_xticklabels([str(d) for d in d_values], fontsize=12)
+        ax.set_yticklabels([str(d) for d in d_values], fontsize=12)
+        ax.set_xlabel(r"Selected $\hat{d} = \mathrm{arg\,min}\,\mathrm{AIC}(d_{\mathrm{est}})$",
+                      fontsize=11)
+        if col == 0:
+            ax.set_ylabel(r"True $d_{\mathrm{true}}$", fontsize=12)
+
+        overall = 100.0 * sum(
+            conf[n][dt].get(dt, 0)
+            for dt in d_values
+        ) / max(1, sum(
+            sum(conf[n][dt].values()) for dt in d_values
+        ))
+        ax.set_title(
+            rf"$n = {n}$  (overall accuracy $= {overall:.0f}\%$)",
+            fontsize=13, pad=8,
+        )
+
+    # Single colorbar on the far right; constrained_layout reserves the slot.
+    if im_ref is not None:
+        cbar = fig.colorbar(im_ref, ax=axes, shrink=0.85, pad=0.02)
+        cbar.ax.tick_params(labelsize=10)
+        cbar.set_label(r"$\Pr(\hat{d} = d_{\mathrm{est}} \mid d_{\mathrm{true}})$",
+                       fontsize=10, rotation=270, labelpad=16)
+
+    fig.suptitle(
+        "AIC-based selection of $d$: accuracy improves with graph size $n$",
+        fontsize=14,
+    )
+    fig.savefig(out_path, dpi=200)
     plt.close(fig)
