@@ -83,12 +83,27 @@ def sigma_rep_job(payload: dict[str, Any]) -> dict[str, Any]:
         adaptive_min_iter=payload.get("adaptive_min_iter", 20_000),
     )
     csr_rows = meta.get("csr_rows")
-    sh = estimate_sigma_from_graph(
-        adj,
-        d,
-        feature_mode=mode_est,
-        csr_rows=csr_rows,
-    )
+    subsample_pairs = payload.get("subsample_pairs")
+    if subsample_pairs:
+        from .sweeps import estimate_sigma_from_graph_subsample
+
+        rng = np.random.default_rng(payload["seed"] + 91_357)
+        sh = estimate_sigma_from_graph_subsample(
+            adj,
+            csr_rows,
+            d,
+            payload["n"],
+            subsample_pairs,
+            rng,
+            feature_mode=mode_est,
+        )
+    else:
+        sh = estimate_sigma_from_graph(
+            adj,
+            d,
+            feature_mode=mode_est,
+            csr_rows=csr_rows,
+        )
     return {
         "rep": payload["rep"],
         "sigma_hat": float(sh),
@@ -231,6 +246,7 @@ def anova_experiment_job(payload: dict[str, Any]) -> float:
         adaptive_patience=payload.get("adaptive_patience", 3),
         adaptive_cv_tol=payload.get("adaptive_cv_tol", 0.02),
         adaptive_min_iter=payload.get("adaptive_min_iter", 20_000),
+        subsample_pairs=payload.get("subsample_pairs"),
     )
 
 
@@ -273,6 +289,7 @@ def roc_cell_job(payload: dict[str, Any]) -> dict[str, Any]:
         adaptive_patience=payload.get("adaptive_patience", 3),
         adaptive_cv_tol=payload.get("adaptive_cv_tol", 0.02),
         adaptive_min_iter=payload.get("adaptive_min_iter", 20_000),
+        subsample_pairs=payload.get("subsample_pairs"),
         checkpoint_path=ckpt_path,
         checkpoint_every=1,
     )
