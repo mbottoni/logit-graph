@@ -1973,10 +1973,26 @@ def _confusion_from_df(
     return conf
 
 
-def plot_convergence_sigma(df: pd.DataFrame, out_path: Path) -> None:
+def plot_convergence_sigma(
+    df: pd.DataFrame,
+    out_path: Path,
+    *,
+    min_density: float = 1e-4,
+    y_pad: float = 1.5,
+) -> None:
+    """Paper-quality σ̂ convergence figure.
+
+    Filters cells with mean density below ``min_density`` (zero-edge
+    graphs at very-negative σ + small n where σ̂ hits the logit clamp ≈
+    -34). The remaining cells still show finite-sample bias and wide CIs
+    at small n; the filter only drops degenerate points that would
+    otherwise dominate the y-axis.
+    """
     import matplotlib
     matplotlib.use("Agg")
+    import matplotlib as mpl
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
 
     palette = {
         -2.0: ("#0072B2", "o"),
@@ -1985,35 +2001,72 @@ def plot_convergence_sigma(df: pd.DataFrame, out_path: Path) -> None:
         -8.0: ("#D55E00", "D"),
     }
     d_values = sorted(df["d"].unique())
-    fig, axes = plt.subplots(1, len(d_values), figsize=(5 * len(d_values), 5), sharey=True)
-    if len(d_values) == 1:
-        axes = [axes]
     sigma_values = sorted(df["sigma_true"].unique())
+    n_panels = len(d_values)
+
+    mpl.rcParams.update({
+        "font.family": "serif",
+        "font.size": 12,
+        "axes.labelsize": 13,
+        "axes.titlesize": 14,
+        "legend.fontsize": 11,
+        "xtick.labelsize": 11,
+        "ytick.labelsize": 11,
+        "axes.linewidth": 0.8,
+        "lines.linewidth": 1.8,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    })
+
+    fig, axes = plt.subplots(
+        1, n_panels, figsize=(5.5 * n_panels, 4.5),
+        sharey=True, constrained_layout=True,
+    )
+    if n_panels == 1:
+        axes = [axes]
+
+    valid = df[df["density_mean"] >= min_density]
+    handles_seen: dict[float, object] = {}
     for ax, d in zip(axes, d_values):
         for sigma in sigma_values:
-            sub = df[(df.d == d) & (df.sigma_true == sigma)].sort_values("n")
+            sub = valid[(valid.d == d) & (valid.sigma_true == sigma)].sort_values("n")
+            if sub.empty:
+                continue
             color, marker = palette.get(float(sigma), ("#333", "o"))
-            ax.plot(sub.n, sub.sigma_hat_mean, marker=marker, color=color, label=f"$\\sigma={int(sigma)}$")
-            ax.fill_between(sub.n, sub.ci_lo, sub.ci_hi, color=color, alpha=0.15)
-            ax.axhline(sigma, color=color, ls=":", lw=1)
+            (line,) = ax.plot(
+                sub.n, sub.sigma_hat_mean,
+                marker=marker, color=color, ms=6, mew=0,
+            )
+            ax.fill_between(sub.n, sub.ci_lo, sub.ci_hi, color=color, alpha=0.2, lw=0)
+            ax.axhline(sigma, color=color, ls=":", lw=0.9, alpha=0.7)
+            handles_seen[float(sigma)] = line
         ax.set_xscale("log")
-        ax.set_xlabel("$n$")
-        ax.set_title(f"$d={int(d)}$")
-        ax.grid(alpha=0.3)
-        # Clip y-axis to a paper-style range. Degenerate small-n + very-negative-σ
-        # cells produce σ̂ ≈ -30 (zero-edge graphs → logit clamp). Those values
-        # would stretch the axis and squash the convergence story. We keep the
-        # data; we just don't render those outliers.
-        y_min = min(sigma_values) - 2.0  # leave room below the most-negative σ
-        ax.set_ylim(y_min, 2.0)
-    axes[0].set_ylabel(r"$\hat{\sigma}$")
-    axes[0].legend(fontsize=8, loc="lower right")
+        ax.set_xlabel("$n$ (number of nodes)")
+        ax.set_title(f"$d = {int(d)}$")
+        ax.grid(alpha=0.25, which="both", lw=0.5)
+        ax.set_ylim(min(sigma_values) - y_pad, max(sigma_values) + y_pad)
+
+    axes[0].set_ylabel(r"Estimated $\hat{\sigma}$")
+
+    # Single horizontal legend below all panels (paper style)
+    ordered_handles = [handles_seen[s] for s in sigma_values if s in handles_seen]
+    ordered_labels = [f"$\\sigma = {int(s)}$" for s in sigma_values if s in handles_seen]
+    true_sigma_proxy = Line2D(
+        [0], [0], color="gray", ls=":", lw=0.9, label=r"True $\sigma$",
+    )
+    ordered_handles.append(true_sigma_proxy)
+    ordered_labels.append(r"True $\sigma$")
+    fig.legend(
+        ordered_handles, ordered_labels,
+        loc="lower center", bbox_to_anchor=(0.5, -0.05),
+        ncol=len(ordered_labels), frameon=False,
+    )
+
     fig.suptitle(
         r"Convergence of $\hat{\sigma}$ to the true parameter as $n$ increases",
-        fontsize=14, y=1.02,
+        fontsize=14,
     )
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 

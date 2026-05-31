@@ -353,8 +353,8 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
         "sigma": SigmaSweepConfig(
             sigma_values=[-2.0, -4.0, -6.0, -8.0],
             d_values=[0, 1, 2],
-            n_values=[20, 50, 100, 200],
-            n_reps=5,
+            n_values=[20, 50, 100, 200, 300],
+            n_reps=10,
             iter_cap=None,        # full recommended_iterations(n); no artificial cap
             iter_cap_by_d=None,   # no per-(d, n) overrides; uniform mixing budget
             adaptive_stopping=True,
