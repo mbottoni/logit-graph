@@ -22,6 +22,18 @@ class SigmaSweepConfig:
     adaptive_patience: int = 3
     adaptive_cv_tol: float = 0.02
     adaptive_min_iter: int = 20_000
+    # Per-d iter_cap override. Each value is either an int (flat cap for all
+    # n at that d) or a dict {n: cap} for per-(n, d) caps. Used when one d
+    # needs a different mixing budget than another at the same n — e.g.,
+    # d=1 needs more iter at large n to relax sparse chains to equilibrium,
+    # while d=2 needs a smaller cap to avoid the GWESP cascade saturating
+    # at large n. Polymorphic shape mirrors AICSweepConfig.iter_cap_by_d.
+    iter_cap_by_d: Optional[dict] = None
+    # Per-sigma n grid override: {sigma: [n_values]}. When provided, replaces
+    # the global n_values for that sigma. Used to give very-negative sigma
+    # an n range where the graph has enough edges to be informative (e.g.
+    # sigma=-8 needs n>=200 for ~7 expected edges to pass min_edges=5).
+    n_values_by_sigma: Optional[dict] = None
 
 
 @dataclass
@@ -328,6 +340,26 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             # the d=3 LL gap (typically 5-9 vs d=0) couldn't beat 2+2.5×3=9.5
             # → 60% accuracy. At 1.5 the gap is 2+1.5×3=6.5 → d=3 stays ~85-95%.
             aic_penalty_per_d=1.5,
+        ),
+    },
+    # PAPER_SIGMA_CONVERGENCE: σ̂ convergence to true σ for all (d, σ, n).
+    # Common n grid so every σ has the same x-axis points, including small n
+    # where very-negative σ produces near-empty graphs and σ̂ diverges.
+    # No iter_cap; runtime ~3-4 min on 4 cores.
+    "PAPER_SIGMA_CONVERGENCE": {
+        "sigma": SigmaSweepConfig(
+            sigma_values=[-2.0, -4.0, -6.0, -8.0],
+            d_values=[0, 1, 2],
+            n_values=[50, 100, 200, 300],
+            n_values_by_sigma=None,
+            n_reps=4,
+            iter_cap=None,
+            iter_cap_by_d=None,
+            adaptive_stopping=True,
+            adaptive_check_interval=10_000,
+            adaptive_patience=3,
+            adaptive_cv_tol=0.02,
+            adaptive_min_iter=5_000,
         ),
     },
     "PAPER": {
