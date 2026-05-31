@@ -1974,8 +1974,9 @@ def plot_convergence_sigma(df: pd.DataFrame, out_path: Path) -> None:
     fig, axes = plt.subplots(1, len(d_values), figsize=(5 * len(d_values), 5), sharey=True)
     if len(d_values) == 1:
         axes = [axes]
+    sigma_values = sorted(df["sigma_true"].unique())
     for ax, d in zip(axes, d_values):
-        for sigma in sorted(df["sigma_true"].unique()):
+        for sigma in sigma_values:
             sub = df[(df.d == d) & (df.sigma_true == sigma)].sort_values("n")
             color, marker = palette.get(float(sigma), ("#333", "o"))
             ax.plot(sub.n, sub.sigma_hat_mean, marker=marker, color=color, label=f"$\\sigma={int(sigma)}$")
@@ -1985,8 +1986,18 @@ def plot_convergence_sigma(df: pd.DataFrame, out_path: Path) -> None:
         ax.set_xlabel("$n$")
         ax.set_title(f"$d={int(d)}$")
         ax.grid(alpha=0.3)
+        # Clip y-axis to a paper-style range. Degenerate small-n + very-negative-σ
+        # cells produce σ̂ ≈ -30 (zero-edge graphs → logit clamp). Those values
+        # would stretch the axis and squash the convergence story. We keep the
+        # data; we just don't render those outliers.
+        y_min = min(sigma_values) - 2.0  # leave room below the most-negative σ
+        ax.set_ylim(y_min, 2.0)
     axes[0].set_ylabel(r"$\hat{\sigma}$")
-    axes[0].legend(fontsize=8)
+    axes[0].legend(fontsize=8, loc="lower right")
+    fig.suptitle(
+        r"Convergence of $\hat{\sigma}$ to the true parameter as $n$ increases",
+        fontsize=14, y=1.02,
+    )
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

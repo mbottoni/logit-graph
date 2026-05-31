@@ -330,6 +330,31 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             aic_penalty_per_d=1.5,
         ),
     },
+    # PAPER_SIGMA_CONVERGENCE: reproduces paper Figure 2 (σ̂ → σ as n grows)
+    # in ~5-10 min on 4 cores.
+    #
+    # Design rationale:
+    #   n_values: log-spaced, capped at 500. n=1000 is excluded because the
+    #     300k iter_cap (needed to prevent the d=2 cascade) is much smaller
+    #     than recommended_iterations(1000)=5M, leaving d=1 chains unmixed
+    #     at sparse σ and yielding biased σ̂ that plateaus at ~logit(0.02).
+    #   Lower bound n=50: avoids degenerate zero-edge graphs at small n +
+    #     very-negative σ (logit(0) → -∞ → σ̂ ≈ -34, stretches the y-axis).
+    #   iter_cap=300k: hard cap; same trick as PAPER_FAST AIC for d=2.
+    "PAPER_SIGMA_CONVERGENCE": {
+        "sigma": SigmaSweepConfig(
+            sigma_values=[-2.0, -4.0, -6.0, -8.0],
+            d_values=[0, 1, 2],
+            n_values=[50, 100, 200, 350, 500],
+            n_reps=5,
+            iter_cap=300_000,
+            adaptive_stopping=True,
+            adaptive_check_interval=10_000,
+            adaptive_patience=3,
+            adaptive_cv_tol=0.02,
+            adaptive_min_iter=5_000,
+        ),
+    },
     "PAPER": {
         "roc": ROCSweepConfig(
             n_effect=500,
