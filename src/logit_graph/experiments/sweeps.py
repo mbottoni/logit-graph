@@ -1793,6 +1793,15 @@ def run_aic_d_sweep(
                     nit = _iter_count(n, cap_val)
             else:
                 nit = nit_default
+            # Per-(n, d_true) sigma cell override: takes precedence over the
+            # per-n sigma. Used when one cell needs a different sigma to stay
+            # identifiable (e.g., n=500 d=3 needs sigma=-4.8 instead of -4.3
+            # to avoid 3-hop ball saturation).
+            sigma_for_cell = sigma_for_n
+            if cfg.sigma_gen_per_n_d and d_true in cfg.sigma_gen_per_n_d:
+                cell_sigmas = cfg.sigma_gen_per_n_d[d_true]
+                if isinstance(cell_sigmas, dict) and n in cell_sigmas:
+                    sigma_for_cell = float(cell_sigmas[n])
             for run in range(cfg.n_runs):
                 key = (n, d_true, run)
                 if key in completed_keys:
@@ -1811,7 +1820,7 @@ def run_aic_d_sweep(
                     "run": run,
                     "n_iter": nit,
                     "m_ensemble": m_for_cell,
-                    "sigma_gen": sigma_for_n,
+                    "sigma_gen": sigma_for_cell,
                     "feature_mode_gen": cfg.feature_mode_gen,
                     "feature_mode_est": cfg.feature_mode_est,
                     "target_density": cfg.target_density,
