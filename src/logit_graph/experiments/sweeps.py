@@ -1359,7 +1359,15 @@ def run_sigma_sweep(
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg_hash = _config_hash(cfg)
     cache_path = sigma_sweep_csv_path(out_dir, cfg)
-    expected_cells = len(cfg.d_values) * len(cfg.sigma_values) * len(cfg.n_values)
+
+    def _ns_for(sigma_true: float) -> list[int]:
+        if cfg.n_values_by_sigma and sigma_true in cfg.n_values_by_sigma:
+            return list(cfg.n_values_by_sigma[sigma_true])
+        return list(cfg.n_values)
+
+    expected_cells = sum(
+        len(_ns_for(s)) for s in cfg.sigma_values
+    ) * len(cfg.d_values)
 
     if use_cache and cache_path.is_file():
         cached = pd.read_csv(cache_path)
@@ -1375,7 +1383,7 @@ def run_sigma_sweep(
 
     for d in cfg.d_values:
         for sigma_true in cfg.sigma_values:
-            for n in cfg.n_values:
+            for n in _ns_for(sigma_true):
                 cell_idx += 1
                 nit = _sigma_iter_count(cfg, n, sigma_true=sigma_true, d=d)
                 cell_path = _sigma_cell_cache_path(out_dir, cfg_hash, d, sigma_true, n)
@@ -1977,16 +1985,13 @@ def plot_convergence_sigma(
     df: pd.DataFrame,
     out_path: Path,
     *,
-    min_density: float = 1e-4,
+    min_edges: float = 0.0,
     y_pad: float = 1.5,
 ) -> None:
     """Paper-quality σ̂ convergence figure.
 
-    Filters cells with mean density below ``min_density`` (zero-edge
-    graphs at very-negative σ + small n where σ̂ hits the logit clamp ≈
-    -34). The remaining cells still show finite-sample bias and wide CIs
-    at small n; the filter only drops degenerate points that would
-    otherwise dominate the y-axis.
+    All cells are plotted by default (``min_edges=0``); y-axis auto-fits
+    to the data range so small-n cells where σ̂ diverges are visible.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -2025,7 +2030,14 @@ def plot_convergence_sigma(
     if n_panels == 1:
         axes = [axes]
 
-    valid = df[df["density_mean"] >= min_density]
+    # Filter by expected edge count = density * n*(n-1)/2.
+    # Below ~5 edges, σ̂ from a single graph is dominated by sampling
+    # noise / boundary effects and is not informative about σ.
+    edge_count = df["density_mean"] * df["n"] * (df["n"] - 1) / 2.0
+    valid = df[edge_count >= min_edges]
+    # Y-limits: auto-fit to data so divergent small-n cells stay visible.
+    y_min = float(valid["sigma_hat_mean"].min()) - y_pad
+    y_max = max(max(sigma_values), float(valid["sigma_hat_mean"].max())) + y_pad
     handles_seen: dict[float, object] = {}
     for ax, d in zip(axes, d_values):
         for sigma in sigma_values:
@@ -2044,7 +2056,7 @@ def plot_convergence_sigma(
         ax.set_xlabel("$n$ (number of nodes)")
         ax.set_title(f"$d = {int(d)}$")
         ax.grid(alpha=0.25, which="both", lw=0.5)
-        ax.set_ylim(min(sigma_values) - y_pad, max(sigma_values) + y_pad)
+        ax.set_ylim(y_min, y_max)
 
     axes[0].set_ylabel(r"Estimated $\hat{\sigma}$")
 
