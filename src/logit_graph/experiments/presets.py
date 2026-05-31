@@ -29,6 +29,11 @@ class SigmaSweepConfig:
     # while d=2 needs a smaller cap to avoid the GWESP cascade saturating
     # at large n. Polymorphic shape mirrors AICSweepConfig.iter_cap_by_d.
     iter_cap_by_d: Optional[dict] = None
+    # Per-sigma n grid override: {sigma: [n_values]}. When provided, replaces
+    # the global n_values for that sigma. Used to give very-negative sigma
+    # an n range where the graph has enough edges to be informative (e.g.
+    # sigma=-8 needs n>=200 for ~7 expected edges to pass min_edges=5).
+    n_values_by_sigma: Optional[dict] = None
 
 
 @dataclass
@@ -338,25 +343,18 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
         ),
     },
     # PAPER_SIGMA_CONVERGENCE: σ̂ convergence to true σ for all (d, σ, n).
-    # Runs in ~3-5 min on 4 cores.
-    #
-    # Design: paper-strict β=1 GWESP MCMC has an ERGM near-degeneracy at d=2
-    # for σ ∈ [-4, -2] when the GWESP feedback saturates, regardless of iter
-    # budget. The non-degenerate regime where σ̂ recovers σ_true for ALL d
-    # is n ≤ ~200 with full recommended_iterations mixing. n=20 included to
-    # show the expected statistical noise + zero-edge degeneracy at very-
-    # negative σ; convergence is clean by n=100-200.
-    #
-    # No iter caps applied. The chain runs for recommended_iterations(n) ≈
-    # 5n²; adaptive_stopping cuts in early when edge-count CV stabilizes.
+    # Common n grid so every σ has the same x-axis points, including small n
+    # where very-negative σ produces near-empty graphs and σ̂ diverges.
+    # No iter_cap; runtime ~3-4 min on 4 cores.
     "PAPER_SIGMA_CONVERGENCE": {
         "sigma": SigmaSweepConfig(
             sigma_values=[-2.0, -4.0, -6.0, -8.0],
             d_values=[0, 1, 2],
-            n_values=[20, 50, 100, 200, 300],
-            n_reps=10,
-            iter_cap=None,        # full recommended_iterations(n); no artificial cap
-            iter_cap_by_d=None,   # no per-(d, n) overrides; uniform mixing budget
+            n_values=[50, 100, 200, 300],
+            n_values_by_sigma=None,
+            n_reps=4,
+            iter_cap=None,
+            iter_cap_by_d=None,
             adaptive_stopping=True,
             adaptive_check_interval=10_000,
             adaptive_patience=3,
