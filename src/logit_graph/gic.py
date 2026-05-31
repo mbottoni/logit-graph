@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
+
 import networkx as nx
 import numpy as np
+import scipy.sparse as sp
 from scipy.stats import entropy
 from scipy.spatial.distance import euclidean, cityblock
 from typing import Any, Callable, Optional, Union
@@ -14,6 +17,82 @@ _MODEL_N_PARAMS: dict[str, int] = {
     "KR": 1,
     "LG": 1,
 }
+
+# Switch to KPM (Kernel Polynomial Method) approximation of the normalized
+# Laplacian spectral density once n > KPM_THRESHOLD. Exact dense eigvalsh
+# is O(n³) / O(n²) memory; KPM is O(M·P·nnz) with M moments and P probes,
+# so it stays cheap for sparse social networks at n in the thousands.
+KPM_THRESHOLD = int(os.environ.get("LG_GIC_KPM_THRESHOLD", "500"))
+KPM_N_MOMENTS = int(os.environ.get("LG_GIC_KPM_MOMENTS", "60"))
+KPM_N_PROBES = int(os.environ.get("LG_GIC_KPM_PROBES", "20"))
+KPM_SEED = int(os.environ.get("LG_GIC_KPM_SEED", "0"))
+
+
+def _jackson_kernel(M: int) -> np.ndarray:
+    """Jackson damping coefficients of length M; suppresses Gibbs ringing."""
+    k = np.arange(M)
+    Mp1 = M + 1
+    return (
+        (Mp1 - k) * np.cos(np.pi * k / Mp1)
+        + np.sin(np.pi * k / Mp1) / np.tan(np.pi / Mp1)
+    ) / Mp1
+
+
+def kpm_spectral_density(
+    laplacian: sp.spmatrix,
+    n_bins: int = 50,
+    n_moments: int = KPM_N_MOMENTS,
+    n_probes: int = KPM_N_PROBES,
+    seed: int = KPM_SEED,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Stochastic Chebyshev estimator of the normalized-Laplacian density.
+
+    Returns ``(hist, bin_edges)`` matching the signature of
+    ``np.histogram(eigvals, bins=n_bins, range=(0, 2), density=True)`` so it
+    is a drop-in replacement. Eigenvalues of the normalized Laplacian lie in
+    [0, 2]; we rescale to [-1, 1] before invoking Chebyshev recurrences.
+    """
+    n = laplacian.shape[0]
+    # Rescale to [-1, 1]: x = λ − 1
+    H = (laplacian - sp.eye(n, format="csr")).astype(np.float64).tocsr()
+
+    rng = np.random.default_rng(seed)
+    moments = np.zeros(n_moments)
+    for _ in range(n_probes):
+        v0 = rng.choice([-1.0, 1.0], size=n)
+        # T_0(H) v = v
+        v_prev = v0.copy()
+        moments[0] += float(np.dot(v0, v_prev))
+        if n_moments > 1:
+            v_curr = H @ v0
+            moments[1] += float(np.dot(v0, v_curr))
+            for k in range(2, n_moments):
+                v_next = 2.0 * (H @ v_curr) - v_prev
+                moments[k] += float(np.dot(v0, v_next))
+                v_prev, v_curr = v_curr, v_next
+    moments /= float(n_probes * n)
+
+    g = _jackson_kernel(n_moments)
+    bin_edges = np.linspace(0.0, 2.0, n_bins + 1)
+    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    x = centers - 1.0
+    # Sum_k c_k g_k μ_k T_k(x), with c_0=1 and c_k=2 for k>=1
+    Tprev = np.ones_like(x)
+    Tcurr = x.copy()
+    f = g[0] * moments[0] * Tprev
+    if n_moments > 1:
+        f += 2.0 * g[1] * moments[1] * Tcurr
+    for k in range(2, n_moments):
+        Tnext = 2.0 * x * Tcurr - Tprev
+        f += 2.0 * g[k] * moments[k] * Tnext
+        Tprev, Tcurr = Tcurr, Tnext
+    weight = 1.0 / (np.pi * np.sqrt(np.clip(1.0 - x * x, 1e-12, None)))
+    density = np.maximum(weight * f, 0.0)
+    # Normalize so the histogram integrates to 1 over [0, 2]
+    integral = float(np.trapezoid(density, centers))
+    if integral > 0:
+        density /= integral
+    return density, bin_edges
 
 
 class GraphInformationCriterion:
@@ -35,7 +114,12 @@ class GraphInformationCriterion:
         self.n = graph.number_of_nodes()
 
     def compute_spectral_density(self, graph: nx.Graph) -> tuple[np.ndarray, np.ndarray]:
+        n = graph.number_of_nodes()
         laplacian = nx.normalized_laplacian_matrix(graph)
+        if n > KPM_THRESHOLD:
+            # KPM avoids the O(n³) dense eigendecomposition for large sparse
+            # graphs; spectral density is reconstructed from Chebyshev moments.
+            return kpm_spectral_density(laplacian, n_bins=50)
         eigenvalues = np.linalg.eigvalsh(laplacian.todense())
         hist, bin_edges = np.histogram(eigenvalues, bins=50, range=(0, 2), density=True)
         return hist, bin_edges
