@@ -87,6 +87,7 @@ def main() -> None:
     grid_points = _get_int("LG_GPLUS_GRID_POINTS", 3)
     n_runs = _get_int("LG_GPLUS_N_RUNS", 1)
     use_cache = os.environ.get("LG_GPLUS_USE_CACHE", "1") == "1"
+    workers = _get_int("LG_GPLUS_WORKERS", max(1, (os.cpu_count() or 2) - 1))
 
     _original_lg_max = pfu.lg_max_iterations
 
@@ -157,58 +158,76 @@ def main() -> None:
     fit_meta_rows = []
     failures = []
     t_start = time.perf_counter()
-    fits_done = 0
-    fit_times: list[float] = []
 
+    # Serial pass: replay cached cells
+    pending_with_idx: list[tuple[int, Path]] = []
     for i, edge_path in enumerate(graph_files, start=1):
         graph_name = edge_path.stem
         net_dir = cfg.run_dir / graph_name
-        elapsed = time.perf_counter() - t_start
-        try:
-            if use_cache:
-                cached = load_cached_result(net_dir, graph_name)
-                if cached is not None:
-                    n_v = cached["meta"].get("n_nodes")
-                    print(
-                        f"[{i:3d}/{len(graph_files)}] {graph_name}  CACHE  "
-                        f"n={n_v}  best={cached['meta'].get('best_model')}  "
-                        f"GIC={cached['meta'].get('best_gic', float('nan')):.3f}  "
-                        f"| elapsed {_fmt_secs(elapsed)}"
-                    )
-                    summary_rows.append(cached["summary"])
-                    fit_meta_rows.append({**cached["meta"], "cached": True})
-                    continue
+        if use_cache:
+            cached = load_cached_result(net_dir, graph_name)
+            if cached is not None:
+                n_v = cached["meta"].get("n_nodes")
+                print(
+                    f"[{i:3d}/{len(graph_files)}] {graph_name}  CACHE  "
+                    f"n={n_v}  best={cached['meta'].get('best_model')}  "
+                    f"GIC={cached['meta'].get('best_gic', float('nan')):.3f}"
+                )
+                summary_rows.append(cached["summary"])
+                fit_meta_rows.append({**cached["meta"], "cached": True})
+                continue
+        pending_with_idx.append((i, edge_path))
 
-            t_one = time.perf_counter()
-            n_v = next(n for stem, n in sizes if stem == graph_name)
-            avg_fit_so_far = sum(fit_times) / len(fit_times) if fit_times else eta_per_fit
-            remaining = len(pending) - fits_done
-            eta = remaining * avg_fit_so_far
-            print(
-                f"[{i:3d}/{len(graph_files)}] {graph_name}  FIT  n={n_v}  "
-                f"(remaining {remaining}, ETA {_fmt_secs(eta)}, "
-                f"avg/fit so far {_fmt_secs(avg_fit_so_far)})"
+    # Parallel pass: fresh fits across workers
+    if pending_with_idx:
+        worker_count = max(1, min(workers, len(pending_with_idx)))
+        print(
+            f"\nLaunching {worker_count} worker process(es) for "
+            f"{len(pending_with_idx)} fresh fits ...\n"
+        )
+        if worker_count == 1:
+            results_iter = (
+                _fit_worker((str(p), _cfg_to_dict(cfg), lg_iter_cap, i, len(graph_files)))
+                for i, p in pending_with_idx
             )
-            result = fit_one_network(edge_path, cfg, logger, i, len(graph_files))
-            dt = time.perf_counter() - t_one
-            fit_times.append(dt)
+        else:
+            from concurrent.futures import ProcessPoolExecutor, as_completed
+            tasks = [
+                (str(p), _cfg_to_dict(cfg), lg_iter_cap, i, len(graph_files))
+                for i, p in pending_with_idx
+            ]
+            results_iter = []
+            with ProcessPoolExecutor(max_workers=worker_count) as pool:
+                futures = {pool.submit(_fit_worker, t): t for t in tasks}
+                for fut in as_completed(futures):
+                    results_iter.append(fut.result())
+
+        fits_done = 0
+        for status, name, payload in results_iter:
             fits_done += 1
-            meta = result["meta"]
+            elapsed = time.perf_counter() - t_start
+            if status == "err":
+                print(f"  [{fits_done}/{len(pending_with_idx)}] {name}  FAILED  {payload}")
+                failures.append({"graph": name, "error": payload})
+                continue
+            meta = payload["meta"]
+            summary = payload["summary"]
             print(
-                f"           ↳ DONE  best={meta['best_model']}  "
+                f"  [{fits_done}/{len(pending_with_idx)}] {name}  DONE  "
+                f"n={meta.get('n_nodes')}  best={meta['best_model']}  "
                 f"GIC={meta['best_gic']:.3f}  σ̂={meta.get('sigma_hat', 0):+.3f}  "
-                f"d̂={meta.get('d_hat')}  in {_fmt_secs(dt)}"
+                f"d̂={meta.get('d_hat')}  in {_fmt_secs(meta.get('elapsed_s', 0))}  "
+                f"| wall {_fmt_secs(elapsed)}"
             )
-            summary_rows.append(result["summary"])
+            summary_rows.append(summary)
             fit_meta_rows.append(meta)
-        except Exception as exc:
-            print(f"[{i}/{len(graph_files)}] {graph_name}  FAILED  {exc}")
-            traceback.print_exc()
-            failures.append({"graph": graph_name, "error": str(exc)})
 
     total_elapsed = time.perf_counter() - t_start
-    print(f"\nFit phase complete in {_fmt_secs(total_elapsed)} "
-          f"({fits_done} fresh fits, {cached_count} cache hits, {len(failures)} failures)")
+    print(
+        f"\nFit phase complete in {_fmt_secs(total_elapsed)} "
+        f"({len(pending_with_idx) - len(failures)} fresh fits, "
+        f"{cached_count} cache hits, {len(failures)} failures)"
+    )
 
     if not summary_rows:
         print("No networks were processed — aborting summary step.")
@@ -233,6 +252,71 @@ def main() -> None:
     print(fit_meta[cols].sort_values("n_nodes").to_string(index=False))
 
     print(f"\nArtifacts in: {cfg.run_dir}")
+
+
+def _cfg_to_dict(cfg) -> dict:
+    """Serialize PlatformConfig for transport across process boundary."""
+    return {
+        "platform": cfg.platform,
+        "glob_pattern": cfg.glob_pattern,
+        "min_nodes": cfg.min_nodes,
+        "max_nodes": cfg.max_nodes,
+        "d_candidates": list(cfg.d_candidates),
+        "seed": cfg.seed,
+        "other_model_n_runs": cfg.other_model_n_runs,
+        "other_model_grid_points": cfg.other_model_grid_points,
+        "display_plots": cfg.display_plots,
+        "use_cache": cfg.use_cache,
+        "data_root": str(cfg.data_root),
+        # Pass parent of run_dir because PlatformConfig.__post_init__ appends platform
+        "run_dir_parent": str(cfg.run_dir.parent),
+    }
+
+
+def _fit_worker(args):
+    """Run in a child process. Returns (status, name, payload).
+
+    Worker writes all per-graph artifacts to disk (via fit_one_network);
+    only the small meta dict + summary DataFrame are shipped back over IPC.
+    """
+    edge_path_str, cfg_dict, lg_iter_cap, i, total = args
+    import sys as _sys
+    import os as _os
+    from pathlib import Path as _Path
+
+    for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        _os.environ.setdefault(_v, "1")
+
+    _here = _Path(__file__).resolve().parent
+    _repo_root = _here.parents[1]
+    for _p in (str(_repo_root / "src"), str(_here)):
+        if _p not in _sys.path:
+            _sys.path.insert(0, _p)
+
+    import platform_fit_utils as pfu
+    from platform_fit_utils import PlatformConfig, fit_one_network, setup_platform_logging
+
+    cfg_kwargs = dict(cfg_dict)
+    run_dir_parent = cfg_kwargs.pop("run_dir_parent")
+    cfg_kwargs["data_root"] = _Path(cfg_kwargs["data_root"])
+    cfg_kwargs["run_dir"] = _Path(run_dir_parent)
+    cfg = PlatformConfig(**cfg_kwargs)
+
+    _orig_lg_max = pfu.lg_max_iterations
+
+    def _capped(n: int) -> int:
+        return min(_orig_lg_max(n), lg_iter_cap)
+
+    pfu.lg_max_iterations = _capped
+
+    edge_path = _Path(edge_path_str)
+    logger = setup_platform_logging(cfg.run_dir, name=f"worker_{_os.getpid()}")
+    try:
+        result = fit_one_network(edge_path, cfg, logger, i, total)
+        return ("ok", edge_path.stem, {"meta": result["meta"], "summary": result["summary"]})
+    except Exception as exc:
+        import traceback as _tb
+        return ("err", edge_path.stem, f"{exc}\n{_tb.format_exc()}")
 
 
 def _peek_size(edge_path: Path) -> int:
