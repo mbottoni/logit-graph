@@ -282,8 +282,22 @@ def _sigma_iter_count(
     cfg: SigmaSweepConfig,
     n: int,
     sigma_true: Optional[float] = None,
+    d: Optional[int] = None,
 ) -> int:
-    return _iter_count(n, cfg.iter_cap, sigma_true=sigma_true)
+    """Resolve the iter cap for a single (n, d) cell.
+
+    Precedence: ``cfg.iter_cap_by_d[d]`` (int or {n: int}) overrides the
+    global ``cfg.iter_cap`` when ``d`` is supplied and present in the dict.
+    """
+    cap = cfg.iter_cap
+    if d is not None and cfg.iter_cap_by_d and d in cfg.iter_cap_by_d:
+        spec = cfg.iter_cap_by_d[d]
+        if isinstance(spec, dict):
+            if n in spec:
+                cap = spec[n]
+        else:
+            cap = spec
+    return _iter_count(n, cap, sigma_true=sigma_true)
 
 
 def _graph_density(adj: np.ndarray) -> float:
@@ -1345,7 +1359,15 @@ def run_sigma_sweep(
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg_hash = _config_hash(cfg)
     cache_path = sigma_sweep_csv_path(out_dir, cfg)
-    expected_cells = len(cfg.d_values) * len(cfg.sigma_values) * len(cfg.n_values)
+
+    def _ns_for(sigma_true: float) -> list[int]:
+        if cfg.n_values_by_sigma and sigma_true in cfg.n_values_by_sigma:
+            return list(cfg.n_values_by_sigma[sigma_true])
+        return list(cfg.n_values)
+
+    expected_cells = sum(
+        len(_ns_for(s)) for s in cfg.sigma_values
+    ) * len(cfg.d_values)
 
     if use_cache and cache_path.is_file():
         cached = pd.read_csv(cache_path)
@@ -1361,9 +1383,9 @@ def run_sigma_sweep(
 
     for d in cfg.d_values:
         for sigma_true in cfg.sigma_values:
-            for n in cfg.n_values:
+            for n in _ns_for(sigma_true):
                 cell_idx += 1
-                nit = _sigma_iter_count(cfg, n, sigma_true=sigma_true)
+                nit = _sigma_iter_count(cfg, n, sigma_true=sigma_true, d=d)
                 cell_path = _sigma_cell_cache_path(out_dir, cfg_hash, d, sigma_true, n)
 
                 if use_cache and cell_path.is_file():
@@ -1584,7 +1606,7 @@ def load_sigma_sweep_df(
                 cell_path = _sigma_cell_cache_path(out_dir, cfg_hash, d, sigma_true, n)
                 if not cell_path.is_file():
                     continue
-                nit = _sigma_iter_count(cfg, n, sigma_true=sigma_true)
+                nit = _sigma_iter_count(cfg, n, sigma_true=sigma_true, d=d)
                 data = np.load(cell_path)
                 records.append(_aggregate_sigma_cell(
                     data["hats"].tolist(),
@@ -1959,10 +1981,23 @@ def _confusion_from_df(
     return conf
 
 
-def plot_convergence_sigma(df: pd.DataFrame, out_path: Path) -> None:
+def plot_convergence_sigma(
+    df: pd.DataFrame,
+    out_path: Path,
+    *,
+    min_edges: float = 0.0,
+    y_pad: float = 1.5,
+) -> None:
+    """Paper-quality σ̂ convergence figure.
+
+    All cells are plotted by default (``min_edges=0``); y-axis auto-fits
+    to the data range so small-n cells where σ̂ diverges are visible.
+    """
     import matplotlib
     matplotlib.use("Agg")
+    import matplotlib as mpl
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
 
     palette = {
         -2.0: ("#0072B2", "o"),
@@ -1971,24 +2006,79 @@ def plot_convergence_sigma(df: pd.DataFrame, out_path: Path) -> None:
         -8.0: ("#D55E00", "D"),
     }
     d_values = sorted(df["d"].unique())
-    fig, axes = plt.subplots(1, len(d_values), figsize=(5 * len(d_values), 5), sharey=True)
-    if len(d_values) == 1:
+    sigma_values = sorted(df["sigma_true"].unique())
+    n_panels = len(d_values)
+
+    mpl.rcParams.update({
+        "font.family": "serif",
+        "font.size": 12,
+        "axes.labelsize": 13,
+        "axes.titlesize": 14,
+        "legend.fontsize": 11,
+        "xtick.labelsize": 11,
+        "ytick.labelsize": 11,
+        "axes.linewidth": 0.8,
+        "lines.linewidth": 1.8,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    })
+
+    fig, axes = plt.subplots(
+        1, n_panels, figsize=(5.5 * n_panels, 4.5),
+        sharey=True, constrained_layout=True,
+    )
+    if n_panels == 1:
         axes = [axes]
+
+    # Filter by expected edge count = density * n*(n-1)/2.
+    # Below ~5 edges, σ̂ from a single graph is dominated by sampling
+    # noise / boundary effects and is not informative about σ.
+    edge_count = df["density_mean"] * df["n"] * (df["n"] - 1) / 2.0
+    valid = df[edge_count >= min_edges]
+    # Y-limits: auto-fit to data so divergent small-n cells stay visible.
+    y_min = float(valid["sigma_hat_mean"].min()) - y_pad
+    y_max = max(max(sigma_values), float(valid["sigma_hat_mean"].max())) + y_pad
+    handles_seen: dict[float, object] = {}
     for ax, d in zip(axes, d_values):
-        for sigma in sorted(df["sigma_true"].unique()):
-            sub = df[(df.d == d) & (df.sigma_true == sigma)].sort_values("n")
+        for sigma in sigma_values:
+            sub = valid[(valid.d == d) & (valid.sigma_true == sigma)].sort_values("n")
+            if sub.empty:
+                continue
             color, marker = palette.get(float(sigma), ("#333", "o"))
-            ax.plot(sub.n, sub.sigma_hat_mean, marker=marker, color=color, label=f"$\\sigma={int(sigma)}$")
-            ax.fill_between(sub.n, sub.ci_lo, sub.ci_hi, color=color, alpha=0.15)
-            ax.axhline(sigma, color=color, ls=":", lw=1)
+            (line,) = ax.plot(
+                sub.n, sub.sigma_hat_mean,
+                marker=marker, color=color, ms=6, mew=0,
+            )
+            ax.fill_between(sub.n, sub.ci_lo, sub.ci_hi, color=color, alpha=0.2, lw=0)
+            ax.axhline(sigma, color=color, ls=":", lw=0.9, alpha=0.7)
+            handles_seen[float(sigma)] = line
         ax.set_xscale("log")
-        ax.set_xlabel("$n$")
-        ax.set_title(f"$d={int(d)}$")
-        ax.grid(alpha=0.3)
-    axes[0].set_ylabel(r"$\hat{\sigma}$")
-    axes[0].legend(fontsize=8)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        ax.set_xlabel("$n$ (number of nodes)")
+        ax.set_title(f"$d = {int(d)}$")
+        ax.grid(alpha=0.25, which="both", lw=0.5)
+        ax.set_ylim(y_min, y_max)
+
+    axes[0].set_ylabel(r"Estimated $\hat{\sigma}$")
+
+    # Single horizontal legend below all panels (paper style)
+    ordered_handles = [handles_seen[s] for s in sigma_values if s in handles_seen]
+    ordered_labels = [f"$\\sigma = {int(s)}$" for s in sigma_values if s in handles_seen]
+    true_sigma_proxy = Line2D(
+        [0], [0], color="gray", ls=":", lw=0.9, label=r"True $\sigma$",
+    )
+    ordered_handles.append(true_sigma_proxy)
+    ordered_labels.append(r"True $\sigma$")
+    fig.legend(
+        ordered_handles, ordered_labels,
+        loc="lower center", bbox_to_anchor=(0.5, -0.05),
+        ncol=len(ordered_labels), frameon=False,
+    )
+
+    fig.suptitle(
+        r"Convergence of $\hat{\sigma}$ to the true parameter as $n$ increases",
+        fontsize=14,
+    )
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
