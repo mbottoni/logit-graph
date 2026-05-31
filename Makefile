@@ -115,6 +115,15 @@ convergence-diagnostics-quick:  ## Quick smoke (n=200, 50k iter, ~1 min)
 	LG_CONV_QUICK=1 \
 		$(UV) run python notebooks/refactors/run_convergence_diagnostics.py
 
+gic-gplus:  ## Rank LG vs ER/WS/BA by GIC on Google+ ego nets (~3-5 min)
+	LG_GPLUS_USE_CACHE=1 \
+		$(UV) run python notebooks/refactors/run_gplus_gic.py
+
+gic-gplus-quick:  ## Smoke run on small gplus subset (~30s)
+	LG_GPLUS_QUICK=1 \
+	LG_GPLUS_USE_CACHE=0 \
+		$(UV) run python notebooks/refactors/run_gplus_gic.py
+
 roc-paper-smoke:  ## Fast probe of ROC curve shape (~30s, n_eff=200, exps=20)
 	LG_EXPERIMENT_MODE=PAPER_ROC_SMOKE \
 	LG_ROC_USE_CACHE=0 \
