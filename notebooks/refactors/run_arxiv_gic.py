@@ -81,6 +81,8 @@ def main() -> None:
     _src = _repo_root / "src"
     if str(_src) not in sys.path:
         sys.path.insert(0, str(_src))
+    if str(_here) not in sys.path:
+        sys.path.insert(0, str(_here))
 
     import numpy as np
     import networkx as nx
@@ -155,38 +157,24 @@ def main() -> None:
     t_kpm = time.perf_counter() - t0
     print(f"  KPM done in {_fmt(t_kpm)}")
 
-    # 3. Estimate LG parameters (σ, β) from a random edge/non-edge sample
-    print(f"\n=== 3. Estimate LG σ, β by sampled logistic regression "
-          f"({sample_edges:,} edges + {sample_edges:,} non-edges)")
-    t0 = time.perf_counter()
-    rng = np.random.default_rng(seed)
-    degree_dict = dict(G_gcc.degree())
-    sum_degrees = np.array([degree_dict.get(v, 0) for v in range(n)], dtype=np.float64)
-
-    edges_all = list(G_gcc.edges())
-    n_sample = min(sample_edges, len(edges_all))
-    edge_idx = rng.choice(len(edges_all), size=n_sample, replace=False)
-    edge_pairs = [edges_all[i] for i in edge_idx]
-    edge_set = set((min(a, b), max(a, b)) for a, b in edges_all)
-    non_edge_pairs = []
-    while len(non_edge_pairs) < n_sample:
-        i = int(rng.integers(0, n))
-        j = int(rng.integers(0, n))
-        if i == j:
-            continue
-        pair = (min(i, j), max(i, j))
-        if pair not in edge_set:
-            non_edge_pairs.append(pair)
-    pairs = edge_pairs + non_edge_pairs
-    labels = [1] * len(edge_pairs) + [0] * len(non_edge_pairs)
-    feats = np.array([sum_degrees[i] + sum_degrees[j] for i, j in pairs]).reshape(-1, 1)
-    features = sm.add_constant(feats)
-    result = sm.Logit(labels, features).fit_regularized(method="l1", alpha=0, disp=False)
-    sigma = float(result.params[0])
-    beta = float(result.params[1])
-    d_lg = 0  # d=0 keeps the MCMC dense-but-cheap at n=27k
-    print(f"  σ={sigma:+.4f}  β={beta:+.4f}  d={d_lg}  "
-          f"[{_fmt(time.perf_counter() - t0)}]")
+    # 3. AIC-select d ∈ {0, 1, 2} from sampled (edge, non-edge) logit fits
+    print(f"\n=== 3. AIC-select d from σ, β logit on "
+          f"{sample_edges:,} edges + {sample_edges:,} non-edges")
+    from lg_aic_utils import aic_select_d, sample_pairs as _sample_pairs
+    d_candidates = [int(x) for x in
+                    os.environ.get("LG_ARXIV_D_CANDIDATES", "0,1,2").split(",")
+                    if x.strip()]
+    pairs, labels = _sample_pairs(G_gcc, sample_edges, seed)
+    best_aic, aic_table = aic_select_d(G_gcc, pairs, labels, d_candidates)
+    for r in aic_table:
+        marker = "  ← AIC pick" if r["d"] == best_aic["d"] else ""
+        print(f"    d={r['d']}  σ={r['sigma']:+.4f}  β={r['beta']:+.4f}  "
+              f"loglik={r['loglik']:.1f}  AIC={r['aic']:.1f}  "
+              f"({_fmt(r['seconds'])}){marker}")
+    sigma = best_aic["sigma"]
+    beta = best_aic["beta"]
+    d_lg = best_aic["d"]
+    print(f"  → d̂={d_lg}  σ={sigma:+.4f}  β={beta:+.4f}")
 
     # 4. LG MCMC fit on the full graph
     print(f"\n=== 4. LG MCMC fit  (max_iter={max_iter:,}, check every {check_interval:,})")

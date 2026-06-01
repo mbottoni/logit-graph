@@ -160,6 +160,15 @@ gic-connectomes-quick:  ## Smoke run on small connectomes only (~30s)
 	LG_CONN_USE_CACHE=0 \
 		$(UV) run python notebooks/refactors/run_connectomes_gic.py
 
+gic-twitch:  ## Rank LG vs ER/WS/BA by GIC on Twitch country networks (6 graphs, ~2-5 min)
+	LG_TWITCH_USE_CACHE=1 \
+		$(UV) run python notebooks/refactors/run_twitch_gic.py
+
+gic-twitch-quick:  ## Smoke run on smaller Twitch country graphs (~30-60s)
+	LG_TWITCH_QUICK=1 \
+	LG_TWITCH_USE_CACHE=0 \
+		$(UV) run python notebooks/refactors/run_twitch_gic.py
+
 gic-twitter:  ## Rank LG vs ER/WS/BA by GIC on Twitter SNAP ego nets (973 graphs, ~3-5 min)
 	LG_TWITTER_USE_CACHE=1 \
 		$(UV) run python notebooks/refactors/run_twitter_gic.py
