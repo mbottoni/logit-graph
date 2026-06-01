@@ -413,6 +413,98 @@ def run_gibbs_numba(
 
 
 @njit(cache=True)
+def _precompute_ball_dists(
+    rows: list, n: int, max_d: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """BFS distances (depth<=max_d, no edge removal) from EVERY vertex, once.
+
+    Returns ``(dist_all, ball_start, ball_flat)`` where ``dist_all[v, w]`` is the
+    distance v->w (or -1 if >max_d), and ``ball_flat[ball_start[v]:ball_start[v+1]]``
+    lists the members of v's depth-<=max_d ball (excluding v). Lets the per-pair
+    feature reuse balls instead of recomputing a BFS for every pair. Exact for
+    pairs (i, j) that are NOT edges (the Layer-2 (i, j)-edge skip is then a no-op).
+    """
+    dist_all = np.empty((n, n), dtype=np.int16)
+    ball_len = np.empty(n, dtype=np.int64)
+    frontier = np.empty(n, dtype=np.int32)
+    for v in range(n):
+        d_row = dist_all[v]
+        for w in range(n):
+            d_row[w] = -1
+        d_row[v] = 0
+        frontier[0] = v
+        flen = 1
+        head = 0
+        while head < flen:
+            u = int(frontier[head])
+            head += 1
+            du = int(d_row[u])
+            if du >= max_d:
+                continue
+            ru = rows[u]
+            for kk in range(ru.shape[0]):
+                x = int(ru[kk])
+                if d_row[x] < 0:
+                    d_row[x] = du + 1
+                    frontier[flen] = x
+                    flen += 1
+        ball_len[v] = flen - 1  # exclude v itself
+    ball_start = np.empty(n + 1, dtype=np.int64)
+    ball_start[0] = 0
+    for v in range(n):
+        ball_start[v + 1] = ball_start[v] + ball_len[v]
+    ball_flat = np.empty(int(ball_start[n]), dtype=np.int32)
+    for v in range(n):
+        d_row = dist_all[v]
+        idx = int(ball_start[v])
+        for w in range(n):
+            if w != v and d_row[w] >= 0:
+                ball_flat[idx] = w
+                idx += 1
+    return dist_all, ball_start, ball_flat
+
+
+@njit(cache=True)
+def _common_counts_from_balls(
+    dist_all: np.ndarray,
+    ball_start: np.ndarray,
+    ball_flat: np.ndarray,
+    i: int,
+    j: int,
+    max_d: int,
+    out_counts: np.ndarray,
+) -> None:
+    """Fill ``out_counts[t]`` = #{v != i, j : dist_i[v] <= t and dist_j[v] <= t}
+    for t in 0..max_d, by walking the SMALLER of the two precomputed balls
+    (O(min ball) instead of O(n)). Equivalent to calling
+    ``_count_common_within_dist(dist_all[i], dist_all[j], n, i, j, t)`` for each t.
+    """
+    for t in range(max_d + 1):
+        out_counts[t] = 0
+    li = ball_start[i + 1] - ball_start[i]
+    lj = ball_start[j + 1] - ball_start[j]
+    if li <= lj:
+        s_start = int(ball_start[i])
+        s_end = int(ball_start[i + 1])
+    else:
+        s_start = int(ball_start[j])
+        s_end = int(ball_start[j + 1])
+    di_row = dist_all[i]
+    dj_row = dist_all[j]
+    for idx in range(s_start, s_end):
+        w = int(ball_flat[idx])
+        if w == i or w == j:
+            continue
+        dwi = int(di_row[w])
+        dwj = int(dj_row[w])
+        if dwi < 0 or dwj < 0:
+            continue
+        mw = dwi if dwi > dwj else dwj  # common within t iff max(dwi, dwj) <= t
+        for t in range(mw, max_d + 1):
+            out_counts[t] += 1
+
+
+@njit(cache=True)
 def build_multi_d_pair_dataset_skip_rows(
     rows: list,
     n: int,
@@ -439,6 +531,17 @@ def build_multi_d_pair_dataset_skip_rows(
             vc = _precompute_vertex_ball_sums_skip_rows(rows, n, d, mode_code)
             for v in range(n):
                 vertex_caches[di, v] = vc[v]
+    # Precompute every vertex's depth-<=max_d_bfs ball ONCE so the per-pair
+    # d>=2 feature can reuse it (non-edge pairs) instead of running a fresh BFS
+    # per pair. Only needed for the BFS modes (2/3) with a d>=2 candidate.
+    precompute_balls = (mode_code == 2 or mode_code == 3) and max_d_bfs >= 2
+    if precompute_balls:
+        dist_all, ball_start, ball_flat = _precompute_ball_dists(rows, n, max_d_bfs)
+    else:
+        dist_all = np.empty((1, 1), dtype=np.int16)
+        ball_start = np.zeros(2, dtype=np.int64)
+        ball_flat = np.empty(0, dtype=np.int32)
+    counts = np.empty(max_d_bfs + 1, dtype=np.int64)
     dist_i = np.empty(n, dtype=np.int16)
     dist_j = np.empty(n, dtype=np.int16)
     k = 0
@@ -449,6 +552,7 @@ def build_multi_d_pair_dataset_skip_rows(
             labels[k] = 1 if had else 0
             l2 = had
             dist_ready = False
+            counts_ready = False
             for di in range(nd):
                 d = int(d_values[di])
                 if use_vertex_cache:
@@ -457,30 +561,50 @@ def build_multi_d_pair_dataset_skip_rows(
                         vc_row, i, j, had, mode_code,
                     )
                 elif mode_code == 2 and d >= 2:
-                    if not dist_ready:
-                        _bfs_distances_skip_rows(
-                            rows, i, max_d_bfs, n, dist_i, l2, i, j,
-                        )
-                        _bfs_distances_skip_rows(
-                            rows, j, max_d_bfs, n, dist_j, l2, i, j,
-                        )
-                        dist_ready = True
-                    c_d = _count_common_within_dist(dist_i, dist_j, n, i, j, d)
-                    c_dm1 = _count_common_within_dist(dist_i, dist_j, n, i, j, d - 1)
+                    # Edge pairs need the Layer-2 (i, j)-edge removal -> per-pair
+                    # BFS. Non-edge pairs: the skip is a no-op, so reuse the
+                    # precomputed balls (O(min ball) instead of a fresh BFS).
+                    if had:
+                        if not dist_ready:
+                            _bfs_distances_skip_rows(
+                                rows, i, max_d_bfs, n, dist_i, l2, i, j,
+                            )
+                            _bfs_distances_skip_rows(
+                                rows, j, max_d_bfs, n, dist_j, l2, i, j,
+                            )
+                            dist_ready = True
+                        c_d = _count_common_within_dist(dist_i, dist_j, n, i, j, d)
+                        c_dm1 = _count_common_within_dist(dist_i, dist_j, n, i, j, d - 1)
+                    else:
+                        if not counts_ready:
+                            _common_counts_from_balls(
+                                dist_all, ball_start, ball_flat, i, j, max_d_bfs, counts,
+                            )
+                            counts_ready = True
+                        c_d = int(counts[d])
+                        c_dm1 = int(counts[d - 1])
                     delta = c_d - c_dm1
                     if delta < 0:
                         delta = 0
                     offsets[di, k] = math.log(1.0 + delta)
                 elif mode_code == 3 and d >= 2:
-                    if not dist_ready:
-                        _bfs_distances_skip_rows(
-                            rows, i, max_d_bfs, n, dist_i, l2, i, j,
-                        )
-                        _bfs_distances_skip_rows(
-                            rows, j, max_d_bfs, n, dist_j, l2, i, j,
-                        )
-                        dist_ready = True
-                    c = _count_common_within_dist(dist_i, dist_j, n, i, j, d)
+                    if had:
+                        if not dist_ready:
+                            _bfs_distances_skip_rows(
+                                rows, i, max_d_bfs, n, dist_i, l2, i, j,
+                            )
+                            _bfs_distances_skip_rows(
+                                rows, j, max_d_bfs, n, dist_j, l2, i, j,
+                            )
+                            dist_ready = True
+                        c = _count_common_within_dist(dist_i, dist_j, n, i, j, d)
+                    else:
+                        if not counts_ready:
+                            _common_counts_from_balls(
+                                dist_all, ball_start, ball_flat, i, j, max_d_bfs, counts,
+                            )
+                            counts_ready = True
+                        c = int(counts[d])
                     offsets[di, k] = math.log(1.0 + c)
                 elif mode_code == 2 and d == 1:
                     c = _common_neighbors_skip_rows(rows, i, j, l2)
