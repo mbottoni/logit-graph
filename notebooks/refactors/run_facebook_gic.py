@@ -235,6 +235,7 @@ def main() -> None:
     del gm
     gc.collect()
 
+    from logit_graph.sbm import generate_sbm_from_real
     baselines = [
         ("ER", "Erdos-Renyi",
          lambda: nx.erdos_renyi_graph(n, real_density_val, seed=seed)),
@@ -242,6 +243,8 @@ def main() -> None:
          lambda: nx.watts_strogatz_graph(n, max(2, int(round(real_avg_deg))), 0.1, seed=seed)),
         ("BA", "Barabasi-Albert",
          lambda: nx.barabasi_albert_graph(n, max(1, int(round(real_avg_deg / 2))), seed=seed)),
+        ("SBM", "Louvain SBM",
+         lambda: generate_sbm_from_real(G_gcc, seed=seed)[0]),
     ]
     for name, label, gen in baselines:
         t0 = time.perf_counter()
