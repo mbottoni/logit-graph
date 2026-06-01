@@ -11,7 +11,9 @@ Reproduces Figure ``convergence_diagnostics.png/pdf`` from
        - Spectral distance of the chain's Laplacian to the reference
        - Edge count (raw density tracker)
        - KS statistic between chain and reference degree distributions
-  3. Plot the three panels and save to images/correction_paper/.
+       - KL divergence of the chain's ADJACENCY ESD to the reference
+         (the object Algorithm 1's stopping criterion monitors)
+  3. Plot the four panels and save to images/correction_paper/.
 
 Defaults match the notebook (n=750, d=0, sigma=-2.0, 1M iter/chain). Override
 with env vars:
@@ -34,7 +36,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from scipy.stats import ks_2samp
+from scipy.stats import entropy, ks_2samp
 
 # Add src/ to sys.path when running as a script (mirrors the AIC experiment script)
 _repo_root = Path(__file__).resolve().parents[2]
@@ -67,6 +69,28 @@ def _build_chain(
     return lg_graph.GraphModel(n=n, d=d, sigma=sigma, er_p=er_p, seed=seed)
 
 
+def _adjacency_esd(adj: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
+    """Empirical spectral density (ESD) of the ADJACENCY matrix.
+
+    Density histogram of A's eigenvalues over a fixed bin grid — the same
+    object Algorithm 1's stopping criterion monitors. Eigenvalues are clipped
+    into the grid so transiently-denser chains keep all their spectral mass.
+    """
+    eig = np.linalg.eigvalsh(adj)
+    eig = np.clip(eig, bin_edges[0], bin_edges[-1])
+    hist, _ = np.histogram(eig, bins=bin_edges, density=True)
+    return hist
+
+
+def _esd_kl(cur_den: np.ndarray, ref_den: np.ndarray) -> float:
+    """KL divergence D_KL(rho_t || rho_ref) between adjacency ESDs.
+
+    Mirrors ``GraphInformationCriterion.calculate_spectral_distance`` (gic.py)
+    with ``dist='KL'``: ``scipy.stats.entropy`` with a 1e-10 smoothing floor.
+    """
+    return float(entropy(cur_den + 1e-10, ref_den + 1e-10))
+
+
 def _run_chain(
     n: int,
     d: int,
@@ -76,6 +100,8 @@ def _run_chain(
     er_p: float,
     ref_spectrum: np.ndarray,
     ref_degrees: np.ndarray,
+    ref_esd: np.ndarray,
+    esd_bins: np.ndarray,
     seed: Optional[int],
 ) -> dict[str, list[float]]:
     """Run one MCMC chain and record diagnostics at every check_interval."""
@@ -83,6 +109,7 @@ def _run_chain(
     spec_dists: list[float] = []
     edge_counts: list[int] = []
     ks_stats: list[float] = []
+    esd_kls: list[float] = []
     for i in range(max_iter):
         gm.add_remove_edge()
         if i % check_interval == 0:
@@ -91,7 +118,13 @@ def _run_chain(
             edge_counts.append(int(gm._edge_count))
             ks_stat, _ = ks_2samp(gm.graph.sum(axis=1), ref_degrees)
             ks_stats.append(float(ks_stat))
-    return {"spec_dist": spec_dists, "edges": edge_counts, "ks": ks_stats}
+            esd_kls.append(_esd_kl(_adjacency_esd(gm.graph, esd_bins), ref_esd))
+    return {
+        "spec_dist": spec_dists,
+        "edges": edge_counts,
+        "ks": ks_stats,
+        "esd_kl": esd_kls,
+    }
 
 
 def _plot(
@@ -136,7 +169,7 @@ def _plot(
     x_iters = np.arange(n_checks) * check_interval
     mark_every = max(1, n_checks // 8)
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
+    fig, axes = plt.subplots(1, 4, figsize=(21, 4.5))
 
     # (a) Spectral distance
     ax = axes[0]
@@ -182,6 +215,20 @@ def _plot(
     ax.set_title("(c) Degree distribution")
     ax.legend(fontsize=9, title="Initial ER $p_0$", title_fontsize=9)
 
+    # (d) Adjacency ESD KL divergence — the quantity Algorithm 1's stopping
+    # criterion actually monitors (D_KL of the adjacency ESD to the reference).
+    ax = axes[3]
+    for i, r in enumerate(results):
+        ax.plot(
+            x_iters, r["esd_kl"],
+            color=colors[i], marker=markers[i % len(markers)], markevery=mark_every,
+            ms=5, label=f"$p_0={er_ps[i]}$", alpha=0.85,
+        )
+    ax.set_xlabel("MCMC iteration")
+    ax.set_ylabel(r"$D_{\mathrm{KL}}(\rho_t \,\|\, \rho_{\mathrm{ref}})$")
+    ax.set_title("(d) Adjacency ESD divergence")
+    ax.legend(fontsize=9, title="Initial ER $p_0$", title_fontsize=9)
+
     fig.suptitle(
         f"MCMC convergence: $n={n}$, $d={d}$, $\\sigma={sigma}$  "
         f"— {n_chains} chains from different initial densities",
@@ -217,6 +264,13 @@ def main() -> None:
         gt_model.add_remove_edge()
     gt_spectrum = lg_graph.GraphModel.calculate_spectrum(gt_model.graph)
     gt_degrees = gt_model.graph.sum(axis=1)
+    # Adjacency-ESD reference: fix a bin grid spanning the reference graph's
+    # adjacency eigenvalues (with padding), then take its density as rho_ref.
+    gt_eig = np.linalg.eigvalsh(gt_model.graph)
+    lo, hi = float(gt_eig.min()), float(gt_eig.max())
+    pad = 0.05 * (hi - lo) + 1e-9
+    esd_bins = np.linspace(lo - pad, hi + pad, 51)  # 50 bins
+    gt_esd = _adjacency_esd(gt_model.graph, esd_bins)
     gt_edges = int(gt_model._edge_count)
     gt_density = gt_edges / (n * (n - 1) / 2)
     print(
@@ -232,12 +286,14 @@ def main() -> None:
             n=n, d=d, sigma=sigma,
             max_iter=max_iter, check_interval=check_interval,
             er_p=p0, ref_spectrum=gt_spectrum, ref_degrees=gt_degrees,
+            ref_esd=gt_esd, esd_bins=esd_bins,
             seed=chain_seed,
         )
         results.append(r)
         print(
             f"  final: spec_dist={r['spec_dist'][-1]:.2f}, edges={r['edges'][-1]}, "
-            f"density={r['edges'][-1] / (n * (n - 1) / 2):.4f}, KS={r['ks'][-1]:.4f}"
+            f"density={r['edges'][-1] / (n * (n - 1) / 2):.4f}, KS={r['ks'][-1]:.4f}, "
+            f"ESD_KL={r['esd_kl'][-1]:.4f}"
         )
 
     print(f"\nReference density was {gt_density:.4f} ({gt_edges} edges). Plotting ...")
