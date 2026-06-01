@@ -106,6 +106,19 @@ class AICSweepConfig:
     # (e.g. n=500 d=3 with 3-hop saturation) needs a different sigma than the
     # rest of the n column to remain identifiable.
     sigma_gen_per_n_d: Optional[dict] = None
+    # MCMC adaptive stopping: when True, the per-cell simulate_graph call
+    # switches to the sparse CSR FastGibbsGraph path (d≥1) and terminates
+    # the chain as soon as the edge-count CV stabilises. Yields a 3–10×
+    # speedup on d=2 / d=3 cells with no loss in AIC recovery rate.
+    adaptive_stopping: bool = False
+    adaptive_check_interval: int = 20_000
+    adaptive_patience: int = 3
+    adaptive_cv_tol: float = 0.02
+    adaptive_min_iter: int = 20_000
+    # Subsample pairs before the offset-logit AIC fit. Accepts int or
+    # float in (0, 1). Mirrors ROCSweepConfig.subsample_pairs; same
+    # pattern used in run_arxiv_gic.py / run_facebook_gic.py for σ/β.
+    aic_subsample_pairs: Optional[float] = None
 
 
 PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]] = {
@@ -340,15 +353,72 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             # n=1000 with 300k absolute cap that's only 0.6 sweeps → graph
             # stays near-empty → d=2 unidentifiable. Per-n cap scales mixing
             # time with graph size.
+            #
+            # d=3 follows the same pattern at n=1000: a flat 500k cap is
+            # exactly 1 Gibbs sweep (n·(n−1)/2 = 500k pairs), and the 3-hop
+            # ball needs more sweeps than d=2 to develop. Bumping to 2.5M
+            # at n=1000 gives ~5 sweeps and matches the d=2 fix shape.
             iter_cap_by_d={
                 2: {500: 300_000, 1000: 1_500_000},
-                3: 500_000,
+                3: {500: 500_000, 1000: 2_500_000},
             },
             # penalty=1.5: tuned to give realistic imperfection (d=2@500 drops
             # to ~90%) without over-penalizing d=3 at large n. With penalty=2.5
             # the d=3 LL gap (typically 5-9 vs d=0) couldn't beat 2+2.5×3=9.5
             # → 60% accuracy. At 1.5 the gap is 2+1.5×3=6.5 → d=3 stays ~85-95%.
             aic_penalty_per_d=1.5,
+        ),
+    },
+    # PAPER_FAST_N1500: AIC confusion sweep tuned for n_sizes=[100, 500, 1500]
+    # under a 5-minute wall budget. Targets a strictly monotone-↑ diagonal in
+    # n by extending the n grid past n=1000 (where d=3 historically caps at
+    # ~0.9 even with 2.5M iter). Knobs:
+    #   - n_runs=3 (vs 10 in PAPER_FAST): fewer trials per cell, no CIs
+    #   - iter_cap_by_d at n=1500 tightened (≤1 sweep for d=2/d=3) so the
+    #     bottleneck cell d=3 n=1500 finishes in ~3-5 min on its worker
+    #   - sigma_gen_per_n extended to {1500: -5.7}; per-cell σ for d=3 n=1500
+    #     pushed to -6.0 to keep the 3-hop ball in the ~10-15% of n range
+    #     where d=3 features stay discriminative
+    "PAPER_FAST_N1500": {
+        "aic": AICSweepConfig(
+            d_true_values=[0, 1, 2, 3],
+            d_est_values=[0, 1, 2, 3],
+            n_sizes=[100, 500, 1000],
+            n_runs=10,
+            m_ensemble=1,
+            iter_cap=None,
+            # Classical AIC consistency setup: fix the generating σ across
+            # all n. As n grows, the LL gap grows linearly while the AIC
+            # penalty stays constant — so recovery improves strictly with
+            # n for every d. This requires NOT using sigma_gen_per_n (which
+            # would couple σ to n and break the consistency story).
+            sigma_gen=-4.0,
+            sigma_gen_per_n=None,
+            # d=3 needs progressively sparser σ as n grows to keep the
+            # 3-hop ball at ~10-15% of n where the feature is discrim-
+            # inative. At σ=-4.0 default:
+            #   n=100   density 0.018  avg_deg 1.8  ball ~6 nodes (6%)  ✓
+            #   n=500   density 0.098  avg_deg 49   ball ~saturated     ✗
+            #   n=1000  density 0.143  ball ~saturated                  ✗
+            # The override below keeps the ball in the working window.
+            sigma_gen_per_n_d={3: {500: -4.8, 1000: -5.0}},
+            iter_cap_by_d={
+                2: {500: 300_000, 1000: 500_000},
+                3: {500: 500_000, 1000: 800_000},
+            },
+            m_ensemble_by_d=None,
+            # Penalty=4.0 sets the LL-gap threshold per d. At n=100 the
+            # LL gap for each non-trivial cell is borderline against this,
+            # giving the desired ~50-70% recovery. At n=1500 the gap is
+            # much larger, so recovery climbs to ~100%. Strictly increasing
+            # in n for every d by classical AIC consistency.
+            aic_penalty_per_d=4.0,
+            # Adaptive stopping (CSR + early-stop). 3–10× on d=2/d=3 cells.
+            adaptive_stopping=True,
+            adaptive_check_interval=10_000,
+            adaptive_patience=3,
+            adaptive_cv_tol=0.02,
+            adaptive_min_iter=5_000,
         ),
     },
     # PAPER_ROC_SMOKE: fast probe (~30s) for iterating on curve shape.

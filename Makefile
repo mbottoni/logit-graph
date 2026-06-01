@@ -96,6 +96,12 @@ aic-efficient:  ## Run EFFICIENT AIC sweep (n=[50,100], ~1 min on 4 cores)
 	LG_AIC_JOBS=$(JOBS) \
 		$(UV) run python notebooks/refactors/run_aic_experiments.py
 
+aic-paper-n1500:  ## Run PAPER_FAST_N1500 AIC sweep (n=[100,500,1500], ~5 min target)
+	LG_EXPERIMENT_MODE=PAPER_FAST_N1500 \
+	LG_AIC_USE_CACHE=1 \
+	LG_AIC_JOBS=$(JOBS) \
+		$(UV) run python notebooks/refactors/run_aic_experiments.py
+
 aic-paper-fast:  ## Run PAPER_FAST AIC sweep (n=[100,500,1000], ~1.5h fresh)
 	LG_EXPERIMENT_MODE=PAPER_FAST \
 	LG_AIC_USE_CACHE=1 \

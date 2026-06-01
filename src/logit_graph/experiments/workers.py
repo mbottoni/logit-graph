@@ -51,6 +51,11 @@ def _simulate_ensemble_member(payload: dict[str, Any], m: int) -> dict[str, Any]
         signal=payload["signal"],
         seed=seed,
         return_meta=True,
+        adaptive_stopping=payload.get("adaptive_stopping", False),
+        adaptive_check_interval=payload.get("adaptive_check_interval", 20_000),
+        adaptive_patience=payload.get("adaptive_patience", 3),
+        adaptive_cv_tol=payload.get("adaptive_cv_tol", 0.02),
+        adaptive_min_iter=payload.get("adaptive_min_iter", 20_000),
     )
     return {"adj": adj, "csr_rows": meta.get("csr_rows")}
 
@@ -197,6 +202,8 @@ def aic_run_job(payload: dict[str, Any]) -> dict[str, Any]:
         feature_mode=payload["feature_mode_est"],
         extra_penalty_per_d=payload["aic_penalty_per_d"],
         csr_rows_list=csr_rows_list,
+        subsample_pairs=payload.get("aic_subsample_pairs"),
+        rng_seed=payload.get("seed_base", 0) + payload["run"],
     )
 
     # Diagnostics: mean density across ensemble + wall time.
