@@ -16,6 +16,10 @@ _MODEL_N_PARAMS: dict[str, int] = {
     "GRG": 1,
     "KR": 1,
     "LG": 1,
+    # SBM has k(k+1)/2 block probabilities; the exact count is graph-
+    # dependent. ``_get_n_params`` returns 1 as a safe default and callers
+    # that care about the real count read it from ``sbm.fit_sbm_from_graph``.
+    "SBM": 1,
 }
 
 # Switch to KPM (Kernel Polynomial Method) approximation of the normalized
@@ -138,6 +142,11 @@ class GraphInformationCriterion:
             elif self.model == "BA":
                 m = max(1, int(self.parameter))  # Ensure m is at least 1
                 return nx.barabasi_albert_graph(self.n, m)
+            elif self.model == "SBM":
+                from .sbm import generate_sbm_from_real
+
+                G_sbm, _ = generate_sbm_from_real(self.graph)
+                return G_sbm
             elif self.model == "LG":
                 if isinstance(self.log_graph, tuple):
                     return self.log_graph[0]

@@ -388,7 +388,7 @@ def fit_one_network(
         other_model_n_runs=cfg.other_model_n_runs,
         dist_type="KL",
         verbose=True,
-        other_models=["ER", "WS", "BA"],
+        other_models=["ER", "WS", "BA", "SBM"],
         other_model_grid_points=cfg.other_model_grid_points,
         random_state=cfg.seed,
     ).compare(original_graph=G_real, graph_filepath=graph_name)

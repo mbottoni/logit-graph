@@ -773,6 +773,10 @@ class GraphModelComparator:
             'WS': {'k': {'lo': 2, 'hi': 10, 'step': 2}, 'p': {'lo': 0.01, 'hi': 0.5}},
             'GRG': {'lo': 0.05, 'hi': 0.3},
             'BA': {'lo': 1, 'hi': 8},
+            # SBM has no scalar grid parameter — Louvain on the observed
+            # graph fixes the block structure. The dispatch in
+            # ``GraphModelSelection`` special-cases SBM and ignores this.
+            'SBM': None,
         }
         default_param_map: dict[str, Any] = {}
         if self.other_model_params is None:
@@ -811,18 +815,34 @@ class GraphModelComparator:
 
         for estimate in model_results['estimates']:
             model_name = estimate['model']
-            if model_name != 'LG':
-                param = clean_and_convert_param(estimate['param'])
+            if model_name == 'LG':
+                continue
+            if model_name == 'SBM':
+                # SBM has no scalar parameter — Louvain on G_real fixes
+                # the block structure. ``_generate_graph`` ignores the
+                # passed ``param`` for SBM.
+                fitted_graph = selector._generate_graph(model_name, None, seed_offset=0)
                 gic_value = estimate['GIC']
-                
-                fitted_graph = selector._generate_graph(model_name, param, seed_offset=0)
-                
                 self.fitted_graphs_data[model_name] = {
                     'graph': fitted_graph,
-                    'metadata': {'fit_success': True, 'param': param, 'gic_value': gic_value}
+                    'metadata': {'fit_success': True, 'param': 'Louvain-fit',
+                                 'gic_value': gic_value},
                 }
                 if self.verbose:
-                    print(f"{model_name} fitting - GIC: {gic_value:.4f}, Param: {param:.4f}")
+                    print(f"{model_name} fitting - GIC: {gic_value:.4f}, "
+                          f"Param: Louvain-fit")
+                continue
+            param = clean_and_convert_param(estimate['param'])
+            gic_value = estimate['GIC']
+
+            fitted_graph = selector._generate_graph(model_name, param, seed_offset=0)
+
+            self.fitted_graphs_data[model_name] = {
+                'graph': fitted_graph,
+                'metadata': {'fit_success': True, 'param': param, 'gic_value': gic_value},
+            }
+            if self.verbose:
+                print(f"{model_name} fitting - GIC: {gic_value:.4f}, Param: {param:.4f}")
 
     def _build_summary_df(self, graph_filepath: str) -> None:
         if self.verbose:

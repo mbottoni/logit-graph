@@ -182,6 +182,13 @@ class GraphModelSelection:
             return nx.watts_strogatz_graph(n, k, float(params), seed=seed)
         if model == "BA":
             return nx.barabasi_albert_graph(n, int(params), seed=seed)
+        if model == "SBM":
+            # SBM has no scalar grid parameter — Louvain on the observed
+            # graph fixes the block structure; ``params`` is ignored.
+            from .sbm import generate_sbm_from_real
+
+            G_sbm, _ = generate_sbm_from_real(self.graph, seed=seed)
+            return G_sbm
         raise ValueError(f"Unknown model: {model}")
 
     def validate_input(self):
@@ -212,6 +219,15 @@ class GraphModelSelection:
             return ws_wrapper
         elif model_name == "BA":
             return lambda n, m: nx.barabasi_albert_graph(n, int(m))
+        elif model_name == "SBM":
+            # Closure over self.graph: SBM is fit on the observed graph
+            # (Louvain communities) rather than parameterised by n alone.
+            from .sbm import generate_sbm_from_real
+
+            def sbm_wrapper(n, _params):
+                G_sbm, _ = generate_sbm_from_real(self.graph, seed=None)
+                return G_sbm
+            return sbm_wrapper
         elif model_name == "LG":
             pass
         else:
@@ -263,6 +279,23 @@ class GraphModelSelection:
         results = []
         for idx, model in enumerate(self.models):
             print(f'Testing the selected model for {model}')
+            if model == "SBM":
+                # No scalar grid — Louvain on the observed graph fixes the
+                # block structure. Average across ``n_runs`` re-samples.
+                grid_offset = idx * 1000
+                avg_spectrum = self.calculate_average_spectrum(
+                    model, None, seed_offset=grid_offset,
+                )
+                real_spectrum, _ = gic.GraphInformationCriterion(
+                    self.graph, model,
+                ).compute_spectral_density(self.graph)
+                distance = float(np.linalg.norm(real_spectrum - avg_spectrum))
+                current_gic = gic.GraphInformationCriterion(
+                    graph=self.graph, model=model, p=None,
+                ).calculate_gic(model_den=avg_spectrum)
+                print(f'{model} gic: {current_gic}')
+                results.append((model, "Louvain-fit", distance, current_gic))
+                continue
             if model == "LG":
                 avg_spectrum = self.calculate_average_spectrum(model, None)
                 params = self.log_params
@@ -399,6 +432,13 @@ class GraphModelSelection:
         results = []
         for idx, model in enumerate(self.models):
             print(f'Testing the selected model for {model}')
+            if model == "SBM":
+                # No grid — Louvain on the observed graph fixes blocks.
+                avg_gic = self.calculate_average_gic(model, None)
+                result = {'param': 'Louvain-fit', 'gic': avg_gic}
+                print(f'{model} result:', result)
+                results.append((model, result['param'], result['gic']))
+                continue
             if model == "LG":
                 avg_gic = self.calculate_average_gic(model, None)
                 params = self.log_params
