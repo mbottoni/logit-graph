@@ -85,9 +85,78 @@ def _sparse_normalised_laplacian(G_or_adj):
     return sp.eye(n, format="csr") - (D_inv_sqrt @ A @ D_inv_sqrt)
 
 
+# Local import deferred to ``fit_country`` so sys.path is set first.
+
+
+def _run_lg_mcmc(country, d, sigma, beta, G_gcc, real_density, *,
+                 max_iter, check_interval, warm_up, patience,
+                 kpm_moments, kpm_probes, seed):
+    """Run a single LG MCMC fit at fixed (d, σ, β) using KPM convergence."""
+    import numpy as np
+    import networkx as nx
+    from logit_graph.gic import kpm_spectral_density
+    from logit_graph.graph import GraphModel
+    from scipy.stats import entropy as _entropy
+
+    n = G_gcc.number_of_nodes()
+    m = G_gcc.number_of_edges()
+    real_density_val = nx.density(G_gcc)
+    er_seed_p = 1.25 * (real_density_val / 2)
+    gm = GraphModel(n=n, d=d, sigma=sigma, beta=beta, er_p=er_seed_p, seed=seed)
+    print(f"  LG d={d}: init edges={gm._edge_count:,}  "
+          f"dense adj={gm.graph.nbytes / 1e9:.2f} GB")
+    best_graph = gm.graph.copy()
+    best_diff = float("inf")
+    best_iter = 0
+    no_improve = 0
+    t_start = time.perf_counter()
+
+    for i in range(max_iter):
+        gm.add_remove_edge()
+        if i > 0 and i % check_interval == 0:
+            L_cur = _sparse_normalised_laplacian(gm.graph)
+            cur_density, _ = kpm_spectral_density(
+                L_cur, n_bins=50, n_moments=kpm_moments,
+                n_probes=kpm_probes, seed=seed + i,
+            )
+            diff = float(np.linalg.norm(cur_density - real_density))
+            if diff < best_diff:
+                best_diff = diff
+                best_graph = gm.graph.copy()
+                best_iter = i
+                no_improve = 0
+            elif i >= warm_up:
+                no_improve += 1
+            elapsed = time.perf_counter() - t_start
+            print(f"    iter {i:>6,}/{max_iter:,}  L2={diff:.4f}  best={best_diff:.4f}  "
+                  f"edges={gm._edge_count:,}/{m:,}  pat={no_improve}/{patience}  "
+                  f"wall={_fmt(elapsed)}")
+            if i >= warm_up and no_improve >= patience:
+                break
+
+    t_lg = time.perf_counter() - t_start
+
+    eps = 1e-10
+    L_lg = _sparse_normalised_laplacian(best_graph)
+    lg_density, _ = kpm_spectral_density(
+        L_lg, n_bins=50, n_moments=kpm_moments,
+        n_probes=kpm_probes, seed=seed + 99_991 + d,
+    )
+    gic_val = 0.5 * (_entropy(real_density + eps, lg_density + eps)
+                     + _entropy(lg_density + eps, real_density + eps))
+
+    del gm, L_lg
+    gc.collect()
+    return {
+        "d": d, "sigma": sigma, "beta": beta, "gic": float(gic_val),
+        "best_iter": best_iter, "best_L2": best_diff,
+        "fit_seconds": t_lg, "edges": int(best_graph.sum() // 2),
+    }
+
+
 def fit_country(country: str, edge_path: Path, *, max_iter: int, check_interval: int,
                 warm_up: int, patience: int, sample_edges: int, kpm_moments: int,
-                kpm_probes: int, seed: int):
+                kpm_probes: int, seed: int, d_candidates):
     """Single-country fit: returns dict with per-model GICs + LG params."""
     import numpy as np
     import networkx as nx
@@ -118,91 +187,36 @@ def fit_country(country: str, edge_path: Path, *, max_iter: int, check_interval:
     print(f"  {country}: n={n:,} m={m:,} density={real_density_val:.5f}  "
           f"[{_fmt(time.perf_counter() - t0)}]")
 
-    # 1. Estimate LG σ, β by sampled logistic regression
-    t0 = time.perf_counter()
-    rng = np.random.default_rng(seed)
-    degree_dict = dict(G_gcc.degree())
-    sum_degrees = np.array([degree_dict.get(v, 0) for v in range(n)], dtype=np.float64)
-    edges_all = list(G_gcc.edges())
-    n_sample = min(sample_edges, len(edges_all))
-    edge_idx = rng.choice(len(edges_all), size=n_sample, replace=False)
-    edge_pairs = [edges_all[i] for i in edge_idx]
-    edge_set = set((min(a, b), max(a, b)) for a, b in edges_all)
-    non_edge_pairs = []
-    while len(non_edge_pairs) < n_sample:
-        i = int(rng.integers(0, n))
-        j = int(rng.integers(0, n))
-        if i == j:
-            continue
-        pair = (min(i, j), max(i, j))
-        if pair not in edge_set:
-            non_edge_pairs.append(pair)
-    pairs = edge_pairs + non_edge_pairs
-    labels = [1] * len(edge_pairs) + [0] * len(non_edge_pairs)
-    feats = np.array([sum_degrees[i] + sum_degrees[j] for i, j in pairs]).reshape(-1, 1)
-    features = sm.add_constant(feats)
-    result = sm.Logit(labels, features).fit_regularized(method="l1", alpha=0, disp=False)
-    sigma = float(result.params[0])
-    beta = float(result.params[1])
-    d_lg = 0
-    print(f"  σ={sigma:+.4f}  β={beta:+.4f}  d={d_lg}  "
-          f"[{_fmt(time.perf_counter() - t0)}]")
-
-    # 2. LG MCMC fit
-    er_seed_p = 1.25 * (real_density_val / 2)
-    gm = GraphModel(n=n, d=d_lg, sigma=sigma, beta=beta, er_p=er_seed_p, seed=seed)
-    print(f"  LG init: edges={gm._edge_count:,}  dense adj={gm.graph.nbytes / 1e9:.2f} GB")
-    best_graph = gm.graph.copy()
-    best_diff = float("inf")
-    best_iter = 0
-    no_improve = 0
-    t_start = time.perf_counter()
-
-    for i in range(max_iter):
-        gm.add_remove_edge()
-        if i > 0 and i % check_interval == 0:
-            L_cur = _sparse_normalised_laplacian(gm.graph)
-            cur_density, _ = kpm_spectral_density(
-                L_cur, n_bins=50, n_moments=kpm_moments,
-                n_probes=kpm_probes, seed=seed + i,
-            )
-            diff = float(np.linalg.norm(cur_density - real_density))
-            if diff < best_diff:
-                best_diff = diff
-                best_graph = gm.graph.copy()
-                best_iter = i
-                no_improve = 0
-            elif i >= warm_up:
-                no_improve += 1
-            elapsed = time.perf_counter() - t_start
-            print(
-                f"    iter {i:>6,}/{max_iter:,}  L2={diff:.4f}  best={best_diff:.4f}  "
-                f"edges={gm._edge_count:,}/{m:,}  pat={no_improve}/{patience}  "
-                f"wall={_fmt(elapsed)}"
-            )
-            if i >= warm_up and no_improve >= patience:
-                print(f"    converged (no improvement for {patience} checks)")
-                break
-
-    t_lg = time.perf_counter() - t_start
-    print(f"  LG fit done in {_fmt(t_lg)}  best_iter={best_iter:,}  best_L2={best_diff:.4f}")
-
-    # 3. GIC scoring
+    # 1. AIC-select d ∈ d_candidates (cheap: no MCMC, just logit fits)
     eps = 1e-10
     def _gic(p):
         return 0.5 * (_entropy(real_density + eps, p + eps)
                       + _entropy(p + eps, real_density + eps))
 
-    L_lg = _sparse_normalised_laplacian(best_graph)
-    lg_density, _ = kpm_spectral_density(
-        L_lg, n_bins=50, n_moments=kpm_moments,
-        n_probes=kpm_probes, seed=seed + 99_991,
-    )
-    lg_gic = float(_gic(lg_density))
-    results = {"LG": {"gic": lg_gic, "param": f"σ={sigma:.3f},β={beta:.3f},d={d_lg}",
-                      "n": n, "m": int(best_graph.sum() // 2)}}
-    print(f"  LG  GIC={lg_gic:.4f}")
-    del gm
+    from lg_aic_utils import aic_select_d, sample_pairs
+    pairs, labels = sample_pairs(G_gcc, sample_edges, seed)
+    best_aic, aic_table = aic_select_d(G_gcc, pairs, labels, d_candidates)
+    print(f"\n  AIC selection across d∈{d_candidates}:")
+    for r in aic_table:
+        marker = "  ←" if r["d"] == best_aic["d"] else ""
+        print(f"    d={r['d']}  σ={r['sigma']:+.4f}  β={r['beta']:+.4f}  "
+              f"loglik={r['loglik']:.1f}  AIC={r['aic']:.1f}  "
+              f"({_fmt(r['seconds'])}){marker}")
+    print(f"  → AIC picks d̂={best_aic['d']}")
+
+    # 2. Single LG MCMC at the AIC-selected d
+    best_lg = _run_lg_mcmc(country, best_aic["d"], best_aic["sigma"], best_aic["beta"],
+                            G_gcc, real_density,
+                            max_iter=max_iter, check_interval=check_interval,
+                            warm_up=warm_up, patience=patience,
+                            kpm_moments=kpm_moments, kpm_probes=kpm_probes, seed=seed)
+    print(f"  LG d={best_lg['d']} GIC={best_lg['gic']:.4f}  "
+          f"best_iter={best_lg['best_iter']:,}  best_L2={best_lg['best_L2']:.4f}  "
+          f"({_fmt(best_lg['fit_seconds'])})")
+
+    results = {"LG": {"gic": best_lg["gic"],
+                      "param": f"σ={best_lg['sigma']:.3f},β={best_lg['beta']:.3f},d={best_lg['d']}",
+                      "n": n, "m": best_lg["edges"], "d": best_lg["d"]}}
     gc.collect()
 
     baselines = [
@@ -230,8 +244,11 @@ def fit_country(country: str, edge_path: Path, *, max_iter: int, check_interval:
     return {
         "country": country, "n": n, "m": m, "density": real_density_val,
         "results": results,
-        "lg_params": {"sigma": sigma, "beta": beta, "d": d_lg,
-                      "best_iter": best_iter, "best_L2": best_diff, "fit_seconds": t_lg},
+        "lg_params": {"sigma": best_lg["sigma"], "beta": best_lg["beta"],
+                      "d": best_lg["d"], "best_iter": best_lg["best_iter"],
+                      "best_L2": best_lg["best_L2"],
+                      "fit_seconds": best_lg["fit_seconds"],
+                      "aic_table": aic_table},
     }
 
 
@@ -246,15 +263,17 @@ def main() -> None:
     _src = _repo_root / "src"
     if str(_src) not in sys.path:
         sys.path.insert(0, str(_src))
+    if str(_here) not in sys.path:
+        sys.path.insert(0, str(_here))
 
     import pandas as pd
 
     quick = os.environ.get("LG_TWITCH_QUICK", "0") == "1"
     max_nodes_default = 5000 if quick else 10000
-    max_iter_default = 6_000 if quick else 30_000
-    check_default = 1_500 if quick else 3_000
-    warm_up_default = 3_000 if quick else 6_000
-    patience_default = 20 if quick else 30
+    max_iter_default = 20_000 if quick else 100_000
+    check_default = 2_000 if quick else 5_000
+    warm_up_default = 5_000 if quick else 15_000
+    patience_default = 30 if quick else 50
     sample_edges_default = 15_000 if quick else 30_000
     kpm_moments_default = 80 if quick else 120
     kpm_probes_default = 20 if quick else 30
@@ -270,11 +289,14 @@ def main() -> None:
     kpm_probes = _get_int("LG_TWITCH_KPM_PROBES", kpm_probes_default)
     seed = _get_int("LG_TWITCH_SEED", 42)
     use_cache = os.environ.get("LG_TWITCH_USE_CACHE", "1") == "1"
+    raw_d = os.environ.get("LG_TWITCH_D_CANDIDATES", "0,1,2" if not quick else "0,1")
+    d_candidates = [int(x) for x in raw_d.split(",") if x.strip()]
 
     out_dir = _here / "runs" / "twitch_fast"
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg_sig = json.dumps(
-        [max_iter, check_interval, sample_edges, kpm_moments, kpm_probes, seed],
+        [max_iter, check_interval, sample_edges, kpm_moments, kpm_probes, seed,
+         d_candidates],
         sort_keys=True,
     )
 
@@ -325,7 +347,8 @@ def main() -> None:
                                 max_iter=max_iter, check_interval=check_interval,
                                 warm_up=warm_up, patience=patience,
                                 sample_edges=sample_edges, kpm_moments=kpm_moments,
-                                kpm_probes=kpm_probes, seed=seed)
+                                kpm_probes=kpm_probes, seed=seed,
+                                d_candidates=d_candidates)
         except Exception as exc:
             print(f"  {country}: FAILED — {exc}")
             import traceback
