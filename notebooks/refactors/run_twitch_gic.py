@@ -142,8 +142,10 @@ def _run_lg_mcmc(country, d, sigma, beta, G_gcc, real_density, *,
         L_lg, n_bins=50, n_moments=kpm_moments,
         n_probes=kpm_probes, seed=seed + 99_991 + d,
     )
-    gic_val = 0.5 * (_entropy(real_density + eps, lg_density + eps)
-                     + _entropy(lg_density + eps, real_density + eps))
+    _dist = 0.5 * (_entropy(real_density + eps, lg_density + eps)
+                   + _entropy(lg_density + eps, real_density + eps))
+    # GIC = 2*spectral_distance + 2*n_params; LG is penalized on sigma only (n_params=1).
+    gic_val = 2.0 * _dist + 2.0 * 1
 
     del gm, L_lg
     gc.collect()
@@ -189,9 +191,12 @@ def fit_country(country: str, edge_path: Path, *, max_iter: int, check_interval:
 
     # 1. AIC-select d ∈ d_candidates (cheap: no MCMC, just logit fits)
     eps = 1e-10
-    def _gic(p):
-        return 0.5 * (_entropy(real_density + eps, p + eps)
+    def _gic(p, n_params):
+        # GIC = 2*spectral_distance + 2*n_params (AIC-style complexity penalty);
+        # spectral_distance is the symmetric KL between the real and model ESDs.
+        dist = 0.5 * (_entropy(real_density + eps, p + eps)
                       + _entropy(p + eps, real_density + eps))
+        return 2.0 * dist + 2.0 * n_params
 
     from lg_aic_utils import aic_select_d, sample_pairs
     pairs, labels = sample_pairs(G_gcc, sample_edges, seed)
@@ -219,25 +224,30 @@ def fit_country(country: str, edge_path: Path, *, max_iter: int, check_interval:
                       "n": n, "m": best_lg["edges"], "d": best_lg["d"]}}
     gc.collect()
 
-    from logit_graph.sbm import generate_sbm_from_real
+    from logit_graph.sbm import generate_sbm_from_real, fit_sbm_from_graph
+    # Free-parameter counts for the GIC penalty: ER/BA = 1 scalar, WS = 2 (k, p),
+    # SBM = k(k+1)/2 block-edge probabilities (k = number of Louvain communities).
+    _sbm_sizes, _, _ = fit_sbm_from_graph(G_gcc, seed=seed)
+    _sbm_k = len(_sbm_sizes)
+    sbm_n_params = _sbm_k * (_sbm_k + 1) // 2
     baselines = [
-        ("ER", "Erdos-Renyi",
+        ("ER", "Erdos-Renyi", 1,
          lambda: nx.erdos_renyi_graph(n, real_density_val, seed=seed)),
-        ("WS", "Watts-Strogatz",
+        ("WS", "Watts-Strogatz", 2,
          lambda: nx.watts_strogatz_graph(n, max(2, int(round(real_avg_deg))), 0.1, seed=seed)),
-        ("BA", "Barabasi-Albert",
+        ("BA", "Barabasi-Albert", 1,
          lambda: nx.barabasi_albert_graph(n, max(1, int(round(real_avg_deg / 2))), seed=seed)),
-        ("SBM", "Louvain SBM",
+        ("SBM", f"Louvain SBM (k={_sbm_k})", sbm_n_params,
          lambda: generate_sbm_from_real(G_gcc, seed=seed)[0]),
     ]
-    for name, label, gen in baselines:
+    for name, label, n_params, gen in baselines:
         G_m = gen()
         L_m = _sparse_normalised_laplacian(G_m)
         m_density, _ = kpm_spectral_density(
             L_m, n_bins=50, n_moments=kpm_moments,
             n_probes=kpm_probes, seed=seed + hash(name) % 1000,
         )
-        gic_val = float(_gic(m_density))
+        gic_val = float(_gic(m_density, n_params))
         results[name] = {"gic": gic_val, "param": label,
                          "n": G_m.number_of_nodes(), "m": G_m.number_of_edges()}
         print(f"  {name:<2s}  GIC={gic_val:.4f}")
