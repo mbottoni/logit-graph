@@ -224,11 +224,13 @@ def main() -> None:
     real_avg_deg = 2 * m / n
     eps = 1e-10
 
-    def _gic(p):
-        # Symmetric KL acts as our GIC stand-in (matches the notebook's compute_gic).
+    def _gic(p, n_params):
+        # GIC = 2*spectral_distance + 2*n_params (AIC-style complexity penalty);
+        # spectral_distance is the symmetric KL between the real and model ESDs.
         from scipy.stats import entropy as _entropy
-        return 0.5 * (_entropy(real_density + eps, p + eps)
+        dist = 0.5 * (_entropy(real_density + eps, p + eps)
                       + _entropy(p + eps, real_density + eps))
+        return 2.0 * dist + 2.0 * n_params
 
     # LG
     t0 = time.perf_counter()
@@ -237,25 +239,30 @@ def main() -> None:
         L_lg, n_bins=50, n_moments=kpm_moments,
         n_probes=kpm_probes, seed=seed + 99_991,
     )
-    lg_gic = _gic(lg_density)
+    lg_gic = _gic(lg_density, n_params=1)  # LG penalized on sigma only
     results["LG"] = {"gic": float(lg_gic), "param": f"σ={sigma:.3f},β={beta:.3f},d={d_lg}",
                      "n": n, "m": int(best_graph.sum() // 2)}
     print(f"  LG  GIC={lg_gic:.4f}  ({_fmt(time.perf_counter() - t0)})")
     del gm
     gc.collect()
 
-    from logit_graph.sbm import generate_sbm_from_real
+    from logit_graph.sbm import generate_sbm_from_real, fit_sbm_from_graph
+    # Free-parameter counts for the GIC penalty: ER/BA = 1 scalar, WS = 2 (k, p),
+    # SBM = k(k+1)/2 block-edge probabilities (k = number of Louvain communities).
+    _sbm_sizes, _, _ = fit_sbm_from_graph(G_gcc, seed=seed)
+    _sbm_k = len(_sbm_sizes)
+    sbm_n_params = _sbm_k * (_sbm_k + 1) // 2
     baselines = [
-        ("ER", "Erdos-Renyi",
+        ("ER", "Erdos-Renyi", 1,
          lambda: nx.erdos_renyi_graph(n, real_density_val, seed=seed)),
-        ("WS", "Watts-Strogatz",
+        ("WS", "Watts-Strogatz", 2,
          lambda: nx.watts_strogatz_graph(n, max(2, int(round(real_avg_deg))), 0.1, seed=seed)),
-        ("BA", "Barabasi-Albert",
+        ("BA", "Barabasi-Albert", 1,
          lambda: nx.barabasi_albert_graph(n, max(1, int(round(real_avg_deg / 2))), seed=seed)),
-        ("SBM", "Louvain SBM",
+        ("SBM", f"Louvain SBM (k={_sbm_k})", sbm_n_params,
          lambda: generate_sbm_from_real(G_gcc, seed=seed)[0]),
     ]
-    for name, label, gen in baselines:
+    for name, label, n_params, gen in baselines:
         t0 = time.perf_counter()
         G_m = gen()
         L_m = _sparse_normalised_laplacian(G_m)
@@ -263,7 +270,7 @@ def main() -> None:
             L_m, n_bins=50, n_moments=kpm_moments,
             n_probes=kpm_probes, seed=seed + hash(name) % 1000,
         )
-        gic_val = float(_gic(m_density))
+        gic_val = float(_gic(m_density, n_params))
         results[name] = {"gic": gic_val, "param": label,
                          "n": G_m.number_of_nodes(), "m": G_m.number_of_edges()}
         print(f"  {name:<2s}  GIC={gic_val:.4f}  ({_fmt(time.perf_counter() - t0)})")

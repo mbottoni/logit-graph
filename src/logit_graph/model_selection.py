@@ -290,11 +290,19 @@ class GraphModelSelection:
                     self.graph, model,
                 ).compute_spectral_density(self.graph)
                 distance = float(np.linalg.norm(real_spectrum - avg_spectrum))
+                # SBM fits k(k+1)/2 block-edge probabilities (k = number of
+                # Louvain communities). Penalize by the real count, not the
+                # _get_n_params() placeholder of 1, otherwise the GIC treats a
+                # ~k²-parameter block model as cheaply as a 1-parameter ER.
+                from .sbm import fit_sbm_from_graph
+                sbm_sizes, _, _ = fit_sbm_from_graph(self.graph, seed=grid_offset)
+                sbm_k = len(sbm_sizes)
+                sbm_n_params = sbm_k * (sbm_k + 1) // 2
                 current_gic = gic.GraphInformationCriterion(
                     graph=self.graph, model=model, p=None,
-                ).calculate_gic(model_den=avg_spectrum)
-                print(f'{model} gic: {current_gic}')
-                results.append((model, "Louvain-fit", distance, current_gic))
+                ).calculate_gic(model_den=avg_spectrum, n_params=sbm_n_params)
+                print(f'{model} gic: {current_gic} (k={sbm_k}, n_params={sbm_n_params})')
+                results.append((model, f"Louvain-fit (k={sbm_k})", distance, current_gic))
                 continue
             if model == "LG":
                 avg_spectrum = self.calculate_average_spectrum(model, None)
