@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quick ROC at n=1000 for d=0 and d=1 only."""
+"""Quick ROC sanity check at n=100."""
 from __future__ import annotations
 
 import os
@@ -19,28 +19,24 @@ def main() -> None:
     for var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
         os.environ.setdefault(var, "1")
 
-    OUT = Path(__file__).resolve().parents[1] / "images" / "correction_paper" / "roc_quick_n1000_d01"
+    OUT = Path(__file__).resolve().parents[2] / "images" / "correction_paper" / "roc_quick_n100"
     OUT.mkdir(parents=True, exist_ok=True)
 
     cfg = ROCSweepConfig(
-        n_effect=1000,
-        n_values=[1000],
+        n_effect=100,
+        n_values=[10, 100],
         sigma2_values=[-1.0, -1.5, -2.0, -2.5],
-        d_values=[0, 1],
+        d_values=[0, 1, 2],
         n_reps=5,
         n_experiments=30,
-        iter_cap=None,
-        adaptive_stopping=True,
-        adaptive_check_interval=25_000,
-        adaptive_patience=4,
-        adaptive_cv_tol=0.015,
-        adaptive_min_iter=50_000,
-        seed_base=9100,
+        iter_cap=15_000,
+        seed_base=9000,
     )
 
     print(
-        f"ROC n=1000 d={{0,1}}: n_effect={cfg.n_effect}, n_values={cfg.n_values}, "
-        f"reps={cfg.n_reps}, exps={cfg.n_experiments}, adaptive={cfg.adaptive_stopping}",
+        f"Quick ROC: n_effect={cfg.n_effect}, n_values={cfg.n_values}, "
+        f"d={cfg.d_values}, reps={cfg.n_reps}, exps={cfg.n_experiments}, "
+        f"iter_cap={cfg.iter_cap}",
         flush=True,
     )
 
