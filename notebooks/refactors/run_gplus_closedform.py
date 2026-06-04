@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Quick experiment: closed-form (moment-matched) baseline estimators vs the
-current fixed-interval grid search, on gplus ego networks, alongside LG.
+"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid
+search, on Google+ ego networks, alongside a fairly-scored Logit-Graph (LG).
 
-For each gplus ego network in a small size window we score, by spectral GIC
-(2*KL + 2*n_params, KL on the 50-bin normalized-Laplacian density):
+For each gplus ego network in the size window we score, by spectral GIC
+(2*KL + 2*n_params, KL on the 50-bin normalized-Laplacian density, lower=better):
 
-  * LG            -- the real pipeline fit (estimate sigma, generate, best-of)
+  * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
+                     of the spectral density over N_RUNS post-burn-in snapshots
+                     (same averaging convention the baselines get; avoids the
+                     pipeline's best-of-trajectory cherry-pick — see
+                     diag_lg_convergence.py).
   * ER/BA/WS      -- two ways each:
-       grid : current method (fixed interval, grid_points pts, pick min GIC)
+       grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
        cf   : closed-form moment estimate (no search)
   * KR/GRG        -- closed-form only (bonus families)
 
@@ -19,13 +23,18 @@ Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
   KR  d = round(kbar)          (nd even)   (E = nd/2)
   GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
 
-Read-only w.r.t. the library: uses logit_graph's own GIC scorer and the same
-GraphModelComparator LG path; writes only under runs/gplus_closedform/.
+Reproducible: single fixed seed (LG_CF_SEED), BLAS threads pinned to 1, and the
+gplus tarball is auto-extracted if the .edges files are missing. Read-only w.r.t.
+the library; writes only under runs/gplus_closedform/. Findings:
+FINDINGS_gplus_closedform.md.
 
-Env knobs:
-  LG_CF_MIN_NODES (50)  LG_CF_MAX_NODES (120)  LG_CF_MAX_NETS (8)
+Env knobs (all optional):
+  LG_CF_SEED (12345)    LG_CF_QUICK (0 -> full; 1 -> smoke on a few small nets)
+  LG_CF_MIN_NODES (50)  LG_CF_MAX_NODES (300)  LG_CF_MAX_NETS (all)
   LG_CF_N_RUNS (5)      LG_CF_GRID_POINTS (5)
-  LG fair scoring = burn-in (max(4000,25n)) + N_RUNS spectral snapshots
+
+  make gic-gplus-closedform        full run (~30s, 17 nets)
+  make gic-gplus-closedform-quick  smoke (~5s, a few small nets)
 """
 from __future__ import annotations
 
@@ -35,6 +44,10 @@ import sys
 import time
 import warnings
 from pathlib import Path
+
+# Pin BLAS threads BEFORE numpy import for deterministic eigvalsh across runs.
+for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
 
 import numpy as np
 import networkx as nx
@@ -63,11 +76,12 @@ def _int(env, default):
     return int(raw) if raw is not None else default
 
 
+QUICK = os.environ.get("LG_CF_QUICK", "0") == "1"
 MIN_NODES = _int("LG_CF_MIN_NODES", 50)
-MAX_NODES = _int("LG_CF_MAX_NODES", 300)   # matches Makefile gic-gplus (full preset)
-MAX_NETS = _int("LG_CF_MAX_NETS", 10_000)  # run all nets in the window
-N_RUNS = _int("LG_CF_N_RUNS", 5)
-GRID_POINTS = _int("LG_CF_GRID_POINTS", 5)
+MAX_NODES = _int("LG_CF_MAX_NODES", 120 if QUICK else 300)  # full matches gic-gplus
+MAX_NETS = _int("LG_CF_MAX_NETS", 4 if QUICK else 10_000)   # full = all nets in window
+N_RUNS = _int("LG_CF_N_RUNS", 3 if QUICK else 5)
+GRID_POINTS = _int("LG_CF_GRID_POINTS", 3 if QUICK else 5)
 LG_D_LIST = [0, 1, 2]                       # LG d exploration
 # Fair LG scoring: burn-in then N_RUNS spectral snapshots (stride apart),
 # scaled with n. Burn-in past the noisy walk seen in diag_lg_convergence.py.
@@ -75,7 +89,7 @@ LG_BURN_MIN = _int("LG_CF_LG_BURN_MIN", 4000)
 LG_BURN_PER_N = _int("LG_CF_LG_BURN_PER_N", 25)
 LG_STRIDE_MIN = _int("LG_CF_LG_STRIDE_MIN", 600)
 LG_STRIDE_PER_N = _int("LG_CF_LG_STRIDE_PER_N", 6)
-SEED = 12345
+SEED = _int("LG_CF_SEED", 12345)
 
 # Current fixed intervals (mirror simulation.py defaults).
 GRID_INTERVALS = {"ER": (0.01, 0.25), "BA": (1, 8), "WS_k": (2, 10), "WS_p": (0.01, 0.5)}
@@ -248,14 +262,29 @@ def lg_gic(adj, seed):
 # Main
 # ---------------------------------------------------------------------------
 
+def _ensure_data(data_dir):
+    """Extract data/misc/gplus.tar.gz if the .edges files are not present."""
+    if data_dir.exists() and any(data_dir.glob("*.edges")):
+        return
+    tarball = _repo_root / "data" / "misc" / "gplus.tar.gz"
+    if not tarball.exists():
+        return
+    import tarfile
+    print(f"extracting {tarball.relative_to(_repo_root)} ...")
+    with tarfile.open(tarball) as tf:
+        tf.extractall(_repo_root / "data" / "misc")
+
+
 def main():
     data_dir = _repo_root / "data" / "misc" / "gplus"
+    _ensure_data(data_dir)
     files = sorted(data_dir.glob("*.edges"))
     out_dir = _here / "runs" / "gplus_closedform"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"closed-form baseline experiment  window=[{MIN_NODES},{MAX_NODES}]  "
-          f"max_nets={MAX_NETS}  n_runs={N_RUNS}  grid_points={GRID_POINTS}  "
+    print(f"closed-form baseline experiment  seed={SEED}  quick={QUICK}  "
+          f"window=[{MIN_NODES},{MAX_NODES}]  max_nets={MAX_NETS}  "
+          f"n_runs={N_RUNS}  grid_points={GRID_POINTS}  "
           f"lg_burn=max({LG_BURN_MIN},{LG_BURN_PER_N}n)  lg_stride=max({LG_STRIDE_MIN},{LG_STRIDE_PER_N}n)")
 
     rows = []

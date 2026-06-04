@@ -187,6 +187,13 @@ gic-gplus-quick:  ## Smoke run on small gplus subset (~30s)
 	LG_GPLUS_USE_CACHE=0 \
 		$(UV) run python notebooks/refactors/run_gplus_gic.py
 
+gic-gplus-closedform:  ## Closed-form vs grid baselines + fair LG on gplus (reproducible, ~30s)
+	$(UV) run python notebooks/refactors/run_gplus_closedform.py
+
+gic-gplus-closedform-quick:  ## Smoke run of the closed-form baseline experiment (~5s)
+	LG_CF_QUICK=1 \
+		$(UV) run python notebooks/refactors/run_gplus_closedform.py
+
 roc-paper-smoke:  ## Fast probe of ROC curve shape (~30s, n_eff=200, exps=20)
 	LG_EXPERIMENT_MODE=PAPER_ROC_SMOKE \
 	LG_ROC_USE_CACHE=0 \
