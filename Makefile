@@ -149,6 +149,13 @@ gic-arxiv-quick:  ## Smoke run on cit-HepTh (~30-60s, fewer MCMC iters)
 	LG_ARXIV_USE_CACHE=0 \
 		$(UV) run python notebooks/refactors/run_arxiv_gic.py
 
+gic-arxiv-closedform:  ## Closed-form vs grid baselines + fair LG on cit-HepTh BFS subgraphs (reproducible, ~2-4 min)
+	$(UV) run python notebooks/refactors/run_arxiv_closedform.py
+
+gic-arxiv-closedform-quick:  ## Smoke run of the arXiv closed-form experiment (~30s)
+	LG_ARCF_QUICK=1 \
+		$(UV) run python notebooks/refactors/run_arxiv_closedform.py
+
 gic-human-connectomes:  ## Rank LG vs ER/WS/BA by GIC on OASIS-3 human brain nets (~3-5 min)
 	LG_HCONN_USE_CACHE=1 \
 		$(UV) run python notebooks/refactors/run_human_connectomes_gic.py
