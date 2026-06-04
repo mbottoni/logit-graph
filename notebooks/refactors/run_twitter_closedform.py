@@ -1,40 +1,5 @@
 #!/usr/bin/env python3
-"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on Twitter SNAP ego networks, alongside a fairly-scored Logit-Graph (LG).
-
-Twitter twin of run_gplus_closedform.py. The SNAP twitter collection has 973
-ego networks (n up to ~247); we sample MAX_NETS of them (seeded) from the size
-window and score, by spectral GIC (2*KL + 2*n_params, KL on the normalized-
-Laplacian density, lower=better):
-
-  * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
-                     of the spectral density over N_RUNS post-burn-in snapshots.
-  * ER/BA/WS      -- two ways each:
-       grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
-       cf   : closed-form moment estimate (no search)
-  * KR/GRG        -- closed-form only (bonus families)
-
-Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
-  ER  p = 2E/(n(n-1))                      (exact MLE)
-  BA  m = round(E/n)            in [1, n)   (edge count E = m(n-m))
-  WS  k = 2*round(E/n) (even)   in [2, n)   (E = nk/2, rewiring conserves edges)
-  WS  p = 1 - (C_obs/C0)^(1/3), C0 = 3(k-2)/(4(k-1))   (clustering moment)
-  KR  d = round(kbar)          (nd even)   (E = nd/2)
-  GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
-
-Reproducible: fixed seed (LG_TCF_SEED) drives the ego-net sampling and all
-generators; BLAS threads pinned to 1; the twitter tarball is auto-extracted if
-the .edges files are missing. Read-only w.r.t. the library; writes only under
-runs/twitter_closedform/. Findings: FINDINGS_twitter_closedform.md.
-
-Env knobs (all optional):
-  LG_TCF_SEED (12345)    LG_TCF_QUICK (0 -> full; 1 -> smoke on a few ego nets)
-  LG_TCF_MIN_NODES (50)  LG_TCF_MAX_NODES (300)  LG_TCF_MAX_NETS (30)
-  LG_TCF_N_RUNS (5)      LG_TCF_GRID_POINTS (5)
-
-  make gic-twitter-closedform        full run (~1-2 min, 30 ego nets)
-  make gic-twitter-closedform-quick  smoke (~10s, a few ego nets)
-"""
+"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid"""
 from __future__ import annotations
 
 import math
@@ -45,7 +10,6 @@ import time
 import warnings
 from pathlib import Path
 
-# Pin BLAS threads BEFORE numpy import for deterministic eigvalsh across runs.
 for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
 
@@ -92,10 +56,6 @@ SEED = _int("LG_TCF_SEED", 12345)
 GRID_INTERVALS = {"ER": (0.01, 0.25), "BA": (1, 8), "WS_k": (2, 10), "WS_p": (0.01, 0.5)}
 
 
-# ---------------------------------------------------------------------------
-# GIC scoring
-# ---------------------------------------------------------------------------
-
 def gic_of(real_nx, model_name, gen_fn, n_runs, seed):
     """GIC = 2*KL(real_density, mean_model_density) + 2*n_params."""
     n_params = _MODEL_N_PARAMS.get(model_name, 1)
@@ -113,10 +73,6 @@ def gic_of(real_nx, model_name, gen_fn, n_runs, seed):
     scorer = GraphInformationCriterion(real_nx, model=model_name, dist="KL")
     return float(scorer.calculate_gic(model_den=avg, n_params=n_params)), n_params
 
-
-# ---------------------------------------------------------------------------
-# Generators
-# ---------------------------------------------------------------------------
 
 def _er(n, p):
     p = float(np.clip(p, 1e-6, 1.0))
@@ -148,10 +104,6 @@ def _grg(n, r):
     return lambda s: nx.random_geometric_graph(n, r, seed=s)
 
 
-# ---------------------------------------------------------------------------
-# Closed-form estimators
-# ---------------------------------------------------------------------------
-
 def closed_form_params(G):
     n = G.number_of_nodes()
     E = G.number_of_edges()
@@ -173,10 +125,6 @@ def closed_form_params(G):
                 ER=p_er, BA=m_ba, WS_k=k_ws, WS_p=p_ws, KR=d_kr, GRG=r_grg,
                 C_obs=C_obs)
 
-
-# ---------------------------------------------------------------------------
-# Grid search (fixed interval, pick min GIC = best case for grid)
-# ---------------------------------------------------------------------------
 
 def grid_best(real_nx, model_name, n, build_gen, lo, hi, n_runs, seed):
     best = (np.nan, None)
@@ -200,10 +148,6 @@ def grid_best_ws(real_nx, n, n_runs, seed):
                 best = (g, (k, round(float(p), 3)))
     return best
 
-
-# ---------------------------------------------------------------------------
-# LG scored fairly: burn-in + ensemble-mean spectral density
-# ---------------------------------------------------------------------------
 
 def _lg_burn(n):
     return max(LG_BURN_MIN, LG_BURN_PER_N * n)
@@ -250,10 +194,6 @@ def lg_gic(adj, seed):
     return best
 
 
-# ---------------------------------------------------------------------------
-# Data loading / sampling
-# ---------------------------------------------------------------------------
-
 def _ensure_data(data_dir):
     """Extract data/misc/twitter.tar.gz if the .edges files are not present."""
     if data_dir.exists() and any(data_dir.glob("*.edges")):
@@ -294,16 +234,11 @@ def _sample_files():
     allf = sorted(data_dir.glob("*.edges"))
     if not allf:
         return []
-    # Cheap pre-filter to the size window (peek node count without nx parsing).
     inwin = [f for f in allf if MIN_NODES <= _peek_size(f) <= MAX_NODES]
     rng = random.Random(SEED)
     k = min(MAX_NETS, len(inwin))
     return sorted(rng.sample(inwin, k)), len(inwin), len(allf)
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main():
     out_dir = _here / "runs" / "twitter_closedform"
