@@ -2,8 +2,8 @@
 """Benchmark Gibbs paths: legacy → nbrs → adj-only → full fast (Numba CSR).
 
 Usage:
-  uv run python scripts/benchmark_gibbs.py
-  uv run python scripts/benchmark_gibbs.py --n 150 --iters 10000 --d 2
+  uv run python scripts/benchmarks/benchmark_gibbs.py
+  uv run python scripts/benchmarks/benchmark_gibbs.py --n 150 --iters 10000 --d 2
 """
 from __future__ import annotations
 
