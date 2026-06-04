@@ -190,6 +190,13 @@ gic-twitch-quick:  ## Smoke run on smaller Twitch country graphs (~30-60s)
 	LG_TWITCH_USE_CACHE=0 \
 		$(UV) run python notebooks/refactors/run_twitch_gic.py
 
+gic-twitch-closedform:  ## Closed-form vs grid baselines + fair LG on Twitch BFS subgraphs (reproducible, ~2-4 min)
+	$(UV) run python notebooks/refactors/run_twitch_closedform.py
+
+gic-twitch-closedform-quick:  ## Smoke run of the Twitch closed-form experiment (~15s)
+	LG_TWCF_QUICK=1 \
+		$(UV) run python notebooks/refactors/run_twitch_closedform.py
+
 gic-twitter:  ## Rank LG vs ER/WS/BA by GIC on Twitter SNAP ego nets (973 graphs, ~3-5 min)
 	LG_TWITTER_USE_CACHE=1 \
 		$(UV) run python notebooks/refactors/run_twitter_gic.py
