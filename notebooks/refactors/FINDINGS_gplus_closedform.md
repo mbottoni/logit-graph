@@ -1,66 +1,78 @@
 # Closed-form baseline estimators vs grid search (gplus) — findings
 
-Quick experiment (`run_gplus_closedform.py`) on 8 gplus ego networks
-(50 ≤ n ≤ 120), n_runs=3, grid_points=3, LG via the real pipeline (best of
-d∈{0,1}). Baselines scored two ways and ranked by spectral GIC (2·KL + 2·n_params):
+Experiment: `run_gplus_closedform.py`. Score ER/BA/WS/KR/GRG against gplus ego
+networks by spectral GIC (2·KL + 2·n_params, KL on the 50-bin normalized-
+Laplacian density), comparing **closed-form moment estimators** vs the current
+**fixed-interval grid**, alongside LG fit via the real pipeline.
 
-- **grid** — current method: fixed interval, 3 grid points, **selected by min GIC**
-  (best case for the grid).
-- **cf** — closed-form moment estimate (ER p=density [exact MLE]; BA m=round(E/n);
-  WS k=2·round(E/n), p from clustering; KR d=round(2E/n); GRG r=√(k̄/(π(n−1)))).
+## Full run (matches Makefile `gic-gplus` preset)
 
-## Aggregate (mean GIC across 8 nets, lower = better)
+- Window **50 ≤ n ≤ 300** → **17** ego networks (all of them).
+- **n_runs=5, grid_points=5**, LG_ITER=2000, LG d-exploration **d ∈ {0,1,2}**.
+- grid = fixed interval, 5 points, **selected by min GIC** (best case for grid).
+- cf = closed-form: ER p=density (MLE); BA m=round(E/n); WS k=2·round(E/n),
+  p from clustering; KR d=round(2E/n); GRG r=√(k̄/(π(n−1))).
+
+### Aggregate (mean GIC across 17 nets, lower = better)
 
 | family | grid | closed-form | Δ(grid−cf) | cf wins |
 |---|---|---|---|---|
-| ER | 4.363 | 4.330 | +0.03 | 38% |
-| BA | 3.449 | **4.223** | −0.78 | 12% |
-| WS | 4.829 | **10.823** | −5.99 | 0% |
+| ER | **3.328** | 4.508 | −1.18 | 0% |
+| BA | **3.352** | 4.351 | −1.00 | 12% |
+| WS | **4.979** | 9.081 | −4.10 | 0% |
 
-Mean rank (LG + closed-form baselines): BA 2.63, LG 2.88, ER 3.00, KR 3.25,
-GRG 3.25, WS 6.00.
+Closed-form only (no grid): KR 4.499, GRG **3.840**, and **LG 3.999**.
 
-## Conclusion — closed-form moment matching does NOT improve baseline GIC
+Mean rank (LG + closed-form baselines): **GRG 2.12**, **LG 2.41**, BA 2.94,
+KR 3.71, ER 3.82, WS 6.00.
 
-The hypothesis from the prior analysis (that the fixed grid intervals are too
-tight and that density-matched closed forms would lower baseline GIC) is
-**refuted**:
+## Conclusion 1 — closed-form does NOT improve baseline GIC (confirmed at scale)
 
-- **ER**: a wash (the KL distance on the normalized-Laplacian histogram is
-  nearly flat in p around the optimum).
-- **BA**: closed-form is *worse* (density-matched m overshoots).
-- **WS**: closed-form is *dramatically* worse (density-matched k≈2E/n, often
-  18–44, produces a near-lattice spectrum nothing like the clustered real graph).
+At full scale with a finer grid and more averaging the verdict is sharper than
+the pilot: closed-form is **worse for every searchable family** — ER −1.18,
+BA −1.00, WS −4.10 — and **never wins for ER or WS** (0%).
 
 **Why:** GIC compares Laplacian *spectra*, not edge counts. For these clustered
-ego networks (C≈0.3–0.7) the spectral-GIC-optimal baseline parameter sits at a
-**lower density than the real graph**. Matching the first moment (density/degree)
-overshoots into worse spectral territory. The grid winner is consistently a
-*sparser* graph than the data (ER p≈0.13 regardless of real density; BA m≈4.5–8;
-WS k≈8–10).
+ego networks (C ≈ 0.3–0.73) the spectral-GIC-optimal baseline sits at a **much
+lower density than the data**. The grid winner is consistently far sparser than
+density-matching (ER p≈0.01–0.13 vs real 0.03–0.41; BA m≈3–8 vs cf 4–30; WS
+k≈6–10 vs cf 8–60). Matching the first moment overshoots into worse spectral
+territory — catastrophically for WS, whose density-matched k (up to 60) yields a
+near-lattice spectrum nothing like the real graph.
 
-This also overturns the earlier "interval cap" concern. Network [7] has density
-0.407 (above the ER cap 0.25), yet its GIC-optimal ER is still p≈0.13 — the cap
-never binds harmfully because the optimum is at low density anyway.
+The earlier "interval-cap" worry is also refuted: net [11] has density 0.407
+(above the ER cap 0.25), yet its GIC-optimal ER is p≈0.19 — the cap never binds
+harmfully because the optimum is at low density anyway.
 
-## What this means for the comparison
+→ Closed-form estimation is the right *generative* estimator (MLE for ER, moment
+match otherwise) but the **wrong** estimator for a spectral objective. Using it
+would *handicap* the baselines and inflate LG's apparent edge.
 
-The current grid already gives baselines their *best* GIC, so it is the **fair,
-strong-baseline** choice. Swapping in closed-form estimators would *handicap* the
-baselines (especially WS) and inflate LG's apparent advantage — the opposite of
-what we'd want for a credible comparison.
+## Conclusion 2 — the finer grid + more runs DID lower grid baseline GIC
 
-The closed forms remain the correct *generative* estimators (MLE for ER; moment
-match for the rest) — they are just not the GIC-minimizing parameters, because
-spectral fit ≠ density fit.
+vs the pilot (gp=3, n_runs=3): ER grid 4.36 → **3.33**, BA 3.45 → **3.35**,
+WS 4.83 → **4.98** (≈flat). Selecting by GIC over a finer low-density grid with
+more averaging is the **real** lever for tightening baseline GIC — not the point
+estimator.
 
-## Legitimate improvements that DO hold (not closed-form)
+## Two surprises worth a follow-up
 
-1. **Selection rule** — the live pipeline (`model_selection.py:378`) picks the
-   grid winner by min L2 density distance but reports a KL-based GIC. Selecting by
-   GIC (as this experiment did) gives each baseline its true family minimum.
-2. **Grid resolution / averaging** — a slightly finer grid centered on the
-   low-density region plus larger n_runs would tighten baseline GIC further.
+1. **GRG (closed-form) is the strongest baseline here** — best mean rank (2.12)
+   and lowest mean GIC (3.840), beating LG (3.999). The random geometric graph,
+   with its single closed-form radius, captures the high-clustering/spatial
+   structure of gplus ego nets well. GRG is **not** in the pipeline's baseline
+   set (`["ER","WS","BA","SBM"]`); adding it would be a stronger comparison.
 
-Closed-form estimation is a dead end for a spectral objective; the lever is the
-search objective and resolution, not the point estimator.
+2. **Well-fit ER and BA are competitive with LG.** On mean GIC, grid-ER (3.33)
+   and grid-BA (3.35) are *below* LG (4.00) on this window. The rank table favors
+   LG only because it ranks LG against the *handicapped* closed-form ER/BA/WS.
+   Caveat: LG here is capped at 2000 Gibbs iters (possibly undertrained at
+   n≈300), so this is an observation to investigate, not a firm claim.
+
+## Net takeaway
+
+Closed-form is a dead end for improving baseline GIC. The levers that work are
+(a) select the grid winner by GIC (the live pipeline uses L2 — `model_selection.py:378`),
+(b) a finer low-density grid + larger n_runs, and (c) consider adding GRG as a
+baseline. Worth re-checking LG convergence at n≈300 before drawing comparison
+conclusions.

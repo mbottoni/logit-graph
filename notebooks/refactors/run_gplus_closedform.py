@@ -31,6 +31,7 @@ from __future__ import annotations
 import math
 import os
 import sys
+import time
 import warnings
 from pathlib import Path
 
@@ -57,11 +58,12 @@ def _int(env, default):
 
 
 MIN_NODES = _int("LG_CF_MIN_NODES", 50)
-MAX_NODES = _int("LG_CF_MAX_NODES", 120)
-MAX_NETS = _int("LG_CF_MAX_NETS", 8)
-N_RUNS = _int("LG_CF_N_RUNS", 3)
-GRID_POINTS = _int("LG_CF_GRID_POINTS", 3)
-LG_ITER = _int("LG_CF_LG_ITER", 1500)
+MAX_NODES = _int("LG_CF_MAX_NODES", 300)   # matches Makefile gic-gplus (full preset)
+MAX_NETS = _int("LG_CF_MAX_NETS", 10_000)  # run all nets in the window
+N_RUNS = _int("LG_CF_N_RUNS", 5)
+GRID_POINTS = _int("LG_CF_GRID_POINTS", 5)
+LG_ITER = _int("LG_CF_LG_ITER", 2000)      # matches Makefile gic-gplus
+LG_D_LIST = [0, 1, 2]                       # LG d exploration
 SEED = 12345
 
 # Current fixed intervals (mirror simulation.py defaults).
@@ -185,10 +187,10 @@ def grid_best_ws(real_nx, n, n_runs, seed):
 def lg_gic(adj, seed):
     lg_params = dict(max_iterations=LG_ITER, patience=300, edge_delta=None,
                      min_gic_threshold=5, check_interval=50)
-    cmp = GraphModelComparator(d_list=[0, 1], lg_params=lg_params, dist_type="KL",
+    cmp = GraphModelComparator(d_list=LG_D_LIST, lg_params=lg_params, dist_type="KL",
                                verbose=False, random_state=seed)
     best = (np.inf, None)
-    for d in (0, 1):
+    for d in LG_D_LIST:
         try:
             _, sigma, gic_val, *_ = cmp._get_logit_graph_for_d(adj, d)
             if gic_val < best[0]:
@@ -222,6 +224,7 @@ def main():
         if not (MIN_NODES <= n <= MAX_NODES):
             continue
         picked += 1
+        t0 = time.perf_counter()
         cf = closed_form_params(G)
         adj = nx.to_numpy_array(G)
         real_nx = nx.from_numpy_array(adj)
@@ -256,7 +259,8 @@ def main():
         # KR / GRG closed-form only
         kr_cf, _ = gic_of(real_nx, "KR", _kr(n, cf["KR"]), N_RUNS, SEED)
         grg_cf, _ = gic_of(real_nx, "GRG", _grg(n, cf["GRG"]), N_RUNS, SEED)
-        print(f"    KR cf={kr_cf:.3f} (d={cf['KR']})   GRG cf={grg_cf:.3f} (r={cf['GRG']:.3f})")
+        print(f"    KR cf={kr_cf:.3f} (d={cf['KR']})   GRG cf={grg_cf:.3f} (r={cf['GRG']:.3f})"
+              f"   [{time.perf_counter() - t0:.0f}s]")
 
         rows.append(dict(
             name=name, n=n, E=cf["E"], density=cf["density"], kbar=cf["kbar"],
