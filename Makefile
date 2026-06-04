@@ -160,6 +160,13 @@ gic-connectomes-quick:  ## Smoke run on small connectomes only (~30s)
 	LG_CONN_USE_CACHE=0 \
 		$(UV) run python notebooks/refactors/run_connectomes_gic.py
 
+gic-connectomes-closedform:  ## Closed-form vs grid baselines + fair LG on animal connectomes (reproducible, ~1-2 min)
+	$(UV) run python notebooks/refactors/run_connectomes_closedform.py
+
+gic-connectomes-closedform-quick:  ## Smoke run of the connectomes closed-form experiment (~10s)
+	LG_CCF_QUICK=1 \
+		$(UV) run python notebooks/refactors/run_connectomes_closedform.py
+
 gic-twitch:  ## Rank LG vs ER/WS/BA by GIC on Twitch country networks (6 graphs, ~2-5 min)
 	LG_TWITCH_USE_CACHE=1 \
 		$(UV) run python notebooks/refactors/run_twitch_gic.py
