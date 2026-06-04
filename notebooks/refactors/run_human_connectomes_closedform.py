@@ -1,44 +1,5 @@
 #!/usr/bin/env python3
-"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on OASIS-3 human brain connectomes, alongside a fairly-scored LG.
-
-Human-connectome twin of run_connectomes_closedform.py. The OASIS-3 dataset has
-several parcellation scales (different node counts) with hundreds of subjects
-each; all subjects in a scale share a node count. We sample PER_SCALE subjects
-from each of a few scales (seeded) and score, by spectral GIC
-(2*KL + 2*n_params, KL on the normalized-Laplacian density, lower=better):
-
-  * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
-                     of the spectral density over N_RUNS post-burn-in snapshots.
-  * ER/BA/WS      -- two ways each:
-       grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
-       cf   : closed-form moment estimate (no search)
-  * KR/GRG        -- closed-form only (bonus families)
-
-Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
-  ER  p = 2E/(n(n-1))                      (exact MLE)
-  BA  m = round(E/n)            in [1, n)   (edge count E = m(n-m))
-  WS  k = 2*round(E/n) (even)   in [2, n)   (E = nk/2, rewiring conserves edges)
-  WS  p = 1 - (C_obs/C0)^(1/3), C0 = 3(k-2)/(4(k-1))   (clustering moment)
-  KR  d = round(kbar)          (nd even)   (E = nd/2)
-  GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
-
-Brain graphs are weighted (fiber density); we binarize to the undirected,
-unweighted largest connected component. Dense eigvalsh for n<=500, deterministic
-KPM above. Reproducible: fixed seed (LG_HCF_SEED) drives the subject sampling
-and all generators; BLAS threads pinned to 1. Read-only w.r.t. the library;
-writes only under runs/human_connectomes_closedform/. Findings:
-FINDINGS_human_connectomes_closedform.md.
-
-Env knobs (all optional):
-  LG_HCF_SEED (12345)   LG_HCF_QUICK (0 -> full; 1 -> smoke, one small scale)
-  LG_HCF_SCALES (oasis3 scale1,scale2,scale3 + repeated_10_scale_250)
-  LG_HCF_PER_SCALE (8)  LG_HCF_N_RUNS (5)  LG_HCF_GRID_POINTS (5)
-  LG_HCF_MIN_NODES (20) LG_HCF_MAX_NODES (500)
-
-  make gic-human-connectomes-closedform        full run
-  make gic-human-connectomes-closedform-quick  smoke
-"""
+"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid"""
 from __future__ import annotations
 
 import math
@@ -49,7 +10,6 @@ import time
 import warnings
 from pathlib import Path
 
-# Pin BLAS threads BEFORE numpy import for deterministic eigvalsh across runs.
 for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
 
@@ -101,10 +61,6 @@ SEED = _int("LG_HCF_SEED", 12345)
 GRID_INTERVALS = {"ER": (0.01, 0.25), "BA": (1, 8), "WS_k": (2, 10), "WS_p": (0.01, 0.5)}
 
 
-# ---------------------------------------------------------------------------
-# GIC scoring
-# ---------------------------------------------------------------------------
-
 def gic_of(real_nx, model_name, gen_fn, n_runs, seed):
     """GIC = 2*KL(real_density, mean_model_density) + 2*n_params."""
     n_params = _MODEL_N_PARAMS.get(model_name, 1)
@@ -122,10 +78,6 @@ def gic_of(real_nx, model_name, gen_fn, n_runs, seed):
     scorer = GraphInformationCriterion(real_nx, model=model_name, dist="KL")
     return float(scorer.calculate_gic(model_den=avg, n_params=n_params)), n_params
 
-
-# ---------------------------------------------------------------------------
-# Generators
-# ---------------------------------------------------------------------------
 
 def _er(n, p):
     p = float(np.clip(p, 1e-6, 1.0))
@@ -157,10 +109,6 @@ def _grg(n, r):
     return lambda s: nx.random_geometric_graph(n, r, seed=s)
 
 
-# ---------------------------------------------------------------------------
-# Closed-form estimators
-# ---------------------------------------------------------------------------
-
 def closed_form_params(G):
     n = G.number_of_nodes()
     E = G.number_of_edges()
@@ -182,10 +130,6 @@ def closed_form_params(G):
                 ER=p_er, BA=m_ba, WS_k=k_ws, WS_p=p_ws, KR=d_kr, GRG=r_grg,
                 C_obs=C_obs)
 
-
-# ---------------------------------------------------------------------------
-# Grid search (fixed interval, pick min GIC = best case for grid)
-# ---------------------------------------------------------------------------
 
 def grid_best(real_nx, model_name, n, build_gen, lo, hi, n_runs, seed):
     best = (np.nan, None)
@@ -209,10 +153,6 @@ def grid_best_ws(real_nx, n, n_runs, seed):
                 best = (g, (k, round(float(p), 3)))
     return best
 
-
-# ---------------------------------------------------------------------------
-# LG scored fairly: burn-in + ensemble-mean spectral density
-# ---------------------------------------------------------------------------
 
 def _lg_burn(n):
     return max(LG_BURN_MIN, LG_BURN_PER_N * n)
@@ -259,10 +199,6 @@ def lg_gic(adj, seed):
     return best
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
 def _load_graphml(path):
     """Undirected, unweighted (binary) largest connected component."""
     G = nx.read_graphml(path)
@@ -286,10 +222,6 @@ def _sample_subjects():
             chosen.append((scale, p))
     return chosen
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main():
     out_dir = _here / "runs" / "human_connectomes_closedform"
@@ -319,7 +251,7 @@ def main():
         picked += 1
         t0 = time.perf_counter()
         cf = closed_form_params(G)
-        adj = nx.to_numpy_array(G, weight=None)  # binarize
+        adj = nx.to_numpy_array(G, weight=None)
         real_nx = nx.from_numpy_array(adj)
         name = f"{scale.replace('oasis3_graphmls_', '').replace('repeated_10_', 'rep_')}/{path.stem[:8]}"
         print(f"\n[{picked}] {name}  n={n}  E={cf['E']}  density={cf['density']:.3f}  "
