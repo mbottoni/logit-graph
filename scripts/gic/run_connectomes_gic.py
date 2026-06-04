@@ -5,7 +5,7 @@ For each ``data/connectomes/*.graphml`` file, fits the Logit-Graph model
 (AIC d̂ + σ̂) and three baselines (Erdős–Rényi, Watts–Strogatz,
 Barabási–Albert), scores each by spectral GIC against the real graph,
 and ranks them. Outputs per-graph reports under
-``notebooks/refactors/runs/connectomes/{graph}/`` and aggregate tables/plots.
+``scripts/gic/runs/connectomes/{graph}/`` and aggregate tables/plots.
 
 Env-var overrides:
   LG_CONN_MAX_NODES     cap on |V|     (default 2000)

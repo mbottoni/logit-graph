@@ -5,7 +5,7 @@ For each ``data/misc/twitter/*.edges`` file with ``MIN_NODES ≤ n ≤ MAX_NODES
 fits the Logit-Graph model (AIC d̂ + σ̂) and three baselines (Erdős–Rényi,
 Watts–Strogatz, Barabási–Albert), scores each by spectral GIC against the
 real graph, and ranks them. Outputs per-graph reports under
-``notebooks/refactors/runs/twitter/{graph}/`` and aggregate tables/plots.
+``scripts/gic/runs/twitter/{graph}/`` and aggregate tables/plots.
 
 Env-var overrides (all optional):
   LG_TWITTER_MAX_NODES     cap on |V| (default 300, set to "none" for no cap)

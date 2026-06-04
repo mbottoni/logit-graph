@@ -8,7 +8,7 @@ graph, and ranks them.
 
 Same pipeline as ``run_gplus_gic.py`` (PR #24) — KPM spectral density +
 parallel worker processes via platform_fit_utils. Outputs per-graph
-reports under ``notebooks/refactors/runs/facebook_ego/{graph}/`` and an
+reports under ``scripts/gic/runs/facebook_ego/{graph}/`` and an
 aggregate leaderboard plot.
 
 Env-var overrides:
