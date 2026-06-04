@@ -192,6 +192,13 @@ gic-twitter-quick:  ## Smoke run on small Twitter ego nets (~15-30s)
 	LG_TWITTER_USE_CACHE=0 \
 		$(UV) run python notebooks/refactors/run_twitter_gic.py
 
+gic-twitter-closedform:  ## Closed-form vs grid baselines + fair LG on Twitter ego nets (reproducible, ~1-2 min)
+	$(UV) run python notebooks/refactors/run_twitter_closedform.py
+
+gic-twitter-closedform-quick:  ## Smoke run of the Twitter closed-form experiment (~10s)
+	LG_TCF_QUICK=1 \
+		$(UV) run python notebooks/refactors/run_twitter_closedform.py
+
 gic-gplus:  ## Rank LG vs ER/WS/BA by GIC on Google+ ego nets (~3-5 min)
 	LG_GPLUS_USE_CACHE=1 \
 		$(UV) run python notebooks/refactors/run_gplus_gic.py
