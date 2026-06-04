@@ -124,6 +124,13 @@ gic-facebook-ego-quick:  ## Smoke run on small SNAP Facebook ego networks (~15s)
 	LG_FBEGO_USE_CACHE=0 \
 		$(UV) run python notebooks/refactors/run_facebook_ego_gic.py
 
+gic-facebook-ego-closedform:  ## Closed-form vs grid baselines + fair LG on the 10 Facebook ego nets (reproducible, ~2-4 min)
+	$(UV) run python notebooks/refactors/run_facebook_ego_closedform.py
+
+gic-facebook-ego-closedform-quick:  ## Smoke run of the Facebook-ego closed-form experiment (~20s)
+	LG_FBE_QUICK=1 \
+		$(UV) run python notebooks/refactors/run_facebook_ego_closedform.py
+
 gic-facebook:  ## Rank LG vs ER/WS/BA by GIC on full MUSAE Facebook page-page graph (~2-3 min)
 	LG_FB_USE_CACHE=1 \
 		$(UV) run python notebooks/refactors/run_facebook_gic.py
