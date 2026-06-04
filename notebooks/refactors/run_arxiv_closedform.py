@@ -1,36 +1,5 @@
 #!/usr/bin/env python3
-"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on the cit-HepTh arXiv citation network, alongside a fairly-scored LG.
-
-cit-HepTh is one large graph (~27.8k nodes, ~352k edges) — far above the size at
-which the LG Gibbs chain mixes in reasonable time. So we sample SUBGRAPHS
-**BFS-connected subgraphs** capped at CAP nodes (seeded random BFS roots) and
-score each, measuring the families' fit to real *local* citation sub-networks
-rather than the global graph. Spectral GIC (2*KL + 2*n_params, KL on the
-normalized-Laplacian density, lower=better):
-
-  * LG            -- best of d in {0,1,2}, scored by burn-in + ensemble mean of
-                     the spectral density over N_RUNS post-burn-in snapshots.
-  * ER/BA/WS      -- grid (fixed interval, pick min GIC) and cf (closed-form).
-  * KR/GRG        -- closed-form only.
-
-Closed-form estimators (n nodes, E edges, kbar = 2E/n):
-  ER p=2E/(n(n-1)) [MLE]; BA m=round(E/n); WS k=2*round(E/n)+clustering p;
-  KR d=round(kbar); GRG r=sqrt(kbar/(pi*(n-1))).
-
-Reproducible: fixed seed (LG_ARCF_SEED) drives BFS roots + generators; BLAS
-pinned. Dense eigvalsh for n<=500, deterministic KPM above. Read-only w.r.t. the
-library; writes only under runs/arxiv_closedform/. Findings:
-FINDINGS_arxiv_closedform.md.
-
-Env knobs (all optional):
-  LG_ARCF_SEED (12345)   LG_ARCF_QUICK (0 -> SUBGRAPHS; 1 -> a few small ones)
-  LG_ARCF_CAP (700)      LG_ARCF_SUBGRAPHS (16)
-  LG_ARCF_N_RUNS (5)     LG_ARCF_GRID_POINTS (5)   LG_ARCF_DATA (path override)
-
-  make gic-arxiv-closedform        full run (BFS subgraphs of cit-HepTh)
-  make gic-arxiv-closedform-quick  smoke (a few subgraphs)
-"""
+"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid"""
 from __future__ import annotations
 
 import math
@@ -222,10 +191,6 @@ def lg_gic(adj, seed):
             print(f"    LG d={d} failed: {e}")
     return best
 
-
-# ---------------------------------------------------------------------------
-# Citation graph loading + BFS subgraph sampling
-# ---------------------------------------------------------------------------
 
 def _data_path():
     override = os.environ.get("LG_ARCF_DATA")
