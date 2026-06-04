@@ -24,7 +24,8 @@ GraphModelComparator LG path; writes only under runs/gplus_closedform/.
 
 Env knobs:
   LG_CF_MIN_NODES (50)  LG_CF_MAX_NODES (120)  LG_CF_MAX_NETS (8)
-  LG_CF_N_RUNS (3)      LG_CF_GRID_POINTS (3)  LG_CF_LG_ITER (1500)
+  LG_CF_N_RUNS (5)      LG_CF_GRID_POINTS (5)
+  LG fair scoring = burn-in (max(4000,25n)) + N_RUNS spectral snapshots
 """
 from __future__ import annotations
 
@@ -49,7 +50,12 @@ for p in (_src, _here):
 warnings.filterwarnings("ignore")
 
 from logit_graph.gic import GraphInformationCriterion, _MODEL_N_PARAMS  # noqa: E402
-from logit_graph.simulation import GraphModelComparator  # noqa: E402
+from logit_graph.graph import GraphModel  # noqa: E402
+from logit_graph.simulation import (  # noqa: E402
+    _direct_er_at_sigma,
+    _warm_start_er_p,
+    estimate_sigma_only,
+)
 
 
 def _int(env, default):
@@ -62,8 +68,13 @@ MAX_NODES = _int("LG_CF_MAX_NODES", 300)   # matches Makefile gic-gplus (full pr
 MAX_NETS = _int("LG_CF_MAX_NETS", 10_000)  # run all nets in the window
 N_RUNS = _int("LG_CF_N_RUNS", 5)
 GRID_POINTS = _int("LG_CF_GRID_POINTS", 5)
-LG_ITER = _int("LG_CF_LG_ITER", 2000)      # matches Makefile gic-gplus
 LG_D_LIST = [0, 1, 2]                       # LG d exploration
+# Fair LG scoring: burn-in then N_RUNS spectral snapshots (stride apart),
+# scaled with n. Burn-in past the noisy walk seen in diag_lg_convergence.py.
+LG_BURN_MIN = _int("LG_CF_LG_BURN_MIN", 4000)
+LG_BURN_PER_N = _int("LG_CF_LG_BURN_PER_N", 25)
+LG_STRIDE_MIN = _int("LG_CF_LG_STRIDE_MIN", 600)
+LG_STRIDE_PER_N = _int("LG_CF_LG_STRIDE_PER_N", 6)
 SEED = 12345
 
 # Current fixed intervals (mirror simulation.py defaults).
@@ -181,20 +192,53 @@ def grid_best_ws(real_nx, n, n_runs, seed):
 
 
 # ---------------------------------------------------------------------------
-# LG via the real pipeline (best of d in {0,1})
+# LG scored FAIRLY: burn-in + ensemble-mean spectral density (same convention
+# as the baselines, which average n_runs sample densities). This avoids the
+# pipeline's "best graph over a noisy trajectory" cherry-pick, which is
+# downward-biased and budget-dependent (see diag_lg_convergence.py).
 # ---------------------------------------------------------------------------
 
+def _lg_burn(n):
+    return max(LG_BURN_MIN, LG_BURN_PER_N * n)
+
+
+def _lg_stride(n):
+    return max(LG_STRIDE_MIN, LG_STRIDE_PER_N * n)
+
+
+def lg_gic_one_d(adj, d, seed):
+    n = adj.shape[0]
+    real_nx = nx.from_numpy_array(adj)
+    scorer = GraphInformationCriterion(real_nx, model="LG", dist="KL")
+    sigma, _ = estimate_sigma_only(adj, d=d, feature_mode="incremental")
+
+    dens = []
+    if d == 0:
+        # d=0 equilibrium is ER(expit(sigma)); ensemble of independent draws.
+        for r in range(N_RUNS):
+            g = nx.from_numpy_array(_direct_er_at_sigma(n, sigma, seed=seed + r))
+            dens.append(scorer.compute_spectral_density(g)[0])
+    else:
+        gm = GraphModel(n=n, d=d, sigma=sigma, er_p=_warm_start_er_p(sigma),
+                        layer2=True, feature_mode="incremental", seed=seed)
+        for _ in range(_lg_burn(n)):
+            gm.add_remove_edge()
+        for s in range(N_RUNS):
+            for _ in range(_lg_stride(n)):
+                gm.add_remove_edge()
+            dens.append(scorer.compute_spectral_density(nx.from_numpy_array(gm.graph))[0])
+
+    avg = np.mean(dens, axis=0)
+    return float(scorer.calculate_gic(model_den=avg, n_params=1)), sigma
+
+
 def lg_gic(adj, seed):
-    lg_params = dict(max_iterations=LG_ITER, patience=300, edge_delta=None,
-                     min_gic_threshold=5, check_interval=50)
-    cmp = GraphModelComparator(d_list=LG_D_LIST, lg_params=lg_params, dist_type="KL",
-                               verbose=False, random_state=seed)
     best = (np.inf, None)
     for d in LG_D_LIST:
         try:
-            _, sigma, gic_val, *_ = cmp._get_logit_graph_for_d(adj, d)
-            if gic_val < best[0]:
-                best = (gic_val, d)
+            g, _ = lg_gic_one_d(adj, d, seed + d)
+            if g < best[0]:
+                best = (g, d)
         except Exception as e:
             print(f"    LG d={d} failed: {e}")
     return best
@@ -211,7 +255,8 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"closed-form baseline experiment  window=[{MIN_NODES},{MAX_NODES}]  "
-          f"max_nets={MAX_NETS}  n_runs={N_RUNS}  grid_points={GRID_POINTS}  lg_iter={LG_ITER}")
+          f"max_nets={MAX_NETS}  n_runs={N_RUNS}  grid_points={GRID_POINTS}  "
+          f"lg_burn=max({LG_BURN_MIN},{LG_BURN_PER_N}n)  lg_stride=max({LG_STRIDE_MIN},{LG_STRIDE_PER_N}n)")
 
     rows = []
     picked = 0

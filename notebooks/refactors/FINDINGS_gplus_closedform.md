@@ -69,6 +69,36 @@ estimator.
    Caveat: LG here is capped at 2000 Gibbs iters (possibly undertrained at
    n≈300), so this is an observation to investigate, not a firm claim.
 
+## Update — fair LG scoring (burn-in + ensemble mean), n_runs=5, grid=5
+
+The first run scored LG via the pipeline's "best graph over a 2000-iter
+trajectory". `diag_lg_convergence.py` showed that GIC is a **noisy stationary
+walk**, that 2000 iters is mid-burn-in for large n and *pre*-burn-in for small
+n (n=54 still at GIC≈13 at iter 2000), and that best-of-trajectory cherry-picks
+the min of noise. We replaced it with the **same convention as the baselines**:
+burn in (max(4000, 25n) steps) then average the spectral density over 5
+post-burn-in snapshots → one GIC.
+
+Effect — **LG improves** (the 2000 cap had been *under*training it):
+
+| model | mean GIC |
+|---|---|
+| LG — best-of-2000 (old) | 3.999 |
+| **LG — fair burn-in + ensemble** | **3.549** |
+| ER grid | 3.328 |
+| BA grid | 3.352 |
+| GRG cf | 3.840 |
+| WS grid | 4.979 |
+
+LG now has the best mean rank vs the closed-form baselines (1.47) and beats GRG.
+But against **properly grid-fit** ER/BA it is still a hair behind on mean GIC
+(LG 3.55 vs ER 3.33, BA 3.35) — competitive, roughly tied, not a clear win.
+Per-net it is mixed: LG wins the denser/mid nets, ER/BA win several sparse ones.
+
+Caveat on fairness: baselines grid-search their parameter to *minimize* GIC,
+while LG's σ is the MLE (not GIC-optimized) and only d∈{0,1,2} is searched — so
+the baselines retain a small parameter-search advantage.
+
 ## Net takeaway
 
 Closed-form is a dead end for improving baseline GIC. The levers that work are
