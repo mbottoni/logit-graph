@@ -72,7 +72,7 @@ def main() -> None:
     print(f"Saved {OUT / 'aic_d_confusion_n_sweep.png'}")
     print(f"Trials CSV: {aic_trials_path(OUT, cfg)}")
     print(f"Results JSON: {aic_results_json_path(OUT, cfg)}")
-    print("Replot later: python notebooks/refactors/run_aic_replot.py")
+    print("Replot later: python scripts/experiments/run_aic_replot.py")
 
     summary = summarize_aic_insights(conf, cfg.d_true_values)
     print(summary)

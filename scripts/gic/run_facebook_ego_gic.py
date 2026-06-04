@@ -1,30 +1,35 @@
 #!/usr/bin/env python3
-"""Fit LG + ER/WS/BA on every animal connectome and rank them by GIC.
+"""Fit LG + ER/WS/BA on every SNAP Facebook ego network and rank them by GIC.
 
-For each ``data/connectomes/*.graphml`` file, fits the Logit-Graph model
-(AIC d̂ + σ̂) and three baselines (Erdős–Rényi, Watts–Strogatz,
-Barabási–Albert), scores each by spectral GIC against the real graph,
-and ranks them. Outputs per-graph reports under
-``notebooks/refactors/runs/connectomes/{graph}/`` and aggregate tables/plots.
+For each ``data/misc/facebook/*.edges`` ego graph (10 networks, n from 52
+to 1034) fits the Logit-Graph model (AIC d̂ + offset-logit σ̂) and the
+three classical baselines, scores each by spectral GIC against the real
+graph, and ranks them.
+
+Same pipeline as ``run_gplus_gic.py`` (PR #24) — KPM spectral density +
+parallel worker processes via platform_fit_utils. Outputs per-graph
+reports under ``scripts/gic/runs/facebook_ego/{graph}/`` and an
+aggregate leaderboard plot.
 
 Env-var overrides:
-  LG_CONN_MAX_NODES     cap on |V|     (default 2000)
-  LG_CONN_MIN_NODES     floor on |V|   (default 20)
-  LG_CONN_LG_ITER       LG MCMC cap    (default 1500)
-  LG_CONN_GRID_POINTS   baseline grid  (default 3)
-  LG_CONN_N_RUNS        baseline reps  (default 1)
-  LG_CONN_USE_CACHE     reload finished (0/1, default 1)
-  LG_CONN_WORKERS       parallel proc count (default cpu-1)
-  LG_CONN_QUICK         set to 1 for smoke (MAX_NODES=300, fewer iter)
+  LG_FBEGO_MAX_NODES   cap on |V|        (default None — keep all 10)
+  LG_FBEGO_MIN_NODES   floor on |V|      (default 30)
+  LG_FBEGO_LG_ITER     LG MCMC cap       (default 2000)
+  LG_FBEGO_GRID_POINTS baseline grid     (default 3)
+  LG_FBEGO_N_RUNS      baseline reps     (default 1)
+  LG_FBEGO_USE_CACHE   reload finished networks (default 1)
+  LG_FBEGO_WORKERS     parallel processes (default cpu-1)
+  LG_FBEGO_QUICK       smoke (MAX_NODES=500, fewer iter)
 
-  make gic-connectomes        full preset (~3-5 min on 4 cores)
-  make gic-connectomes-quick  smoke (~30s)
+  make gic-facebook-ego        full (~30-60s on the 10 ego networks)
+  make gic-facebook-ego-quick  smoke (~15s)
 """
 from __future__ import annotations
 
 import os
 import sys
 import time
+import traceback
 import warnings
 from pathlib import Path
 from typing import Optional
@@ -51,27 +56,47 @@ def _fmt_secs(s: float) -> str:
     return f"{int(m):2d}m{int(rem):02d}s"
 
 
-def _load_graphml_graph(path):
-    """Drop-in replacement for platform_fit_utils.load_edges that handles
-    .graphml. Returns the largest connected component as a relabeled
-    ``nx.Graph`` with self-loops removed."""
-    import networkx as nx
-
-    G = nx.read_graphml(path)
-    G = nx.Graph(G)  # collapse multi-edges + direction
-    G.remove_edges_from(nx.selfloop_edges(G))
-    if G.number_of_nodes() == 0:
-        raise ValueError(f"Empty graph loaded from {path}")
-    if G.number_of_edges() == 0:
-        raise ValueError(f"Edgeless graph loaded from {path}")
-    cc = max(nx.connected_components(G), key=len)
-    return nx.convert_node_labels_to_integers(G.subgraph(cc).copy())
+def _peek_size(edge_path: Path) -> int:
+    nodes = set()
+    with open(edge_path, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) >= 2:
+                nodes.add(parts[0])
+                nodes.add(parts[1])
+    return len(nodes)
 
 
-def _patch_load_edges():
-    import platform_fit_utils as pfu
+def _fast_discover(cfg):
+    """Same file-size pre-filter + token-count peek used by the gplus driver.
 
-    pfu.load_edges = _load_graphml_graph
+    The SNAP facebook directory only has ~10 .edges files (plus .circles /
+    .feat etc. that we ignore), so byte filtering is barely needed — but
+    keeping the same shape as run_gplus_gic.py for consistency.
+    """
+    paths = sorted(cfg.data_root.glob(cfg.glob_pattern))
+    paths = [p for p in paths if p.suffix == ".edges" and p.is_file()]
+    if cfg.max_nodes is not None:
+        max_bytes = 100 * cfg.max_nodes * cfg.max_nodes
+    else:
+        max_bytes = None
+    sizes: dict[str, int] = {}
+    kept: list[tuple[Path, int]] = []
+    for p in paths:
+        if max_bytes is not None and p.stat().st_size > max_bytes:
+            continue
+        try:
+            n = _peek_size(p)
+        except OSError:
+            continue
+        if n < cfg.min_nodes or n == 0:
+            continue
+        if cfg.max_nodes is not None and n > cfg.max_nodes:
+            continue
+        sizes[p.stem] = n
+        kept.append((p, n))
+    kept.sort(key=lambda x: x[1])
+    return [p for p, _ in kept], sizes
 
 
 def main() -> None:
@@ -88,8 +113,6 @@ def main() -> None:
     if str(_here) not in sys.path:
         sys.path.insert(0, str(_here))
 
-    _patch_load_edges()
-
     import platform_fit_utils as pfu  # noqa: E402
     from platform_fit_utils import (  # noqa: E402
         PlatformConfig,
@@ -101,17 +124,17 @@ def main() -> None:
     )
     import pandas as pd  # noqa: E402
 
-    quick = os.environ.get("LG_CONN_QUICK", "0") == "1"
-    max_nodes_default = 300 if quick else 2000
-    lg_iter_default = 800 if quick else 1500
+    quick = os.environ.get("LG_FBEGO_QUICK", "0") == "1"
+    max_nodes_default = 500 if quick else None  # 10 ego nets, biggest n=1034
+    lg_iter_default = 800 if quick else 2000
 
-    max_nodes = _get_optional_int("LG_CONN_MAX_NODES", max_nodes_default)
-    min_nodes = _get_int("LG_CONN_MIN_NODES", 20)
-    lg_iter_cap = _get_int("LG_CONN_LG_ITER", lg_iter_default)
-    grid_points = _get_int("LG_CONN_GRID_POINTS", 3)
-    n_runs = _get_int("LG_CONN_N_RUNS", 1)
-    use_cache = os.environ.get("LG_CONN_USE_CACHE", "1") == "1"
-    workers = _get_int("LG_CONN_WORKERS", max(1, (os.cpu_count() or 2) - 1))
+    max_nodes = _get_optional_int("LG_FBEGO_MAX_NODES", max_nodes_default)
+    min_nodes = _get_int("LG_FBEGO_MIN_NODES", 30)
+    lg_iter_cap = _get_int("LG_FBEGO_LG_ITER", lg_iter_default)
+    grid_points = _get_int("LG_FBEGO_GRID_POINTS", 3)
+    n_runs = _get_int("LG_FBEGO_N_RUNS", 1)
+    use_cache = os.environ.get("LG_FBEGO_USE_CACHE", "1") == "1"
+    workers = _get_int("LG_FBEGO_WORKERS", max(1, (os.cpu_count() or 2) - 1))
 
     _original_lg_max = pfu.lg_max_iterations
 
@@ -121,8 +144,8 @@ def main() -> None:
     pfu.lg_max_iterations = _capped
 
     cfg = PlatformConfig(
-        platform="connectomes",
-        glob_pattern="connectomes/*.graphml",
+        platform="facebook_ego",
+        glob_pattern="misc/facebook/*.edges",
         min_nodes=min_nodes,
         max_nodes=max_nodes,
         other_model_n_runs=n_runs,
@@ -134,20 +157,19 @@ def main() -> None:
     )
 
     print(
-        f"connectomes GIC ranking  min_nodes={min_nodes}  max_nodes={max_nodes}  "
-        f"lg_iter≤{lg_iter_cap}  grid_points={grid_points}  n_runs={n_runs}  "
-        f"cache={use_cache}  workers={workers}  quick={quick}"
+        f"SNAP Facebook ego networks GIC ranking  min_nodes={min_nodes}  "
+        f"max_nodes={max_nodes}  lg_iter≤{lg_iter_cap}  grid_points={grid_points}  "
+        f"n_runs={n_runs}  cache={use_cache}  workers={workers}  quick={quick}"
     )
 
-    graph_files, sizes_by_stem = _discover(cfg)
+    graph_files, sizes_by_stem = _fast_discover(cfg)
     if not graph_files:
-        print("No connectomes matched the size window; nothing to do.")
+        print("No ego networks matched the size window; nothing to do.")
         return
-
     sizes = [(stem, sizes_by_stem[stem]) for stem in (p.stem for p in graph_files)]
     avg_n = sum(n for _, n in sizes) / len(sizes)
     print(
-        f"\nDiscovered {len(graph_files)} connectomes  "
+        f"\nDiscovered {len(graph_files)} ego networks  "
         f"|V|: min={min(n for _, n in sizes)}  max={max(n for _, n in sizes)}  "
         f"mean={avg_n:.0f}"
     )
@@ -160,13 +182,11 @@ def main() -> None:
             cached_count += 1
         else:
             pending.append(p)
-    print(
-        f"Cache: {cached_count}/{len(graph_files)} hits, {len(pending)} fits pending\n"
-    )
+    print(f"Cache: {cached_count}/{len(graph_files)} hits, {len(pending)} fits pending\n")
 
     logger = setup_platform_logging(cfg.run_dir)
     logger.info(
-        "=== connectomes GIC sweep  (%d networks, %d cached, %d to fit) ===",
+        "=== facebook_ego GIC sweep  (%d networks, %d cached, %d to fit) ===",
         len(graph_files), cached_count, len(pending),
     )
 
@@ -196,8 +216,7 @@ def main() -> None:
     if pending_with_idx:
         worker_count = max(1, min(workers, len(pending_with_idx)))
         print(
-            f"\nLaunching {worker_count} worker(s) for "
-            f"{len(pending_with_idx)} fresh fits ...\n"
+            f"Launching {worker_count} worker(s) for {len(pending_with_idx)} fresh fits ...\n"
         )
         if worker_count == 1:
             results_iter = [
@@ -225,7 +244,6 @@ def main() -> None:
                 failures.append({"graph": name, "error": payload})
                 continue
             meta = payload["meta"]
-            summary = payload["summary"]
             print(
                 f"  [{fits_done}/{len(pending_with_idx)}] {name}  DONE  "
                 f"n={meta.get('n_nodes')}  best={meta['best_model']}  "
@@ -233,7 +251,7 @@ def main() -> None:
                 f"d̂={meta.get('d_hat')}  in {_fmt_secs(meta.get('elapsed_s', 0))}  "
                 f"| wall {_fmt_secs(elapsed)}"
             )
-            summary_rows.append(summary)
+            summary_rows.append(payload["summary"])
             fit_meta_rows.append(meta)
 
     total_elapsed = time.perf_counter() - t_start
@@ -244,7 +262,7 @@ def main() -> None:
     )
 
     if not summary_rows:
-        print("No networks were processed — aborting summary step.")
+        print("No networks were processed.")
         return
 
     summary_all = pd.concat(summary_rows, ignore_index=True)
@@ -286,8 +304,6 @@ def _cfg_to_dict(cfg) -> dict:
 
 
 def _fit_worker(args):
-    """Runs in a child process. Writes per-graph artifacts to disk; returns
-    only meta + summary across the IPC boundary."""
     edge_path_str, cfg_dict, lg_iter_cap, i, total = args
     import sys as _sys
     import os as _os
@@ -302,7 +318,6 @@ def _fit_worker(args):
         if _p not in _sys.path:
             _sys.path.insert(0, _p)
 
-    _patch_load_edges()
     import platform_fit_utils as pfu
     from platform_fit_utils import PlatformConfig, fit_one_network, setup_platform_logging
 
@@ -323,34 +338,6 @@ def _fit_worker(args):
     except Exception as exc:
         import traceback as _tb
         return ("err", edge_path.stem, f"{exc}\n{_tb.format_exc()}")
-
-
-def _discover(cfg):
-    """Load each .graphml once and filter by node-count bounds.
-
-    Connectome files are graphml so we can't byte-prefilter as we did for
-    gplus's plain edge lists; but there are only ~20 of them and they load
-    in <2s total.
-    """
-    paths = sorted(cfg.data_root.glob(cfg.glob_pattern))
-    paths = [p for p in paths if p.suffix == ".graphml" and p.is_file()]
-    sizes: dict[str, int] = {}
-    kept: list[tuple[Path, int]] = []
-    for p in paths:
-        try:
-            G = _load_graphml_graph(p)
-        except (ValueError, OSError) as exc:
-            print(f"  skipped {p.name}: {exc}")
-            continue
-        n = G.number_of_nodes()
-        if n < cfg.min_nodes:
-            continue
-        if cfg.max_nodes is not None and n > cfg.max_nodes:
-            continue
-        sizes[p.stem] = n
-        kept.append((p, n))
-    kept.sort(key=lambda x: x[1])
-    return [p for p, _ in kept], sizes
 
 
 if __name__ == "__main__":

@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Fit LG + ER/WS/BA on every Google+ ego network and rank them by GIC.
+"""Fit LG + ER/WS/BA on every Twitter SNAP ego network and rank them by GIC.
 
-For each ``data/misc/gplus/*.edges`` file with ``MIN_NODES ≤ n ≤ MAX_NODES``,
+For each ``data/misc/twitter/*.edges`` file with ``MIN_NODES ≤ n ≤ MAX_NODES``,
 fits the Logit-Graph model (AIC d̂ + σ̂) and three baselines (Erdős–Rényi,
 Watts–Strogatz, Barabási–Albert), scores each by spectral GIC against the
 real graph, and ranks them. Outputs per-graph reports under
-``notebooks/refactors/runs/gplus/{graph}/`` and aggregate tables/plots.
+``scripts/gic/runs/twitter/{graph}/`` and aggregate tables/plots.
 
 Env-var overrides (all optional):
-  LG_GPLUS_MAX_NODES     cap on |V| (default 300, set to "none" for no cap)
-  LG_GPLUS_MIN_NODES     floor on |V| (default 50)
-  LG_GPLUS_LG_ITER       LG max_iterations override (default 2000)
-  LG_GPLUS_GRID_POINTS   baseline grid resolution (default 3)
-  LG_GPLUS_N_RUNS        baseline ensemble size (default 1)
-  LG_GPLUS_USE_CACHE     reload finished networks (0/1, default 1)
-  LG_GPLUS_QUICK         set to 1 for smoke (MAX_NODES=150, LG_ITER=1000)
+  LG_TWITTER_MAX_NODES     cap on |V| (default 300, set to "none" for no cap)
+  LG_TWITTER_MIN_NODES     floor on |V| (default 50)
+  LG_TWITTER_LG_ITER       LG max_iterations override (default 2000)
+  LG_TWITTER_GRID_POINTS   baseline grid resolution (default 3)
+  LG_TWITTER_N_RUNS        baseline ensemble size (default 1)
+  LG_TWITTER_USE_CACHE     reload finished networks (0/1, default 1)
+  LG_TWITTER_QUICK         set to 1 for smoke (MAX_NODES=150, LG_ITER=1000)
 
-  make gic-gplus         full preset, ~3-5 min on 4 cores
-  make gic-gplus-quick   smoke run (~30s on 4 cores)
+  make gic-twitter         full preset, ~3-5 min on 4 cores
+  make gic-twitter-quick   smoke run (~30s on 4 cores)
 """
 from __future__ import annotations
 
@@ -77,17 +77,17 @@ def main() -> None:
     )
     import pandas as pd  # noqa: E402
 
-    quick = os.environ.get("LG_GPLUS_QUICK", "0") == "1"
+    quick = os.environ.get("LG_TWITTER_QUICK", "0") == "1"
     max_nodes_default = 150 if quick else 300
     lg_iter_default = 1000 if quick else 2000
 
-    max_nodes = _get_optional_int("LG_GPLUS_MAX_NODES", max_nodes_default)
-    min_nodes = _get_int("LG_GPLUS_MIN_NODES", 50)
-    lg_iter_cap = _get_int("LG_GPLUS_LG_ITER", lg_iter_default)
-    grid_points = _get_int("LG_GPLUS_GRID_POINTS", 3)
-    n_runs = _get_int("LG_GPLUS_N_RUNS", 1)
-    use_cache = os.environ.get("LG_GPLUS_USE_CACHE", "1") == "1"
-    workers = _get_int("LG_GPLUS_WORKERS", max(1, (os.cpu_count() or 2) - 1))
+    max_nodes = _get_optional_int("LG_TWITTER_MAX_NODES", max_nodes_default)
+    min_nodes = _get_int("LG_TWITTER_MIN_NODES", 50)
+    lg_iter_cap = _get_int("LG_TWITTER_LG_ITER", lg_iter_default)
+    grid_points = _get_int("LG_TWITTER_GRID_POINTS", 3)
+    n_runs = _get_int("LG_TWITTER_N_RUNS", 1)
+    use_cache = os.environ.get("LG_TWITTER_USE_CACHE", "1") == "1"
+    workers = _get_int("LG_TWITTER_WORKERS", max(1, (os.cpu_count() or 2) - 1))
 
     _original_lg_max = pfu.lg_max_iterations
 
@@ -97,8 +97,8 @@ def main() -> None:
     pfu.lg_max_iterations = _capped
 
     cfg = PlatformConfig(
-        platform="gplus",
-        glob_pattern="misc/gplus/*.edges",
+        platform="twitter",
+        glob_pattern="misc/twitter/*.edges",
         min_nodes=min_nodes,
         max_nodes=max_nodes,
         other_model_n_runs=n_runs,
@@ -110,7 +110,7 @@ def main() -> None:
     )
 
     banner = (
-        f"gplus GIC ranking  min_nodes={min_nodes}  max_nodes={max_nodes}  "
+        f"twitter GIC ranking  min_nodes={min_nodes}  max_nodes={max_nodes}  "
         f"lg_iter≤{lg_iter_cap}  grid_points={grid_points}  n_runs={n_runs}  "
         f"cache={use_cache}  quick={quick}"
     )
@@ -150,7 +150,7 @@ def main() -> None:
 
     logger = setup_platform_logging(cfg.run_dir)
     logger.info(
-        "=== gplus GIC sweep  (%d networks, %d cached, %d to fit) ===",
+        "=== twitter GIC sweep  (%d networks, %d cached, %d to fit) ===",
         len(graph_files), cached_count, len(pending),
     )
 
@@ -335,7 +335,7 @@ def _fast_discover(cfg):
     """File-size pre-filter + cheap node-count peek, skipping networkx parsing.
 
     The reference ``platform_fit_utils.discover_graph_files`` loads every
-    candidate via ``nx.read_edgelist`` to count nodes — for the gplus
+    candidate via ``nx.read_edgelist`` to count nodes — for the twitter
     collection this scans ~130 files (incl. multi-MB ones above MAX_NODES)
     and takes minutes. Here we (1) drop files whose byte size implies
     n > 2·max_nodes (lots of slack) and (2) count unique node tokens

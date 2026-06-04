@@ -57,7 +57,7 @@ def main() -> None:
     print(f"Saved {OUT / 'convergence_sigma.png'}")
     print(f"Data CSV: {sigma_sweep_csv_path(OUT, cfg)}")
     print(f"Metadata: {sigma_sweep_results_json_path(OUT, cfg)}")
-    print("Replot later: python notebooks/refactors/run_sigma_replot.py")
+    print("Replot later: python scripts/experiments/run_sigma_replot.py")
 
     summary = summarize_sigma_insights(df)
     print(summary)
