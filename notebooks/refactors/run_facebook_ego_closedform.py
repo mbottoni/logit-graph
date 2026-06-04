@@ -1,40 +1,5 @@
 #!/usr/bin/env python3
-"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on the 10 SNAP Facebook ego networks, alongside a fairly-scored LG.
-
-Facebook-ego twin of run_gplus_closedform.py / run_twitter_closedform.py. The 10
-ego networks are all small enough (n 52-1034) for the LG Gibbs chain, so we
-score every one. Spectral GIC (2*KL + 2*n_params, KL on the normalized-Laplacian
-density, lower=better):
-
-  * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
-                     of the spectral density over N_RUNS post-burn-in snapshots.
-  * ER/BA/WS      -- two ways each:
-       grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
-       cf   : closed-form moment estimate (no search)
-  * KR/GRG        -- closed-form only (bonus families)
-
-Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
-  ER  p = 2E/(n(n-1))                      (exact MLE)
-  BA  m = round(E/n)            in [1, n)   (edge count E = m(n-m))
-  WS  k = 2*round(E/n) (even)   in [2, n)   (E = nk/2, rewiring conserves edges)
-  WS  p = 1 - (C_obs/C0)^(1/3), C0 = 3(k-2)/(4(k-1))   (clustering moment)
-  KR  d = round(kbar)          (nd even)   (E = nd/2)
-  GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
-
-Reproducible: fixed seed (LG_FBE_SEED), BLAS threads pinned to 1; the facebook
-tarball is auto-extracted if the .edges files are missing. Read-only w.r.t. the
-library; writes only under runs/facebook_ego_closedform/. Findings:
-FINDINGS_facebook_ego_closedform.md.
-
-Env knobs (all optional):
-  LG_FBE_SEED (12345)    LG_FBE_QUICK (0 -> all 10; 1 -> smoke on small ones)
-  LG_FBE_MIN_NODES (20)  LG_FBE_MAX_NODES (2000)   LG_FBE_MAX_NETS (all)
-  LG_FBE_N_RUNS (5)      LG_FBE_GRID_POINTS (5)
-
-  make gic-facebook-ego-closedform        full run (all 10 ego nets)
-  make gic-facebook-ego-closedform-quick  smoke (small ego nets)
-"""
+"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid"""
 from __future__ import annotations
 
 import math
