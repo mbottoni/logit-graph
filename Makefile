@@ -151,6 +151,13 @@ gic-human-connectomes-quick:  ## Smoke run on coarse parcellation (~30s)
 	LG_HCONN_USE_CACHE=0 \
 		$(UV) run python notebooks/refactors/run_human_connectomes_gic.py
 
+gic-human-connectomes-closedform:  ## Closed-form vs grid baselines + fair LG on OASIS-3 human connectomes (reproducible, ~2-4 min)
+	$(UV) run python notebooks/refactors/run_human_connectomes_closedform.py
+
+gic-human-connectomes-closedform-quick:  ## Smoke run of the human-connectome closed-form experiment (~15s)
+	LG_HCF_QUICK=1 \
+		$(UV) run python notebooks/refactors/run_human_connectomes_closedform.py
+
 gic-connectomes:  ## Rank LG vs ER/WS/BA by GIC on animal connectomes (~3-5 min)
 	LG_CONN_USE_CACHE=1 \
 		$(UV) run python notebooks/refactors/run_connectomes_gic.py
