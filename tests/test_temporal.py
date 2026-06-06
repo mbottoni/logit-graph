@@ -15,11 +15,12 @@ def _density(adj):
 
 
 def test_grow_graph_density_grows_smoothly():
-    """Density should increase step-by-step and be consistent across seeds
-    (no equilibrium-style bimodality / degeneracy)."""
+    """Add-only variant (allow_removal=False): density should increase step-by-step
+    and be consistent across seeds (no equilibrium-style bimodality / degeneracy)."""
     traces = []
     for s in range(4):
-        res = grow_graph(120, d=1, sigma=-4.0, alpha=0.05, n_steps=3, seed=s)
+        res = grow_graph(120, d=1, sigma=-4.0, alpha=0.05, n_steps=3, seed=s,
+                         allow_removal=False)
         tr = [_density(g) for g in res.snapshots]
         traces.append(tr)
         # monotone non-decreasing (edges only added)
@@ -68,6 +69,47 @@ def test_recovery_and_consistency():
     assert abs(np.mean([o["sigma"] for o in large]) - sigma) < 0.7
     # consistency: spread shrinks with n
     assert a_large.std() < a_small.std()
+
+
+def test_removal_design_matches_snapshot_rebuild():
+    """With allow_removal, the design is over ALL dyads and matches the rebuild."""
+    res = grow_graph(60, d=1, sigma=-2.0, alpha=0.05, n_steps=3, seed=1,
+                     allow_removal=True)
+    X2, y2 = growth_design_from_snapshots(res.snapshots, d=1, allow_removal=True)
+    n_pairs = 60 * 59 // 2
+    # all dyads contribute every step (3 steps) -> no at-risk filtering
+    assert res.X.shape == (3 * n_pairs, 1)
+    assert res.X.shape == X2.shape
+    assert np.allclose(res.X, X2)
+    assert np.array_equal(res.y, y2)
+
+
+def test_removal_reaches_moderate_density_not_saturation():
+    """allow_removal turns growth into an ergodic chain: edges dissolve, so the
+    process settles at a moderate density instead of drifting to saturation."""
+    grow = grow_graph(150, d=0, sigma=-2.0, alpha=0.05, n_steps=2, seed=3,
+                      allow_removal=False)
+    stat = grow_graph(150, d=0, sigma=-2.0, alpha=0.05, n_steps=8, seed=3,
+                      allow_removal=True)
+    # add-only keeps climbing; add+remove balances well below saturation
+    assert _density(stat.adj) < _density(grow.adj)
+    assert 0.01 < _density(stat.adj) < 0.5
+
+
+def test_removal_recovers_params():
+    """Estimation stays consistent under removal (predictors remain predetermined)."""
+    sigma, alpha = -2.0, 0.05
+
+    def fit_at(n, seed):
+        res = grow_graph(n, d=0, sigma=sigma, alpha=alpha, n_steps=5, seed=seed,
+                         store_snapshots=False, allow_removal=True)
+        return fit_growth_from_result(res)
+
+    small = np.array([fit_at(80, s)["alpha"] for s in range(5)])
+    large = np.array([fit_at(200, s)["alpha"] for s in range(5)])
+    assert abs(large.mean() - alpha) < 0.03
+    assert abs(np.mean([fit_at(200, s)["sigma"] for s in range(5)]) - sigma) < 0.5
+    assert large.std() < small.std()
 
 
 def test_equilibrium_path_untouched():
