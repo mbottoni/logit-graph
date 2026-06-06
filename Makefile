@@ -298,6 +298,13 @@ tlg-roc-quick:  ## Smoke run of the TLG ROC experiment (d={0}, small grids, ~30s
 	LG_TLGROC_QUICK=1 \
 		$(UV) run python scripts/experiments/run_tlg_roc_experiments.py
 
+tlg-aic-d:  ## TLG AIC d-recovery: does AIC pick the true degree-feature depth d? (accuracy vs n + confusion)
+	$(UV) run python scripts/experiments/run_tlg_aic_d_recovery.py
+
+tlg-aic-d-quick:  ## Smoke run of the TLG AIC d-recovery experiment (~30s)
+	LG_TLGAIC_QUICK=1 \
+		$(UV) run python scripts/experiments/run_tlg_aic_d_recovery.py
+
 tlg-convergence-diagnostics:  ## TLG (add+remove) convergence: chains from different initial densities mix to the same stationary distribution
 	$(UV) run python scripts/diagnostics/run_tlg_convergence_diagnostics.py
 
