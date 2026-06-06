@@ -48,6 +48,9 @@ for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
 import numpy as np
 import networkx as nx
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from scipy.stats import norm, chi2
 from statsmodels.stats.multitest import multipletests
 
@@ -154,6 +157,52 @@ def _write_tex(pdf, names, codes, out_path):
     out_path.write_text("\n".join(lines) + "\n")
 
 
+def _plot(df, pdf, names, codes, out_path):
+    """Left: sigma_hat +/- robust SE forest (colored by d_hat). Right: pairwise
+    -log10(Bonferroni p) heatmap."""
+    order = np.argsort(df["sigma_hat"].to_numpy())
+    sig = df["sigma_hat"].to_numpy()[order]
+    se = df["se_robust"].to_numpy()[order]
+    dhat = df["d_hat"].to_numpy()[order]
+    labels = [codes[i] for i in order]
+    y = np.arange(len(order))
+
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(13, 7),
+                                   gridspec_kw={"width_ratios": [1, 1.25]})
+    colors = ["#1f77b4" if d == 0 else "#d62728" for d in dhat]
+    ax0.errorbar(sig, y, xerr=se, fmt="none", ecolor="0.5", elinewidth=1.2,
+                 capsize=2, zorder=1)
+    ax0.scatter(sig, y, c=colors, s=28, zorder=2)
+    ax0.set_yticks(y)
+    ax0.set_yticklabels(labels, fontsize=8)
+    ax0.set_xlabel(r"$\hat{\sigma}$ (offset-logit MLE) $\pm$ dyadic-robust SE")
+    ax0.set_title("Per-connectome sigma (sorted)")
+    ax0.grid(axis="x", ls=":", alpha=0.4)
+    from matplotlib.lines import Line2D
+    ax0.legend(handles=[Line2D([0], [0], marker="o", ls="", color="#1f77b4", label="d=0"),
+                        Line2D([0], [0], marker="o", ls="", color="#d62728", label="d=1")],
+               fontsize=8, loc="lower right")
+
+    k = len(names)
+    P = np.ones((k, k))
+    idx = {n: i for i, n in enumerate(names)}
+    for _, r in pdf.iterrows():
+        i, j = idx[r["name_i"]], idx[r["name_j"]]
+        P[i, j] = P[j, i] = r["p_bonf"]
+    M = -np.log10(np.clip(P, 1e-300, 1.0))
+    np.fill_diagonal(M, np.nan)
+    im = ax1.imshow(M, cmap="viridis", vmin=0, vmax=min(50, np.nanmax(M)))
+    ax1.set_xticks(range(k)); ax1.set_xticklabels(codes, rotation=90, fontsize=7)
+    ax1.set_yticks(range(k)); ax1.set_yticklabels(codes, fontsize=7)
+    ax1.set_title(r"Pairwise $-\log_{10}$(Bonferroni $p$); white diag")
+    cbar = fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04)
+    cbar.set_label(r"$-\log_{10} p_{\mathrm{bonf}}$  ($>1.3 \Rightarrow$ sig. @0.05)")
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -218,6 +267,7 @@ def main():
     df.drop(columns=["aic_by_d"]).to_csv(out_dir / "summary.csv", index=False)
     pdf.to_csv(out_dir / "pairwise.csv", index=False)
     _write_tex(pdf, names, codes, out_dir / "connectomes_pairwise_robust.tex")
+    _plot(df, pdf, names, codes, out_dir / "connectomes_anova_robust.png")
     (out_dir / "results.json").write_text(json.dumps({
         "omnibus": {"Q": Q, "dof": dof, "p": p_omni},
         "connectomes": df.drop(columns=["aic_by_d"]).to_dict(orient="records"),
@@ -243,7 +293,7 @@ def main():
     print("\nNOTE: SEs are dyadic-cluster-robust (real sampling interpretation, not "
           f"dial-able by subsample size). {cross_d}")
     print(f"Wrote {out_dir}/ (summary.csv, pairwise.csv, "
-          f"connectomes_pairwise_robust.tex, results.json)")
+          f"connectomes_pairwise_robust.tex, connectomes_anova_robust.png, results.json)")
 
 
 if __name__ == "__main__":
