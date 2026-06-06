@@ -180,7 +180,15 @@ artifacts to a gitignored `runs/` directory. Every target has a fast `-quick` sm
 
 **Naming convention.** All current experiments use the **equilibrium** Logit-Graph and carry the
 **`lg-`** prefix (Makefile targets `lg-*`, scripts `scripts/**/run_lg_*.py`). Experiments for the
-new **temporal** Logit-Graph will use the **`tlg-`** prefix (none yet).
+new **temporal** Logit-Graph use the **`tlg-`** prefix.
+
+### Temporal Logit-Graph (`tlg-` prefix)
+
+Experiments on the growth/temporal model `logit(P[edge forms at t]) = σ + α·D(t−1)`.
+
+| Command | Objective |
+|---------|-----------|
+| `make tlg-recovery` | Recover (σ, α) from growth graphs at known ground truth, swept over d∈{0,1,2}, n∈{10…1500}, and several (σ,α) scenarios; one `recovery.png` overlaying scenarios (color = scenario) shows estimates converging onto the truth with 95% bands. |
 
 ### Robust ANOVA on σ̂ (single-graph dyadic-robust Wald)
 
