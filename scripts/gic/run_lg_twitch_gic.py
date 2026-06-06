@@ -27,8 +27,8 @@ Env-var overrides:
   LG_TWITCH_SEED         RNG seed                (default 42)
   LG_TWITCH_QUICK        smoke (skips DE/FR/ENGB, fewer iters)
 
-  make gic-twitch         full preset (~3-5 min, all 6 countries)
-  make gic-twitch-quick   smoke (~1 min, smaller countries only)
+  make lg-gic-twitch         full preset (~3-5 min, all 6 countries)
+  make lg-gic-twitch-quick   smoke (~1 min, smaller countries only)
 """
 from __future__ import annotations
 

@@ -41,8 +41,8 @@ Env knobs (all optional):
   LG_AVR_D1_N_EXP (80)    d=1 experiments per scenario point
   LG_AVR_D1_MAX_N (500)   skip d=1 points above this n (logged)
 
-  make anova-validation-robust         full run
-  make anova-validation-robust-quick   smoke (d=0, small n, few reps)
+  make lg-anova-validation-robust         full run
+  make lg-anova-validation-robust-quick   smoke (d=0, small n, few reps)
 """
 from __future__ import annotations
 

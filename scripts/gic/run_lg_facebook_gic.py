@@ -22,8 +22,8 @@ Env-var overrides:
   LG_FB_SEED          RNG seed                   (default 42)
   LG_FB_QUICK         smoke (MAX_ITER=10k, fewer KPM moments)
 
-  make gic-facebook        full preset (~2-3 min)
-  make gic-facebook-quick  smoke (~30-60s)
+  make lg-gic-facebook        full preset (~2-3 min)
+  make lg-gic-facebook-quick  smoke (~30-60s)
 """
 from __future__ import annotations
 

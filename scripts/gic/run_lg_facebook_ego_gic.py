@@ -21,8 +21,8 @@ Env-var overrides:
   LG_FBEGO_WORKERS     parallel processes (default cpu-1)
   LG_FBEGO_QUICK       smoke (MAX_NODES=500, fewer iter)
 
-  make gic-facebook-ego        full (~30-60s on the 10 ego networks)
-  make gic-facebook-ego-quick  smoke (~15s)
+  make lg-gic-facebook-ego        full (~30-60s on the 10 ego networks)
+  make lg-gic-facebook-ego-quick  smoke (~15s)
 """
 from __future__ import annotations
 

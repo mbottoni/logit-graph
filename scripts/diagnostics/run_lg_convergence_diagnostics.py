@@ -26,7 +26,7 @@ with env vars:
   LG_CONV_SEED_BASE   seed for reference chain     default 42
   LG_CONV_QUICK       set to 1 for smoke run (n=200, MAX_ITER=50_000)
 
-A `make convergence-diagnostics` target wraps this script.
+A `make lg-convergence-diagnostics` target wraps this script.
 """
 from __future__ import annotations
 

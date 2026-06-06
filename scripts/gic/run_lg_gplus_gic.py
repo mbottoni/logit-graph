@@ -1,37 +1,30 @@
 #!/usr/bin/env python3
-"""Fit LG + ER/WS/BA on human-brain connectomes (OASIS-3) and rank by GIC.
+"""Fit LG + ER/WS/BA on every Google+ ego network and rank them by GIC.
 
-The repo ships ~7000 .graphml files under ``data/brain_graph/`` across
-multiple parcellation atlases:
-  oasis3_graphmls_scale1/2/3  — OASIS-3, ~975 subjects, n ∈ {124, 170, 272}
-  repeated_10_scale_33/60/125/250 — repeated parcellations, n ∈ {83, 129, 234, 463}
+For each ``data/misc/gplus/*.edges`` file with ``MIN_NODES ≤ n ≤ MAX_NODES``,
+fits the Logit-Graph model (AIC d̂ + σ̂) and three baselines (Erdős–Rényi,
+Watts–Strogatz, Barabási–Albert), scores each by spectral GIC against the
+real graph, and ranks them. Outputs per-graph reports under
+``scripts/gic/runs/gplus/{graph}/`` and aggregate tables/plots.
 
-To stay under the 5-min budget we sample N graphs from a chosen scale
-and run the same LG vs ER/WS/BA GIC ranking pipeline used in
-``run_connectomes_gic.py`` (with KPM spectral density + parallel workers).
+Env-var overrides (all optional):
+  LG_GPLUS_MAX_NODES     cap on |V| (default 300, set to "none" for no cap)
+  LG_GPLUS_MIN_NODES     floor on |V| (default 50)
+  LG_GPLUS_LG_ITER       LG max_iterations override (default 2000)
+  LG_GPLUS_GRID_POINTS   baseline grid resolution (default 3)
+  LG_GPLUS_N_RUNS        baseline ensemble size (default 1)
+  LG_GPLUS_USE_CACHE     reload finished networks (0/1, default 1)
+  LG_GPLUS_QUICK         set to 1 for smoke (MAX_NODES=150, LG_ITER=1000)
 
-Env-var overrides:
-  LG_HCONN_SCALE        atlas dir under brain_graph/  (default oasis3_graphmls_scale1)
-  LG_HCONN_SAMPLE       number of subjects to sample  (default 100; "all" = no cap)
-  LG_HCONN_MAX_NODES    cap on |V|                     (default 500)
-  LG_HCONN_MIN_NODES    floor on |V|                   (default 20)
-  LG_HCONN_LG_ITER      LG MCMC cap                    (default 1500)
-  LG_HCONN_GRID_POINTS  baseline grid                  (default 3)
-  LG_HCONN_N_RUNS       baseline reps                  (default 1)
-  LG_HCONN_USE_CACHE    reload finished networks       (default 1)
-  LG_HCONN_WORKERS      parallel proc count            (default cpu-1)
-  LG_HCONN_SEED         RNG seed for the random sample (default 0)
-  LG_HCONN_QUICK        set to 1 for smoke (scale_33, sample=20, fewer iter)
-
-  make gic-human-connectomes        ~3-5 min on 4 cores
-  make gic-human-connectomes-quick  ~30s
+  make lg-gic-gplus         full preset, ~3-5 min on 4 cores
+  make lg-gic-gplus-quick   smoke run (~30s on 4 cores)
 """
 from __future__ import annotations
 
 import os
-import random
 import sys
 import time
+import traceback
 import warnings
 from pathlib import Path
 from typing import Optional
@@ -46,7 +39,7 @@ def _get_optional_int(env: str, default: Optional[int]) -> Optional[int]:
     raw = os.environ.get(env)
     if raw is None:
         return default
-    if raw.lower() in ("none", "all", "", "null"):
+    if raw.lower() in ("none", "", "null"):
         return None
     return int(raw)
 
@@ -58,25 +51,8 @@ def _fmt_secs(s: float) -> str:
     return f"{int(m):2d}m{int(rem):02d}s"
 
 
-def _load_graphml_graph(path):
-    import networkx as nx
-    G = nx.read_graphml(path)
-    G = nx.Graph(G)
-    G.remove_edges_from(nx.selfloop_edges(G))
-    if G.number_of_nodes() == 0:
-        raise ValueError(f"Empty graph loaded from {path}")
-    if G.number_of_edges() == 0:
-        raise ValueError(f"Edgeless graph loaded from {path}")
-    cc = max(nx.connected_components(G), key=len)
-    return nx.convert_node_labels_to_integers(G.subgraph(cc).copy())
-
-
-def _patch_load_edges():
-    import platform_fit_utils as pfu
-    pfu.load_edges = _load_graphml_graph
-
-
 def main() -> None:
+    # Unbuffered output so progress shows up live
     sys.stdout.reconfigure(line_buffering=True)
     for v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
         os.environ.setdefault(v, "1")
@@ -90,8 +66,6 @@ def main() -> None:
     if str(_here) not in sys.path:
         sys.path.insert(0, str(_here))
 
-    _patch_load_edges()
-
     import platform_fit_utils as pfu  # noqa: E402
     from platform_fit_utils import (  # noqa: E402
         PlatformConfig,
@@ -103,21 +77,17 @@ def main() -> None:
     )
     import pandas as pd  # noqa: E402
 
-    quick = os.environ.get("LG_HCONN_QUICK", "0") == "1"
-    scale_default = "repeated_10_scale_33" if quick else "oasis3_graphmls_scale1"
-    sample_default = 20 if quick else 100
-    lg_iter_default = 800 if quick else 1500
+    quick = os.environ.get("LG_GPLUS_QUICK", "0") == "1"
+    max_nodes_default = 150 if quick else 300
+    lg_iter_default = 1000 if quick else 2000
 
-    scale = os.environ.get("LG_HCONN_SCALE", scale_default)
-    sample_size = _get_optional_int("LG_HCONN_SAMPLE", sample_default)
-    max_nodes = _get_optional_int("LG_HCONN_MAX_NODES", 500)
-    min_nodes = _get_int("LG_HCONN_MIN_NODES", 20)
-    lg_iter_cap = _get_int("LG_HCONN_LG_ITER", lg_iter_default)
-    grid_points = _get_int("LG_HCONN_GRID_POINTS", 3)
-    n_runs = _get_int("LG_HCONN_N_RUNS", 1)
-    use_cache = os.environ.get("LG_HCONN_USE_CACHE", "1") == "1"
-    workers = _get_int("LG_HCONN_WORKERS", max(1, (os.cpu_count() or 2) - 1))
-    seed = _get_int("LG_HCONN_SEED", 0)
+    max_nodes = _get_optional_int("LG_GPLUS_MAX_NODES", max_nodes_default)
+    min_nodes = _get_int("LG_GPLUS_MIN_NODES", 50)
+    lg_iter_cap = _get_int("LG_GPLUS_LG_ITER", lg_iter_default)
+    grid_points = _get_int("LG_GPLUS_GRID_POINTS", 3)
+    n_runs = _get_int("LG_GPLUS_N_RUNS", 1)
+    use_cache = os.environ.get("LG_GPLUS_USE_CACHE", "1") == "1"
+    workers = _get_int("LG_GPLUS_WORKERS", max(1, (os.cpu_count() or 2) - 1))
 
     _original_lg_max = pfu.lg_max_iterations
 
@@ -127,8 +97,8 @@ def main() -> None:
     pfu.lg_max_iterations = _capped
 
     cfg = PlatformConfig(
-        platform=f"human_connectomes_{scale}",
-        glob_pattern=f"brain_graph/{scale}/*.graphml",
+        platform="gplus",
+        glob_pattern="misc/gplus/*.edges",
         min_nodes=min_nodes,
         max_nodes=max_nodes,
         other_model_n_runs=n_runs,
@@ -137,29 +107,29 @@ def main() -> None:
         display_plots=False,
         data_root=_repo_root / "data",
         run_dir=_here / "runs",
-        seed=seed,
     )
 
-    print(
-        f"human connectomes GIC ranking  scale={scale}  sample={sample_size}  "
-        f"min_nodes={min_nodes}  max_nodes={max_nodes}  lg_iter≤{lg_iter_cap}  "
-        f"grid_points={grid_points}  cache={use_cache}  workers={workers}  "
-        f"quick={quick}"
+    banner = (
+        f"gplus GIC ranking  min_nodes={min_nodes}  max_nodes={max_nodes}  "
+        f"lg_iter≤{lg_iter_cap}  grid_points={grid_points}  n_runs={n_runs}  "
+        f"cache={use_cache}  quick={quick}"
     )
+    print(banner)
 
-    graph_files, sizes_by_stem = _discover(cfg, sample_size, seed)
+    graph_files, sizes_by_stem = _fast_discover(cfg)
     if not graph_files:
-        print("No graphs matched; nothing to do.")
+        print("No graphs matched the size window; nothing to do.")
         return
 
     sizes = [(stem, sizes_by_stem[stem]) for stem in (p.stem for p in graph_files)]
     avg_n = sum(n for _, n in sizes) / len(sizes)
     print(
-        f"\nSampled {len(graph_files)} subjects  "
+        f"\nDiscovered {len(graph_files)} networks  "
         f"|V|: min={min(n for _, n in sizes)}  max={max(n for _, n in sizes)}  "
         f"mean={avg_n:.0f}"
     )
 
+    # Pre-check the cache to estimate how many fits are actually needed
     pending = []
     cached_count = 0
     for p in graph_files:
@@ -168,13 +138,19 @@ def main() -> None:
             cached_count += 1
         else:
             pending.append(p)
+    eta_per_fit = max(5.0, 0.05 * avg_n) if pending else 0  # ~5s+ per graph
     print(
-        f"Cache: {cached_count}/{len(graph_files)} hits, {len(pending)} fits pending\n"
+        f"Cache: {cached_count}/{len(graph_files)} hits, {len(pending)} fits pending "
+        f"(rough ETA per fit ≈ {_fmt_secs(eta_per_fit)})"
+    )
+    print(
+        f"Total wall-time estimate: {_fmt_secs(len(pending) * eta_per_fit)} "
+        f"(serial; less with adaptive)\n"
     )
 
     logger = setup_platform_logging(cfg.run_dir)
     logger.info(
-        "=== human connectomes GIC sweep  (%d networks, %d cached, %d to fit) ===",
+        "=== gplus GIC sweep  (%d networks, %d cached, %d to fit) ===",
         len(graph_files), cached_count, len(pending),
     )
 
@@ -183,6 +159,7 @@ def main() -> None:
     failures = []
     t_start = time.perf_counter()
 
+    # Serial pass: replay cached cells
     pending_with_idx: list[tuple[int, Path]] = []
     for i, edge_path in enumerate(graph_files, start=1):
         graph_name = edge_path.stem
@@ -190,21 +167,29 @@ def main() -> None:
         if use_cache:
             cached = load_cached_result(net_dir, graph_name)
             if cached is not None:
+                n_v = cached["meta"].get("n_nodes")
+                print(
+                    f"[{i:3d}/{len(graph_files)}] {graph_name}  CACHE  "
+                    f"n={n_v}  best={cached['meta'].get('best_model')}  "
+                    f"GIC={cached['meta'].get('best_gic', float('nan')):.3f}"
+                )
                 summary_rows.append(cached["summary"])
                 fit_meta_rows.append({**cached["meta"], "cached": True})
                 continue
         pending_with_idx.append((i, edge_path))
 
+    # Parallel pass: fresh fits across workers
     if pending_with_idx:
         worker_count = max(1, min(workers, len(pending_with_idx)))
         print(
-            f"Launching {worker_count} worker(s) for {len(pending_with_idx)} fresh fits ...\n"
+            f"\nLaunching {worker_count} worker process(es) for "
+            f"{len(pending_with_idx)} fresh fits ...\n"
         )
         if worker_count == 1:
-            results_iter = [
+            results_iter = (
                 _fit_worker((str(p), _cfg_to_dict(cfg), lg_iter_cap, i, len(graph_files)))
                 for i, p in pending_with_idx
-            ]
+            )
         else:
             from concurrent.futures import ProcessPoolExecutor, as_completed
             tasks = [
@@ -226,13 +211,15 @@ def main() -> None:
                 failures.append({"graph": name, "error": payload})
                 continue
             meta = payload["meta"]
+            summary = payload["summary"]
             print(
-                f"  [{fits_done}/{len(pending_with_idx)}] {name[-40:]}  "
+                f"  [{fits_done}/{len(pending_with_idx)}] {name}  DONE  "
                 f"n={meta.get('n_nodes')}  best={meta['best_model']}  "
-                f"GIC={meta['best_gic']:.3f}  in {_fmt_secs(meta.get('elapsed_s', 0))}  "
+                f"GIC={meta['best_gic']:.3f}  σ̂={meta.get('sigma_hat', 0):+.3f}  "
+                f"d̂={meta.get('d_hat')}  in {_fmt_secs(meta.get('elapsed_s', 0))}  "
                 f"| wall {_fmt_secs(elapsed)}"
             )
-            summary_rows.append(payload["summary"])
+            summary_rows.append(summary)
             fit_meta_rows.append(meta)
 
     total_elapsed = time.perf_counter() - t_start
@@ -243,7 +230,7 @@ def main() -> None:
     )
 
     if not summary_rows:
-        print("No networks were processed.")
+        print("No networks were processed — aborting summary step.")
         return
 
     summary_all = pd.concat(summary_rows, ignore_index=True)
@@ -259,14 +246,16 @@ def main() -> None:
     print("\nMean GIC rank (lower = better fit):")
     print(mean_rank.to_string())
 
-    print("\nBest-model counts:")
-    wins = fit_meta["best_model"].value_counts()
-    print(wins.to_string())
+    print("\nPer-graph best model (by GIC):")
+    cols = ["graph", "n_nodes", "n_edges", "d_hat", "sigma_hat", "best_model", "best_gic"]
+    cols = [c for c in cols if c in fit_meta.columns]
+    print(fit_meta[cols].sort_values("n_nodes").to_string(index=False))
 
     print(f"\nArtifacts in: {cfg.run_dir}")
 
 
 def _cfg_to_dict(cfg) -> dict:
+    """Serialize PlatformConfig for transport across process boundary."""
     return {
         "platform": cfg.platform,
         "glob_pattern": cfg.glob_pattern,
@@ -279,11 +268,17 @@ def _cfg_to_dict(cfg) -> dict:
         "display_plots": cfg.display_plots,
         "use_cache": cfg.use_cache,
         "data_root": str(cfg.data_root),
+        # Pass parent of run_dir because PlatformConfig.__post_init__ appends platform
         "run_dir_parent": str(cfg.run_dir.parent),
     }
 
 
 def _fit_worker(args):
+    """Run in a child process. Returns (status, name, payload).
+
+    Worker writes all per-graph artifacts to disk (via fit_one_network);
+    only the small meta dict + summary DataFrame are shipped back over IPC.
+    """
     edge_path_str, cfg_dict, lg_iter_cap, i, total = args
     import sys as _sys
     import os as _os
@@ -298,7 +293,6 @@ def _fit_worker(args):
         if _p not in _sys.path:
             _sys.path.insert(0, _p)
 
-    _patch_load_edges()
     import platform_fit_utils as pfu
     from platform_fit_utils import PlatformConfig, fit_one_network, setup_platform_logging
 
@@ -309,7 +303,11 @@ def _fit_worker(args):
     cfg = PlatformConfig(**cfg_kwargs)
 
     _orig_lg_max = pfu.lg_max_iterations
-    pfu.lg_max_iterations = lambda n: min(_orig_lg_max(n), lg_iter_cap)
+
+    def _capped(n: int) -> int:
+        return min(_orig_lg_max(n), lg_iter_cap)
+
+    pfu.lg_max_iterations = _capped
 
     edge_path = _Path(edge_path_str)
     logger = setup_platform_logging(cfg.run_dir, name=f"worker_{_os.getpid()}")
@@ -321,45 +319,55 @@ def _fit_worker(args):
         return ("err", edge_path.stem, f"{exc}\n{_tb.format_exc()}")
 
 
-def _discover(cfg, sample_size, seed):
-    """Sample up to ``sample_size`` graphs from cfg.glob_pattern.
+def _peek_size(edge_path: Path) -> int:
+    """Get |V| of an .edges file without networkx parsing."""
+    nodes = set()
+    with open(edge_path, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) >= 2:
+                nodes.add(parts[0])
+                nodes.add(parts[1])
+    return len(nodes)
 
-    All subjects in a given parcellation atlas have the same node count,
-    so the size filter is effectively a sanity check. We don't pre-load
-    every .graphml to peek size — too slow with 1000+ files. Instead we
-    peek a single file to learn n, apply min/max bounds to the whole
-    batch, then random-sample paths.
+
+def _fast_discover(cfg):
+    """File-size pre-filter + cheap node-count peek, skipping networkx parsing.
+
+    The reference ``platform_fit_utils.discover_graph_files`` loads every
+    candidate via ``nx.read_edgelist`` to count nodes — for the gplus
+    collection this scans ~130 files (incl. multi-MB ones above MAX_NODES)
+    and takes minutes. Here we (1) drop files whose byte size implies
+    n > 2·max_nodes (lots of slack) and (2) count unique node tokens
+    in a single linear pass for the survivors.
     """
-    import networkx as nx
-
     paths = sorted(cfg.data_root.glob(cfg.glob_pattern))
-    paths = [p for p in paths if p.suffix == ".graphml" and p.is_file()]
-    if not paths:
-        return [], {}
-
-    # Atlas-wide n: peek one file.
-    n_peek = 0
-    try:
-        G = _load_graphml_graph(paths[0])
-        n_peek = G.number_of_nodes()
-    except Exception as exc:
-        print(f"  warning: failed to peek size of {paths[0].name}: {exc}")
-    if cfg.max_nodes is not None and n_peek > cfg.max_nodes:
-        print(f"  scale n={n_peek} exceeds max_nodes={cfg.max_nodes}; skipping all")
-        return [], {}
-    if cfg.min_nodes and n_peek < cfg.min_nodes:
-        print(f"  scale n={n_peek} below min_nodes={cfg.min_nodes}; skipping all")
-        return [], {}
-
-    rng = random.Random(seed)
-    if sample_size is None or sample_size >= len(paths):
-        chosen = paths
+    paths = [p for p in paths if p.suffix == ".edges" and p.is_file()]
+    sizes: dict[str, int] = {}
+    kept: list[tuple[Path, int]] = []
+    if cfg.max_nodes is not None:
+        # Empirically each edge in this dataset is ~20 bytes; n*(n-1)/2 edges
+        # at upper bound → safe size threshold = 50 · n²·2 = 100 · n² bytes.
+        max_bytes = 100 * cfg.max_nodes * cfg.max_nodes
     else:
-        chosen = rng.sample(paths, sample_size)
-    chosen.sort()  # for stable display + cache ordering
-
-    sizes = {p.stem: n_peek for p in chosen}
-    return chosen, sizes
+        max_bytes = None
+    for p in paths:
+        if max_bytes is not None and p.stat().st_size > max_bytes:
+            continue
+        try:
+            n = _peek_size(p)
+        except OSError:
+            continue
+        if n < cfg.min_nodes:
+            continue
+        if cfg.max_nodes is not None and n > cfg.max_nodes:
+            continue
+        if n == 0:
+            continue
+        sizes[p.stem] = n
+        kept.append((p, n))
+    kept.sort(key=lambda x: x[1])
+    return [p for p, _ in kept], sizes
 
 
 if __name__ == "__main__":

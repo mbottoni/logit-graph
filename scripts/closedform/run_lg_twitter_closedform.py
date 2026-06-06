@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on the 18 animal connectomes, alongside a fairly-scored Logit-Graph (LG).
+search, on Twitter SNAP ego networks, alongside a fairly-scored Logit-Graph (LG).
 
-Connectome version of run_gplus_closedform.py. Each connectome is one graph per
-organism/region (mouse, macaque, rat, C. elegans, drosophila, ...), loaded from
-GraphML as the undirected, unweighted (binary) largest connected component.
-
-For each connectome in the size window we score, by spectral GIC
-(2*KL + 2*n_params, KL on the normalized-Laplacian density, lower=better):
+Twitter twin of run_gplus_closedform.py. The SNAP twitter collection has 973
+ego networks (n up to ~247); we sample MAX_NETS of them (seeded) from the size
+window and score, by spectral GIC (2*KL + 2*n_params, KL on the normalized-
+Laplacian density, lower=better):
 
   * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
-                     of the spectral density over N_RUNS post-burn-in snapshots
-                     (same averaging convention the baselines get).
+                     of the spectral density over N_RUNS post-burn-in snapshots.
   * ER/BA/WS      -- two ways each:
        grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
        cf   : closed-form moment estimate (no search)
@@ -25,25 +22,24 @@ Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
   KR  d = round(kbar)          (nd even)   (E = nd/2)
   GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
 
-The normalized-Laplacian spectral density uses dense eigvalsh for n <= 500 and
-the deterministic KPM estimator for larger n (logit_graph.gic, seeded), so the
-big connectomes (n up to ~1800) stay tractable. Reproducible: fixed seed
-(LG_CCF_SEED), BLAS threads pinned to 1. Read-only w.r.t. the library; writes
-only under runs/connectomes_closedform/. Findings:
-FINDINGS_connectomes_closedform.md.
+Reproducible: fixed seed (LG_TCF_SEED) drives the ego-net sampling and all
+generators; BLAS threads pinned to 1; the twitter tarball is auto-extracted if
+the .edges files are missing. Read-only w.r.t. the library; writes only under
+runs/twitter_closedform/. Findings: FINDINGS_twitter_closedform.md.
 
 Env knobs (all optional):
-  LG_CCF_SEED (12345)     LG_CCF_QUICK (0 -> full; 1 -> smoke on small connectomes)
-  LG_CCF_MIN_NODES (20)   LG_CCF_MAX_NODES (2000)   LG_CCF_MAX_NETS (all)
-  LG_CCF_N_RUNS (5)       LG_CCF_GRID_POINTS (5)
+  LG_TCF_SEED (12345)    LG_TCF_QUICK (0 -> full; 1 -> smoke on a few ego nets)
+  LG_TCF_MIN_NODES (50)  LG_TCF_MAX_NODES (300)  LG_TCF_MAX_NETS (30)
+  LG_TCF_N_RUNS (5)      LG_TCF_GRID_POINTS (5)
 
-  make gic-connectomes-closedform        full run
-  make gic-connectomes-closedform-quick  smoke on the small connectomes
+  make lg-gic-twitter-closedform        full run (~1-2 min, 30 ego nets)
+  make lg-gic-twitter-closedform-quick  smoke (~10s, a few ego nets)
 """
 from __future__ import annotations
 
 import math
 import os
+import random
 import sys
 import time
 import warnings
@@ -80,26 +76,24 @@ def _int(env, default):
     return int(raw) if raw is not None else default
 
 
-QUICK = os.environ.get("LG_CCF_QUICK", "0") == "1"
-MIN_NODES = _int("LG_CCF_MIN_NODES", 20)
-MAX_NODES = _int("LG_CCF_MAX_NODES", 300 if QUICK else 2000)  # all 18 connectomes
-MAX_NETS = _int("LG_CCF_MAX_NETS", 6 if QUICK else 10_000)
-N_RUNS = _int("LG_CCF_N_RUNS", 3 if QUICK else 5)
-GRID_POINTS = _int("LG_CCF_GRID_POINTS", 3 if QUICK else 5)
+QUICK = os.environ.get("LG_TCF_QUICK", "0") == "1"
+MIN_NODES = _int("LG_TCF_MIN_NODES", 50)
+MAX_NODES = _int("LG_TCF_MAX_NODES", 150 if QUICK else 300)
+MAX_NETS = _int("LG_TCF_MAX_NETS", 5 if QUICK else 30)
+N_RUNS = _int("LG_TCF_N_RUNS", 3 if QUICK else 5)
+GRID_POINTS = _int("LG_TCF_GRID_POINTS", 3 if QUICK else 5)
 LG_D_LIST = [0, 1, 2]
-# Fair LG scoring: burn-in then N_RUNS spectral snapshots (stride apart).
-LG_BURN_MIN = _int("LG_CCF_LG_BURN_MIN", 4000)
-LG_BURN_PER_N = _int("LG_CCF_LG_BURN_PER_N", 25)
-LG_STRIDE_MIN = _int("LG_CCF_LG_STRIDE_MIN", 600)
-LG_STRIDE_PER_N = _int("LG_CCF_LG_STRIDE_PER_N", 6)
-SEED = _int("LG_CCF_SEED", 12345)
+LG_BURN_MIN = _int("LG_TCF_LG_BURN_MIN", 4000)
+LG_BURN_PER_N = _int("LG_TCF_LG_BURN_PER_N", 25)
+LG_STRIDE_MIN = _int("LG_TCF_LG_STRIDE_MIN", 600)
+LG_STRIDE_PER_N = _int("LG_TCF_LG_STRIDE_PER_N", 6)
+SEED = _int("LG_TCF_SEED", 12345)
 
-# Current fixed intervals (mirror simulation.py defaults).
 GRID_INTERVALS = {"ER": (0.01, 0.25), "BA": (1, 8), "WS_k": (2, 10), "WS_p": (0.01, 0.5)}
 
 
 # ---------------------------------------------------------------------------
-# GIC scoring (apples-to-apples with the pipeline)
+# GIC scoring
 # ---------------------------------------------------------------------------
 
 def gic_of(real_nx, model_name, gen_fn, n_runs, seed):
@@ -167,7 +161,7 @@ def closed_form_params(G):
     k_ws = max(2, int(round(kbar)))
     if k_ws % 2 == 1:
         k_ws += 1
-    C_obs = nx.average_clustering(G)  # unweighted (weight=None default)
+    C_obs = nx.average_clustering(G)
     if k_ws > 2:
         C0 = 3 * (k_ws - 2) / (4 * (k_ws - 1))
         p_ws = 0.0 if C_obs >= C0 else 1.0 - (C_obs / C0) ** (1.0 / 3.0)
@@ -181,7 +175,7 @@ def closed_form_params(G):
 
 
 # ---------------------------------------------------------------------------
-# Current-style grid search (fixed interval, pick min GIC = best case for grid)
+# Grid search (fixed interval, pick min GIC = best case for grid)
 # ---------------------------------------------------------------------------
 
 def grid_best(real_nx, model_name, n, build_gen, lo, hi, n_runs, seed):
@@ -208,8 +202,7 @@ def grid_best_ws(real_nx, n, n_runs, seed):
 
 
 # ---------------------------------------------------------------------------
-# LG scored FAIRLY: burn-in + ensemble-mean spectral density (same convention
-# as the baselines, which average n_runs sample densities).
+# LG scored fairly: burn-in + ensemble-mean spectral density
 # ---------------------------------------------------------------------------
 
 def _lg_burn(n):
@@ -258,16 +251,54 @@ def lg_gic(adj, seed):
 
 
 # ---------------------------------------------------------------------------
-# Data loading
+# Data loading / sampling
 # ---------------------------------------------------------------------------
 
-def _load_graphml(path):
-    """Undirected, unweighted (binary) largest connected component."""
-    G = nx.read_graphml(path)
-    G = nx.Graph(G)  # collapse multi-edges + direction
+def _ensure_data(data_dir):
+    """Extract data/misc/twitter.tar.gz if the .edges files are not present."""
+    if data_dir.exists() and any(data_dir.glob("*.edges")):
+        return
+    tarball = _repo_root / "data" / "misc" / "twitter.tar.gz"
+    if not tarball.exists():
+        return
+    import tarfile
+    print(f"extracting {tarball.relative_to(_repo_root)} ...")
+    with tarfile.open(tarball) as tf:
+        tf.extractall(_repo_root / "data" / "misc")
+
+
+def _peek_size(path):
+    """|V| of an .edges file via a single linear token scan (no nx parsing)."""
+    nodes = set()
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) >= 2:
+                nodes.add(parts[0])
+                nodes.add(parts[1])
+    return len(nodes)
+
+
+def _load_edges(path):
+    """Undirected, self-loop-free largest connected component, relabeled 0..n-1."""
+    G = nx.read_edgelist(path, nodetype=int)
+    G = nx.Graph(G)
     G.remove_edges_from(nx.selfloop_edges(G))
     cc = max(nx.connected_components(G), key=len)
     return nx.convert_node_labels_to_integers(G.subgraph(cc).copy())
+
+
+def _sample_files():
+    data_dir = _repo_root / "data" / "misc" / "twitter"
+    _ensure_data(data_dir)
+    allf = sorted(data_dir.glob("*.edges"))
+    if not allf:
+        return []
+    # Cheap pre-filter to the size window (peek node count without nx parsing).
+    inwin = [f for f in allf if MIN_NODES <= _peek_size(f) <= MAX_NODES]
+    rng = random.Random(SEED)
+    k = min(MAX_NETS, len(inwin))
+    return sorted(rng.sample(inwin, k)), len(inwin), len(allf)
 
 
 # ---------------------------------------------------------------------------
@@ -275,45 +306,36 @@ def _load_graphml(path):
 # ---------------------------------------------------------------------------
 
 def main():
-    data_dir = _repo_root / "data" / "connectomes"
-    files = sorted(data_dir.glob("*.graphml"))
-    if not files:
-        print(f"No .graphml files under {data_dir} — connectome data is gitignored; "
-              f"place the 18 .graphml files there first.")
-        return
-    out_dir = _here / "runs" / "connectomes_closedform"
+    out_dir = _here / "runs" / "twitter_closedform"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"connectomes closed-form experiment  seed={SEED}  quick={QUICK}  "
-          f"window=[{MIN_NODES},{MAX_NODES}]  max_nets={MAX_NETS}  "
-          f"n_runs={N_RUNS}  grid_points={GRID_POINTS}  "
-          f"lg_burn=max({LG_BURN_MIN},{LG_BURN_PER_N}n)  lg_stride=max({LG_STRIDE_MIN},{LG_STRIDE_PER_N}n)")
+    sampled = _sample_files()
+    if not sampled:
+        print("No twitter .edges files found under data/misc/twitter/ — data is "
+              "gitignored; place the SNAP twitter tarball/edges there first.")
+        return
+    files, n_in_window, n_total = sampled
 
-    # Sort connectomes by node count so smaller (faster) ones run first.
-    loaded = []
-    for f in files:
+    print(f"twitter closed-form experiment  seed={SEED}  quick={QUICK}  "
+          f"window=[{MIN_NODES},{MAX_NODES}]  sampled={len(files)}/{n_in_window} "
+          f"(of {n_total} ego nets)  n_runs={N_RUNS}  grid_points={GRID_POINTS}")
+
+    rows = []
+    for i, f in enumerate(files, 1):
         try:
-            G = _load_graphml(f)
+            G = _load_edges(f)
         except Exception as e:
             print(f"  skip {f.stem}: {e}")
             continue
-        loaded.append((f.stem, G))
-    loaded.sort(key=lambda t: t[1].number_of_nodes())
-
-    rows = []
-    picked = 0
-    for name, G in loaded:
-        if picked >= MAX_NETS:
-            break
         n = G.number_of_nodes()
         if not (MIN_NODES <= n <= MAX_NODES):
             continue
-        picked += 1
         t0 = time.perf_counter()
         cf = closed_form_params(G)
-        adj = nx.to_numpy_array(G, weight=None)  # binarize (connectomes are weighted)
+        adj = nx.to_numpy_array(G)
         real_nx = nx.from_numpy_array(adj)
-        print(f"\n[{picked}] {name}  n={n}  E={cf['E']}  density={cf['density']:.3f}  "
+        name = f.stem
+        print(f"\n[{i}] {name}  n={n}  E={cf['E']}  density={cf['density']:.3f}  "
               f"kbar={cf['kbar']:.1f}  C={cf['C_obs']:.3f}")
 
         lg_val, lg_d = lg_gic(adj, SEED)
@@ -352,12 +374,12 @@ def main():
 
     df = pd.DataFrame(rows)
     if df.empty:
-        print("\nNo connectomes in window.")
+        print("\nNo ego nets scored.")
         return
     df.to_csv(out_dir / "results.csv", index=False)
 
     print("\n" + "=" * 78)
-    print("AGGREGATE (mean GIC across connectomes, lower = better)")
+    print("AGGREGATE (mean GIC across ego nets, lower = better)")
     print("=" * 78)
     for fam in ("ER", "BA", "WS"):
         g = df[f"{fam}_grid"].mean()
@@ -374,7 +396,7 @@ def main():
     ranks.columns = list(rank_cols.keys())
     print("\nMean rank (LG + closed-form baselines, lower = better):")
     print(ranks.mean().sort_values().to_string())
-    print(f"\nWrote {out_dir / 'results.csv'}  ({len(df)} connectomes)")
+    print(f"\nWrote {out_dir / 'results.csv'}  ({len(df)} ego nets)")
 
 
 if __name__ == "__main__":

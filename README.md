@@ -178,6 +178,10 @@ artifacts to a gitignored `runs/` directory. Every target has a fast `-quick` sm
 `make help` for the full list with timings. Real-network experiments expect their data under
 `data/` (gitignored) — each script prints the path it needs if the files are missing.
 
+**Naming convention.** All current experiments use the **equilibrium** Logit-Graph and carry the
+**`lg-`** prefix (Makefile targets `lg-*`, scripts `scripts/**/run_lg_*.py`). Experiments for the
+new **temporal** Logit-Graph will use the **`tlg-`** prefix (none yet).
+
 ### Robust ANOVA on σ̂ (single-graph dyadic-robust Wald)
 
 Tests whether the Logit-Graph intercept `σ` (baseline edge log-odds) differs across groups, using
@@ -186,30 +190,33 @@ the p-values have a genuine sampling interpretation.
 
 | Command | Objective |
 |---------|-----------|
-| `make anova-twitch-robust` | Compare σ̂ across the 6 Twitch language communities (omnibus + pairwise Wald). |
-| `make anova-connectomes-robust` | Compare σ̂ across the 18 animal connectomes (corrected "Table 2", 153 pairwise tests). |
-| `make anova-validation-robust` | Simulation check of the test itself: Type-I calibration + ROC/AUC vs standardized effect and graph size. |
+| `make lg-anova-twitch-robust` | Compare σ̂ across the 6 Twitch language communities (omnibus + pairwise Wald). |
+| `make lg-anova-connectomes-robust` | Compare σ̂ across the 18 animal connectomes (corrected "Table 2", 153 pairwise tests). |
+| `make lg-anova-validation-robust` | Simulation check of the test itself: Type-I calibration + ROC/AUC vs standardized effect and graph size. |
 
-### Paper figures (simulation)
+### Paper-figure simulations (recover known parameters)
+
+Experiments that **simulate** graphs from the equilibrium Logit-Graph at known parameters and
+recover them.
 
 | Command | Objective |
 |---------|-----------|
-| `make sigma-convergence` | Fig 2 — σ̂ converges to the true σ as `n` grows. |
-| `make roc-paper` | Figs 3–4 — ANOVA-on-σ̂ ROC curves vs effect size and `n`. |
-| `make aic-paper-fast` | AIC `d`-selection sweep — recovers the true neighborhood radius `d` across `n`. |
-| `make convergence-diagnostics` | MCMC convergence diagnostics for the Layer-2 Gibbs sampler. |
+| `make lg-sigma-convergence` | Fig 2 — σ̂ converges to the true σ as `n` grows. |
+| `make lg-roc-paper` | Figs 3–4 — ANOVA-on-σ̂ ROC curves vs effect size and `n`. |
+| `make lg-aic-paper-fast` | AIC `d`-selection sweep — recovers the true neighborhood radius `d` across `n`. |
+| `make lg-convergence-diagnostics` | MCMC convergence diagnostics for the Layer-2 Gibbs sampler. |
 
 ### Model selection on real networks (spectral GIC)
 
 Rank Logit-Graph against ER / WS / BA on real graphs. Two flavors per dataset:
 
-- `make gic-<dataset>` — LG vs baselines scored by spectral GIC.
-- `make gic-<dataset>-closedform` — closed-form (moment-matched) baselines vs fixed-grid search,
+- `make lg-gic-<dataset>` — LG vs baselines scored by spectral GIC.
+- `make lg-gic-<dataset>-closedform` — closed-form (moment-matched) baselines vs fixed-grid search,
   with a fairly-scored LG.
 
 `<dataset>` ∈ `facebook-ego`, `arxiv`, `twitch`, `twitter`, `gplus`, `connectomes` (animal),
 `human-connectomes` (OASIS-3) — both flavors available. `facebook` (full MUSAE page–page graph) is
-GIC-only (`make gic-facebook`).
+GIC-only (`make lg-gic-facebook`).
 
 ---
 
