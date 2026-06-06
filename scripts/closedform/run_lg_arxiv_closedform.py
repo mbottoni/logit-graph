@@ -1,44 +1,41 @@
 #!/usr/bin/env python3
 """Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on the 10 SNAP Facebook ego networks, alongside a fairly-scored LG.
+search, on the cit-HepTh arXiv citation network, alongside a fairly-scored LG.
 
-Facebook-ego twin of run_gplus_closedform.py / run_twitter_closedform.py. The 10
-ego networks are all small enough (n 52-1034) for the LG Gibbs chain, so we
-score every one. Spectral GIC (2*KL + 2*n_params, KL on the normalized-Laplacian
-density, lower=better):
+cit-HepTh is one large graph (~27.8k nodes, ~352k edges) — far above the size at
+which the LG Gibbs chain mixes in reasonable time. So we sample SUBGRAPHS
+**BFS-connected subgraphs** capped at CAP nodes (seeded random BFS roots) and
+score each, measuring the families' fit to real *local* citation sub-networks
+rather than the global graph. Spectral GIC (2*KL + 2*n_params, KL on the
+normalized-Laplacian density, lower=better):
 
-  * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
-                     of the spectral density over N_RUNS post-burn-in snapshots.
-  * ER/BA/WS      -- two ways each:
-       grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
-       cf   : closed-form moment estimate (no search)
-  * KR/GRG        -- closed-form only (bonus families)
+  * LG            -- best of d in {0,1,2}, scored by burn-in + ensemble mean of
+                     the spectral density over N_RUNS post-burn-in snapshots.
+  * ER/BA/WS      -- grid (fixed interval, pick min GIC) and cf (closed-form).
+  * KR/GRG        -- closed-form only.
 
-Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
-  ER  p = 2E/(n(n-1))                      (exact MLE)
-  BA  m = round(E/n)            in [1, n)   (edge count E = m(n-m))
-  WS  k = 2*round(E/n) (even)   in [2, n)   (E = nk/2, rewiring conserves edges)
-  WS  p = 1 - (C_obs/C0)^(1/3), C0 = 3(k-2)/(4(k-1))   (clustering moment)
-  KR  d = round(kbar)          (nd even)   (E = nd/2)
-  GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
+Closed-form estimators (n nodes, E edges, kbar = 2E/n):
+  ER p=2E/(n(n-1)) [MLE]; BA m=round(E/n); WS k=2*round(E/n)+clustering p;
+  KR d=round(kbar); GRG r=sqrt(kbar/(pi*(n-1))).
 
-Reproducible: fixed seed (LG_FBE_SEED), BLAS threads pinned to 1; the facebook
-tarball is auto-extracted if the .edges files are missing. Read-only w.r.t. the
-library; writes only under runs/facebook_ego_closedform/. Findings:
-FINDINGS_facebook_ego_closedform.md.
+Reproducible: fixed seed (LG_ARCF_SEED) drives BFS roots + generators; BLAS
+pinned. Dense eigvalsh for n<=500, deterministic KPM above. Read-only w.r.t. the
+library; writes only under runs/arxiv_closedform/. Findings:
+FINDINGS_arxiv_closedform.md.
 
 Env knobs (all optional):
-  LG_FBE_SEED (12345)    LG_FBE_QUICK (0 -> all 10; 1 -> smoke on small ones)
-  LG_FBE_MIN_NODES (20)  LG_FBE_MAX_NODES (2000)   LG_FBE_MAX_NETS (all)
-  LG_FBE_N_RUNS (5)      LG_FBE_GRID_POINTS (5)
+  LG_ARCF_SEED (12345)   LG_ARCF_QUICK (0 -> SUBGRAPHS; 1 -> a few small ones)
+  LG_ARCF_CAP (700)      LG_ARCF_SUBGRAPHS (16)
+  LG_ARCF_N_RUNS (5)     LG_ARCF_GRID_POINTS (5)   LG_ARCF_DATA (path override)
 
-  make gic-facebook-ego-closedform        full run (all 10 ego nets)
-  make gic-facebook-ego-closedform-quick  smoke (small ego nets)
+  make lg-gic-arxiv-closedform        full run (BFS subgraphs of cit-HepTh)
+  make lg-gic-arxiv-closedform-quick  smoke (a few subgraphs)
 """
 from __future__ import annotations
 
 import math
 import os
+import random
 import sys
 import time
 import warnings
@@ -74,24 +71,22 @@ def _int(env, default):
     return int(raw) if raw is not None else default
 
 
-QUICK = os.environ.get("LG_FBE_QUICK", "0") == "1"
-MIN_NODES = _int("LG_FBE_MIN_NODES", 20)
-MAX_NODES = _int("LG_FBE_MAX_NODES", 250 if QUICK else 2000)
-MAX_NETS = _int("LG_FBE_MAX_NETS", 4 if QUICK else 10_000)
-N_RUNS = _int("LG_FBE_N_RUNS", 3 if QUICK else 5)
-GRID_POINTS = _int("LG_FBE_GRID_POINTS", 3 if QUICK else 5)
+QUICK = os.environ.get("LG_ARCF_QUICK", "0") == "1"
+CAP = _int("LG_ARCF_CAP", 400 if QUICK else 700)
+SUBGRAPHS = _int("LG_ARCF_SUBGRAPHS", 3 if QUICK else 16)
+N_RUNS = _int("LG_ARCF_N_RUNS", 3 if QUICK else 5)
+GRID_POINTS = _int("LG_ARCF_GRID_POINTS", 3 if QUICK else 5)
 LG_D_LIST = [0, 1, 2]
-LG_BURN_MIN = _int("LG_FBE_LG_BURN_MIN", 4000)
-LG_BURN_PER_N = _int("LG_FBE_LG_BURN_PER_N", 25)
-LG_STRIDE_MIN = _int("LG_FBE_LG_STRIDE_MIN", 600)
-LG_STRIDE_PER_N = _int("LG_FBE_LG_STRIDE_PER_N", 6)
-SEED = _int("LG_FBE_SEED", 12345)
+LG_BURN_MIN = _int("LG_ARCF_LG_BURN_MIN", 4000)
+LG_BURN_PER_N = _int("LG_ARCF_LG_BURN_PER_N", 25)
+LG_STRIDE_MIN = _int("LG_ARCF_LG_STRIDE_MIN", 600)
+LG_STRIDE_PER_N = _int("LG_ARCF_LG_STRIDE_PER_N", 6)
+SEED = _int("LG_ARCF_SEED", 12345)
 
 GRID_INTERVALS = {"ER": (0.01, 0.25), "BA": (1, 8), "WS_k": (2, 10), "WS_p": (0.01, 0.5)}
 
 
 def gic_of(real_nx, model_name, gen_fn, n_runs, seed):
-    """GIC = 2*KL(real_density, mean_model_density) + 2*n_params."""
     n_params = _MODEL_N_PARAMS.get(model_name, 1)
     specs = []
     for r in range(n_runs):
@@ -228,59 +223,88 @@ def lg_gic(adj, seed):
     return best
 
 
-def _ensure_data(data_dir):
-    if data_dir.exists() and any(data_dir.glob("*.edges")):
-        return
-    tarball = _repo_root / "data" / "misc" / "facebook.tar.gz"
-    if not tarball.exists():
-        return
-    import tarfile
-    print(f"extracting {tarball.relative_to(_repo_root)} ...")
-    with tarfile.open(tarball) as tf:
-        tf.extractall(_repo_root / "data" / "misc")
+# ---------------------------------------------------------------------------
+# Citation graph loading + BFS subgraph sampling
+# ---------------------------------------------------------------------------
+
+def _data_path():
+    override = os.environ.get("LG_ARCF_DATA")
+    if override:
+        return Path(override)
+    for cand in (_repo_root / "data" / "cit-HepTh.txt",
+                 _repo_root / "data" / "citation_networks" / "cit-HepTh.txt"):
+        if cand.exists():
+            return cand
+    return _repo_root / "data" / "cit-HepTh.txt"
 
 
-def _load_edges(path):
-    """Undirected, self-loop-free largest connected component, relabeled 0..n-1."""
-    G = nx.read_edgelist(path, nodetype=int)
-    G = nx.Graph(G)
+def _load_citation(path):
+    G = nx.read_edgelist(path, comments="#", delimiter="\t",
+                         create_using=nx.DiGraph(), nodetype=int)
+    G = G.to_undirected()
     G.remove_edges_from(nx.selfloop_edges(G))
     cc = max(nx.connected_components(G), key=len)
     return nx.convert_node_labels_to_integers(G.subgraph(cc).copy())
 
 
+def _bfs_subgraph(G, root, cap, rng):
+    """Induced subgraph of a randomized BFS ball of up to ``cap`` nodes."""
+    seen = {root}
+    order = [root]
+    frontier = [root]
+    while frontier and len(seen) < cap:
+        nxt = []
+        for u in frontier:
+            nbrs = list(G.neighbors(u))
+            rng.shuffle(nbrs)
+            for v in nbrs:
+                if v not in seen:
+                    seen.add(v)
+                    order.append(v)
+                    nxt.append(v)
+                    if len(seen) >= cap:
+                        break
+            if len(seen) >= cap:
+                break
+        rng.shuffle(nxt)
+        frontier = nxt
+    H = G.subgraph(order[:cap])
+    cc = max(nx.connected_components(H), key=len)
+    return nx.convert_node_labels_to_integers(H.subgraph(cc).copy())
+
+
 def main():
-    data_dir = _repo_root / "data" / "misc" / "facebook"
-    _ensure_data(data_dir)
-    files = sorted(data_dir.glob("*.edges"), key=lambda p: p.stat().st_size)
-    out_dir = _here / "runs" / "facebook_ego_closedform"
+    path = _data_path()
+    out_dir = _here / "runs" / "arxiv_closedform"
     out_dir.mkdir(parents=True, exist_ok=True)
-    if not files:
-        print("No facebook .edges files found under data/misc/facebook/.")
+    if not path.exists():
+        print(f"cit-HepTh not found at {path} (gitignored — place it there or set "
+              f"LG_ARCF_DATA).")
         return
 
-    print(f"facebook-ego closed-form experiment  seed={SEED}  quick={QUICK}  "
-          f"window=[{MIN_NODES},{MAX_NODES}]  n_runs={N_RUNS}  grid_points={GRID_POINTS}")
+    print(f"arxiv closed-form experiment  seed={SEED}  quick={QUICK}  "
+          f"cap={CAP}  subgraphs={SUBGRAPHS}  n_runs={N_RUNS}  grid_points={GRID_POINTS}  "
+          f"(BFS subgraphs of cit-HepTh)")
+    t_load = time.perf_counter()
+    Gfull = _load_citation(path)
+    print(f"loaded cit-HepTh GCC: n={Gfull.number_of_nodes()} E={Gfull.number_of_edges()} "
+          f"[{time.perf_counter() - t_load:.0f}s]")
 
+    rng = random.Random(SEED)
+    roots = rng.sample(list(Gfull.nodes()), SUBGRAPHS)
     rows = []
     picked = 0
-    for f in files:
-        if picked >= MAX_NETS:
-            break
-        try:
-            G = _load_edges(f)
-        except Exception as e:
-            print(f"  skip {f.stem}: {e}")
-            continue
+    for ri, root in enumerate(roots):
+        G = _bfs_subgraph(Gfull, root, CAP, rng)
         n = G.number_of_nodes()
-        if not (MIN_NODES <= n <= MAX_NODES):
+        if n < 20:
             continue
         picked += 1
         t0 = time.perf_counter()
         cf = closed_form_params(G)
         adj = nx.to_numpy_array(G)
         real_nx = nx.from_numpy_array(adj)
-        name = f.stem
+        name = f"sub#{ri}"
         print(f"\n[{picked}] {name}  n={n}  E={cf['E']}  density={cf['density']:.3f}  "
               f"kbar={cf['kbar']:.1f}  C={cf['C_obs']:.3f}")
 
@@ -320,12 +344,12 @@ def main():
 
     df = pd.DataFrame(rows)
     if df.empty:
-        print("\nNo ego nets scored.")
+        print("\nNo subgraphs scored.")
         return
     df.to_csv(out_dir / "results.csv", index=False)
 
     print("\n" + "=" * 78)
-    print("AGGREGATE (mean GIC across ego nets, lower = better)")
+    print("AGGREGATE (mean GIC across BFS subgraphs, lower = better)")
     print("=" * 78)
     for fam in ("ER", "BA", "WS"):
         g = df[f"{fam}_grid"].mean()
@@ -342,7 +366,7 @@ def main():
     ranks.columns = list(rank_cols.keys())
     print("\nMean rank (LG + closed-form baselines, lower = better):")
     print(ranks.mean().sort_values().to_string())
-    print(f"\nWrote {out_dir / 'results.csv'}  ({len(df)} ego nets)")
+    print(f"\nWrote {out_dir / 'results.csv'}  ({len(df)} subgraphs)")
 
 
 if __name__ == "__main__":

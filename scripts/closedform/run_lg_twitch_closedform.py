@@ -30,8 +30,8 @@ Env knobs (all optional):
   LG_TWCF_CAP (700)        LG_TWCF_PER_COUNTRY (3)
   LG_TWCF_N_RUNS (5)       LG_TWCF_GRID_POINTS (5)
 
-  make gic-twitch-closedform        full run (BFS subgraphs from all 6 countries)
-  make gic-twitch-closedform-quick  smoke (2 countries, 1 subgraph each)
+  make lg-gic-twitch-closedform        full run (BFS subgraphs from all 6 countries)
+  make lg-gic-twitch-closedform-quick  smoke (2 countries, 1 subgraph each)
 """
 from __future__ import annotations
 

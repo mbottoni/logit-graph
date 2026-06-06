@@ -14,8 +14,8 @@ Env-var overrides:
   LG_SIGMA_USE_CACHE    reuse cached CSV (0/1)      default 1
   LG_SIGMA_QUICK        smoke (n∈{20,50,100}, n_reps=2, iter_cap=20k)
 
-  make sigma-convergence        full preset, ~10-15 min
-  make sigma-convergence-quick  smoke, ~30 sec
+  make lg-sigma-convergence        full preset, ~10-15 min
+  make lg-sigma-convergence-quick  smoke, ~30 sec
 """
 from __future__ import annotations
 

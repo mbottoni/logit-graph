@@ -28,8 +28,8 @@ Env knobs (all optional):
   LG_CAR_D_MAX (1)         LG_CAR_MIN_NODES (20)   LG_CAR_MAX_NODES (2000)
   LG_CAR_MAX_NETS (all)
 
-  make anova-connectomes-robust         full run
-  make anova-connectomes-robust-quick   smoke on the small connectomes
+  make lg-anova-connectomes-robust         full run
+  make lg-anova-connectomes-robust-quick   smoke on the small connectomes
 """
 from __future__ import annotations
 

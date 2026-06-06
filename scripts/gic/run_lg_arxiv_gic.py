@@ -24,8 +24,8 @@ Env-var overrides:
   LG_ARXIV_SEED          RNG seed                    (default 42)
   LG_ARXIV_QUICK         smoke (MAX_ITER=10k, fewer KPM moments)
 
-  make gic-arxiv         full preset (~3-5 min on 4 cores)
-  make gic-arxiv-quick   smoke (~30-60s)
+  make lg-gic-arxiv         full preset (~3-5 min on 4 cores)
+  make lg-gic-arxiv-quick   smoke (~30-60s)
 """
 from __future__ import annotations
 

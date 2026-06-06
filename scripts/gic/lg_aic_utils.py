@@ -1,6 +1,6 @@
 """Shared helpers for AIC-based d selection in the single-graph GIC drivers.
 
-Used by run_arxiv_gic.py / run_facebook_gic.py / run_twitch_gic.py so that
+Used by run_lg_arxiv_gic.py / run_lg_facebook_gic.py / run_lg_twitch_gic.py so that
 LG's neighbourhood radius d is chosen by the data (Akaike Information
 Criterion on a logistic regression fit) instead of being hard-coded.
 

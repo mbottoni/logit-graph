@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on Twitter SNAP ego networks, alongside a fairly-scored Logit-Graph (LG).
+search, on the 10 SNAP Facebook ego networks, alongside a fairly-scored LG.
 
-Twitter twin of run_gplus_closedform.py. The SNAP twitter collection has 973
-ego networks (n up to ~247); we sample MAX_NETS of them (seeded) from the size
-window and score, by spectral GIC (2*KL + 2*n_params, KL on the normalized-
-Laplacian density, lower=better):
+Facebook-ego twin of run_gplus_closedform.py / run_twitter_closedform.py. The 10
+ego networks are all small enough (n 52-1034) for the LG Gibbs chain, so we
+score every one. Spectral GIC (2*KL + 2*n_params, KL on the normalized-Laplacian
+density, lower=better):
 
   * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
                      of the spectral density over N_RUNS post-burn-in snapshots.
@@ -22,30 +22,28 @@ Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
   KR  d = round(kbar)          (nd even)   (E = nd/2)
   GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
 
-Reproducible: fixed seed (LG_TCF_SEED) drives the ego-net sampling and all
-generators; BLAS threads pinned to 1; the twitter tarball is auto-extracted if
-the .edges files are missing. Read-only w.r.t. the library; writes only under
-runs/twitter_closedform/. Findings: FINDINGS_twitter_closedform.md.
+Reproducible: fixed seed (LG_FBE_SEED), BLAS threads pinned to 1; the facebook
+tarball is auto-extracted if the .edges files are missing. Read-only w.r.t. the
+library; writes only under runs/facebook_ego_closedform/. Findings:
+FINDINGS_facebook_ego_closedform.md.
 
 Env knobs (all optional):
-  LG_TCF_SEED (12345)    LG_TCF_QUICK (0 -> full; 1 -> smoke on a few ego nets)
-  LG_TCF_MIN_NODES (50)  LG_TCF_MAX_NODES (300)  LG_TCF_MAX_NETS (30)
-  LG_TCF_N_RUNS (5)      LG_TCF_GRID_POINTS (5)
+  LG_FBE_SEED (12345)    LG_FBE_QUICK (0 -> all 10; 1 -> smoke on small ones)
+  LG_FBE_MIN_NODES (20)  LG_FBE_MAX_NODES (2000)   LG_FBE_MAX_NETS (all)
+  LG_FBE_N_RUNS (5)      LG_FBE_GRID_POINTS (5)
 
-  make gic-twitter-closedform        full run (~1-2 min, 30 ego nets)
-  make gic-twitter-closedform-quick  smoke (~10s, a few ego nets)
+  make lg-gic-facebook-ego-closedform        full run (all 10 ego nets)
+  make lg-gic-facebook-ego-closedform-quick  smoke (small ego nets)
 """
 from __future__ import annotations
 
 import math
 import os
-import random
 import sys
 import time
 import warnings
 from pathlib import Path
 
-# Pin BLAS threads BEFORE numpy import for deterministic eigvalsh across runs.
 for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
 
@@ -76,25 +74,21 @@ def _int(env, default):
     return int(raw) if raw is not None else default
 
 
-QUICK = os.environ.get("LG_TCF_QUICK", "0") == "1"
-MIN_NODES = _int("LG_TCF_MIN_NODES", 50)
-MAX_NODES = _int("LG_TCF_MAX_NODES", 150 if QUICK else 300)
-MAX_NETS = _int("LG_TCF_MAX_NETS", 5 if QUICK else 30)
-N_RUNS = _int("LG_TCF_N_RUNS", 3 if QUICK else 5)
-GRID_POINTS = _int("LG_TCF_GRID_POINTS", 3 if QUICK else 5)
+QUICK = os.environ.get("LG_FBE_QUICK", "0") == "1"
+MIN_NODES = _int("LG_FBE_MIN_NODES", 20)
+MAX_NODES = _int("LG_FBE_MAX_NODES", 250 if QUICK else 2000)
+MAX_NETS = _int("LG_FBE_MAX_NETS", 4 if QUICK else 10_000)
+N_RUNS = _int("LG_FBE_N_RUNS", 3 if QUICK else 5)
+GRID_POINTS = _int("LG_FBE_GRID_POINTS", 3 if QUICK else 5)
 LG_D_LIST = [0, 1, 2]
-LG_BURN_MIN = _int("LG_TCF_LG_BURN_MIN", 4000)
-LG_BURN_PER_N = _int("LG_TCF_LG_BURN_PER_N", 25)
-LG_STRIDE_MIN = _int("LG_TCF_LG_STRIDE_MIN", 600)
-LG_STRIDE_PER_N = _int("LG_TCF_LG_STRIDE_PER_N", 6)
-SEED = _int("LG_TCF_SEED", 12345)
+LG_BURN_MIN = _int("LG_FBE_LG_BURN_MIN", 4000)
+LG_BURN_PER_N = _int("LG_FBE_LG_BURN_PER_N", 25)
+LG_STRIDE_MIN = _int("LG_FBE_LG_STRIDE_MIN", 600)
+LG_STRIDE_PER_N = _int("LG_FBE_LG_STRIDE_PER_N", 6)
+SEED = _int("LG_FBE_SEED", 12345)
 
 GRID_INTERVALS = {"ER": (0.01, 0.25), "BA": (1, 8), "WS_k": (2, 10), "WS_p": (0.01, 0.5)}
 
-
-# ---------------------------------------------------------------------------
-# GIC scoring
-# ---------------------------------------------------------------------------
 
 def gic_of(real_nx, model_name, gen_fn, n_runs, seed):
     """GIC = 2*KL(real_density, mean_model_density) + 2*n_params."""
@@ -113,10 +107,6 @@ def gic_of(real_nx, model_name, gen_fn, n_runs, seed):
     scorer = GraphInformationCriterion(real_nx, model=model_name, dist="KL")
     return float(scorer.calculate_gic(model_den=avg, n_params=n_params)), n_params
 
-
-# ---------------------------------------------------------------------------
-# Generators
-# ---------------------------------------------------------------------------
 
 def _er(n, p):
     p = float(np.clip(p, 1e-6, 1.0))
@@ -148,10 +138,6 @@ def _grg(n, r):
     return lambda s: nx.random_geometric_graph(n, r, seed=s)
 
 
-# ---------------------------------------------------------------------------
-# Closed-form estimators
-# ---------------------------------------------------------------------------
-
 def closed_form_params(G):
     n = G.number_of_nodes()
     E = G.number_of_edges()
@@ -173,10 +159,6 @@ def closed_form_params(G):
                 ER=p_er, BA=m_ba, WS_k=k_ws, WS_p=p_ws, KR=d_kr, GRG=r_grg,
                 C_obs=C_obs)
 
-
-# ---------------------------------------------------------------------------
-# Grid search (fixed interval, pick min GIC = best case for grid)
-# ---------------------------------------------------------------------------
 
 def grid_best(real_nx, model_name, n, build_gen, lo, hi, n_runs, seed):
     best = (np.nan, None)
@@ -200,10 +182,6 @@ def grid_best_ws(real_nx, n, n_runs, seed):
                 best = (g, (k, round(float(p), 3)))
     return best
 
-
-# ---------------------------------------------------------------------------
-# LG scored fairly: burn-in + ensemble-mean spectral density
-# ---------------------------------------------------------------------------
 
 def _lg_burn(n):
     return max(LG_BURN_MIN, LG_BURN_PER_N * n)
@@ -250,33 +228,16 @@ def lg_gic(adj, seed):
     return best
 
 
-# ---------------------------------------------------------------------------
-# Data loading / sampling
-# ---------------------------------------------------------------------------
-
 def _ensure_data(data_dir):
-    """Extract data/misc/twitter.tar.gz if the .edges files are not present."""
     if data_dir.exists() and any(data_dir.glob("*.edges")):
         return
-    tarball = _repo_root / "data" / "misc" / "twitter.tar.gz"
+    tarball = _repo_root / "data" / "misc" / "facebook.tar.gz"
     if not tarball.exists():
         return
     import tarfile
     print(f"extracting {tarball.relative_to(_repo_root)} ...")
     with tarfile.open(tarball) as tf:
         tf.extractall(_repo_root / "data" / "misc")
-
-
-def _peek_size(path):
-    """|V| of an .edges file via a single linear token scan (no nx parsing)."""
-    nodes = set()
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            parts = line.split()
-            if len(parts) >= 2:
-                nodes.add(parts[0])
-                nodes.add(parts[1])
-    return len(nodes)
 
 
 def _load_edges(path):
@@ -288,40 +249,24 @@ def _load_edges(path):
     return nx.convert_node_labels_to_integers(G.subgraph(cc).copy())
 
 
-def _sample_files():
-    data_dir = _repo_root / "data" / "misc" / "twitter"
-    _ensure_data(data_dir)
-    allf = sorted(data_dir.glob("*.edges"))
-    if not allf:
-        return []
-    # Cheap pre-filter to the size window (peek node count without nx parsing).
-    inwin = [f for f in allf if MIN_NODES <= _peek_size(f) <= MAX_NODES]
-    rng = random.Random(SEED)
-    k = min(MAX_NETS, len(inwin))
-    return sorted(rng.sample(inwin, k)), len(inwin), len(allf)
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main():
-    out_dir = _here / "runs" / "twitter_closedform"
+    data_dir = _repo_root / "data" / "misc" / "facebook"
+    _ensure_data(data_dir)
+    files = sorted(data_dir.glob("*.edges"), key=lambda p: p.stat().st_size)
+    out_dir = _here / "runs" / "facebook_ego_closedform"
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    sampled = _sample_files()
-    if not sampled:
-        print("No twitter .edges files found under data/misc/twitter/ — data is "
-              "gitignored; place the SNAP twitter tarball/edges there first.")
+    if not files:
+        print("No facebook .edges files found under data/misc/facebook/.")
         return
-    files, n_in_window, n_total = sampled
 
-    print(f"twitter closed-form experiment  seed={SEED}  quick={QUICK}  "
-          f"window=[{MIN_NODES},{MAX_NODES}]  sampled={len(files)}/{n_in_window} "
-          f"(of {n_total} ego nets)  n_runs={N_RUNS}  grid_points={GRID_POINTS}")
+    print(f"facebook-ego closed-form experiment  seed={SEED}  quick={QUICK}  "
+          f"window=[{MIN_NODES},{MAX_NODES}]  n_runs={N_RUNS}  grid_points={GRID_POINTS}")
 
     rows = []
-    for i, f in enumerate(files, 1):
+    picked = 0
+    for f in files:
+        if picked >= MAX_NETS:
+            break
         try:
             G = _load_edges(f)
         except Exception as e:
@@ -330,12 +275,13 @@ def main():
         n = G.number_of_nodes()
         if not (MIN_NODES <= n <= MAX_NODES):
             continue
+        picked += 1
         t0 = time.perf_counter()
         cf = closed_form_params(G)
         adj = nx.to_numpy_array(G)
         real_nx = nx.from_numpy_array(adj)
         name = f.stem
-        print(f"\n[{i}] {name}  n={n}  E={cf['E']}  density={cf['density']:.3f}  "
+        print(f"\n[{picked}] {name}  n={n}  E={cf['E']}  density={cf['density']:.3f}  "
               f"kbar={cf['kbar']:.1f}  C={cf['C_obs']:.3f}")
 
         lg_val, lg_d = lg_gic(adj, SEED)

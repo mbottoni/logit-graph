@@ -1,46 +1,55 @@
 #!/usr/bin/env python3
 """Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on the cit-HepTh arXiv citation network, alongside a fairly-scored LG.
+search, on the 18 animal connectomes, alongside a fairly-scored Logit-Graph (LG).
 
-cit-HepTh is one large graph (~27.8k nodes, ~352k edges) — far above the size at
-which the LG Gibbs chain mixes in reasonable time. So we sample SUBGRAPHS
-**BFS-connected subgraphs** capped at CAP nodes (seeded random BFS roots) and
-score each, measuring the families' fit to real *local* citation sub-networks
-rather than the global graph. Spectral GIC (2*KL + 2*n_params, KL on the
-normalized-Laplacian density, lower=better):
+Connectome version of run_gplus_closedform.py. Each connectome is one graph per
+organism/region (mouse, macaque, rat, C. elegans, drosophila, ...), loaded from
+GraphML as the undirected, unweighted (binary) largest connected component.
 
-  * LG            -- best of d in {0,1,2}, scored by burn-in + ensemble mean of
-                     the spectral density over N_RUNS post-burn-in snapshots.
-  * ER/BA/WS      -- grid (fixed interval, pick min GIC) and cf (closed-form).
-  * KR/GRG        -- closed-form only.
+For each connectome in the size window we score, by spectral GIC
+(2*KL + 2*n_params, KL on the normalized-Laplacian density, lower=better):
 
-Closed-form estimators (n nodes, E edges, kbar = 2E/n):
-  ER p=2E/(n(n-1)) [MLE]; BA m=round(E/n); WS k=2*round(E/n)+clustering p;
-  KR d=round(kbar); GRG r=sqrt(kbar/(pi*(n-1))).
+  * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
+                     of the spectral density over N_RUNS post-burn-in snapshots
+                     (same averaging convention the baselines get).
+  * ER/BA/WS      -- two ways each:
+       grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
+       cf   : closed-form moment estimate (no search)
+  * KR/GRG        -- closed-form only (bonus families)
 
-Reproducible: fixed seed (LG_ARCF_SEED) drives BFS roots + generators; BLAS
-pinned. Dense eigvalsh for n<=500, deterministic KPM above. Read-only w.r.t. the
-library; writes only under runs/arxiv_closedform/. Findings:
-FINDINGS_arxiv_closedform.md.
+Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
+  ER  p = 2E/(n(n-1))                      (exact MLE)
+  BA  m = round(E/n)            in [1, n)   (edge count E = m(n-m))
+  WS  k = 2*round(E/n) (even)   in [2, n)   (E = nk/2, rewiring conserves edges)
+  WS  p = 1 - (C_obs/C0)^(1/3), C0 = 3(k-2)/(4(k-1))   (clustering moment)
+  KR  d = round(kbar)          (nd even)   (E = nd/2)
+  GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
+
+The normalized-Laplacian spectral density uses dense eigvalsh for n <= 500 and
+the deterministic KPM estimator for larger n (logit_graph.gic, seeded), so the
+big connectomes (n up to ~1800) stay tractable. Reproducible: fixed seed
+(LG_CCF_SEED), BLAS threads pinned to 1. Read-only w.r.t. the library; writes
+only under runs/connectomes_closedform/. Findings:
+FINDINGS_connectomes_closedform.md.
 
 Env knobs (all optional):
-  LG_ARCF_SEED (12345)   LG_ARCF_QUICK (0 -> SUBGRAPHS; 1 -> a few small ones)
-  LG_ARCF_CAP (700)      LG_ARCF_SUBGRAPHS (16)
-  LG_ARCF_N_RUNS (5)     LG_ARCF_GRID_POINTS (5)   LG_ARCF_DATA (path override)
+  LG_CCF_SEED (12345)     LG_CCF_QUICK (0 -> full; 1 -> smoke on small connectomes)
+  LG_CCF_MIN_NODES (20)   LG_CCF_MAX_NODES (2000)   LG_CCF_MAX_NETS (all)
+  LG_CCF_N_RUNS (5)       LG_CCF_GRID_POINTS (5)
 
-  make gic-arxiv-closedform        full run (BFS subgraphs of cit-HepTh)
-  make gic-arxiv-closedform-quick  smoke (a few subgraphs)
+  make lg-gic-connectomes-closedform        full run
+  make lg-gic-connectomes-closedform-quick  smoke on the small connectomes
 """
 from __future__ import annotations
 
 import math
 import os
-import random
 import sys
 import time
 import warnings
 from pathlib import Path
 
+# Pin BLAS threads BEFORE numpy import for deterministic eigvalsh across runs.
 for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
 
@@ -71,22 +80,30 @@ def _int(env, default):
     return int(raw) if raw is not None else default
 
 
-QUICK = os.environ.get("LG_ARCF_QUICK", "0") == "1"
-CAP = _int("LG_ARCF_CAP", 400 if QUICK else 700)
-SUBGRAPHS = _int("LG_ARCF_SUBGRAPHS", 3 if QUICK else 16)
-N_RUNS = _int("LG_ARCF_N_RUNS", 3 if QUICK else 5)
-GRID_POINTS = _int("LG_ARCF_GRID_POINTS", 3 if QUICK else 5)
+QUICK = os.environ.get("LG_CCF_QUICK", "0") == "1"
+MIN_NODES = _int("LG_CCF_MIN_NODES", 20)
+MAX_NODES = _int("LG_CCF_MAX_NODES", 300 if QUICK else 2000)  # all 18 connectomes
+MAX_NETS = _int("LG_CCF_MAX_NETS", 6 if QUICK else 10_000)
+N_RUNS = _int("LG_CCF_N_RUNS", 3 if QUICK else 5)
+GRID_POINTS = _int("LG_CCF_GRID_POINTS", 3 if QUICK else 5)
 LG_D_LIST = [0, 1, 2]
-LG_BURN_MIN = _int("LG_ARCF_LG_BURN_MIN", 4000)
-LG_BURN_PER_N = _int("LG_ARCF_LG_BURN_PER_N", 25)
-LG_STRIDE_MIN = _int("LG_ARCF_LG_STRIDE_MIN", 600)
-LG_STRIDE_PER_N = _int("LG_ARCF_LG_STRIDE_PER_N", 6)
-SEED = _int("LG_ARCF_SEED", 12345)
+# Fair LG scoring: burn-in then N_RUNS spectral snapshots (stride apart).
+LG_BURN_MIN = _int("LG_CCF_LG_BURN_MIN", 4000)
+LG_BURN_PER_N = _int("LG_CCF_LG_BURN_PER_N", 25)
+LG_STRIDE_MIN = _int("LG_CCF_LG_STRIDE_MIN", 600)
+LG_STRIDE_PER_N = _int("LG_CCF_LG_STRIDE_PER_N", 6)
+SEED = _int("LG_CCF_SEED", 12345)
 
+# Current fixed intervals (mirror simulation.py defaults).
 GRID_INTERVALS = {"ER": (0.01, 0.25), "BA": (1, 8), "WS_k": (2, 10), "WS_p": (0.01, 0.5)}
 
 
+# ---------------------------------------------------------------------------
+# GIC scoring (apples-to-apples with the pipeline)
+# ---------------------------------------------------------------------------
+
 def gic_of(real_nx, model_name, gen_fn, n_runs, seed):
+    """GIC = 2*KL(real_density, mean_model_density) + 2*n_params."""
     n_params = _MODEL_N_PARAMS.get(model_name, 1)
     specs = []
     for r in range(n_runs):
@@ -102,6 +119,10 @@ def gic_of(real_nx, model_name, gen_fn, n_runs, seed):
     scorer = GraphInformationCriterion(real_nx, model=model_name, dist="KL")
     return float(scorer.calculate_gic(model_den=avg, n_params=n_params)), n_params
 
+
+# ---------------------------------------------------------------------------
+# Generators
+# ---------------------------------------------------------------------------
 
 def _er(n, p):
     p = float(np.clip(p, 1e-6, 1.0))
@@ -133,6 +154,10 @@ def _grg(n, r):
     return lambda s: nx.random_geometric_graph(n, r, seed=s)
 
 
+# ---------------------------------------------------------------------------
+# Closed-form estimators
+# ---------------------------------------------------------------------------
+
 def closed_form_params(G):
     n = G.number_of_nodes()
     E = G.number_of_edges()
@@ -142,7 +167,7 @@ def closed_form_params(G):
     k_ws = max(2, int(round(kbar)))
     if k_ws % 2 == 1:
         k_ws += 1
-    C_obs = nx.average_clustering(G)
+    C_obs = nx.average_clustering(G)  # unweighted (weight=None default)
     if k_ws > 2:
         C0 = 3 * (k_ws - 2) / (4 * (k_ws - 1))
         p_ws = 0.0 if C_obs >= C0 else 1.0 - (C_obs / C0) ** (1.0 / 3.0)
@@ -154,6 +179,10 @@ def closed_form_params(G):
                 ER=p_er, BA=m_ba, WS_k=k_ws, WS_p=p_ws, KR=d_kr, GRG=r_grg,
                 C_obs=C_obs)
 
+
+# ---------------------------------------------------------------------------
+# Current-style grid search (fixed interval, pick min GIC = best case for grid)
+# ---------------------------------------------------------------------------
 
 def grid_best(real_nx, model_name, n, build_gen, lo, hi, n_runs, seed):
     best = (np.nan, None)
@@ -177,6 +206,11 @@ def grid_best_ws(real_nx, n, n_runs, seed):
                 best = (g, (k, round(float(p), 3)))
     return best
 
+
+# ---------------------------------------------------------------------------
+# LG scored FAIRLY: burn-in + ensemble-mean spectral density (same convention
+# as the baselines, which average n_runs sample densities).
+# ---------------------------------------------------------------------------
 
 def _lg_burn(n):
     return max(LG_BURN_MIN, LG_BURN_PER_N * n)
@@ -224,87 +258,61 @@ def lg_gic(adj, seed):
 
 
 # ---------------------------------------------------------------------------
-# Citation graph loading + BFS subgraph sampling
+# Data loading
 # ---------------------------------------------------------------------------
 
-def _data_path():
-    override = os.environ.get("LG_ARCF_DATA")
-    if override:
-        return Path(override)
-    for cand in (_repo_root / "data" / "cit-HepTh.txt",
-                 _repo_root / "data" / "citation_networks" / "cit-HepTh.txt"):
-        if cand.exists():
-            return cand
-    return _repo_root / "data" / "cit-HepTh.txt"
-
-
-def _load_citation(path):
-    G = nx.read_edgelist(path, comments="#", delimiter="\t",
-                         create_using=nx.DiGraph(), nodetype=int)
-    G = G.to_undirected()
+def _load_graphml(path):
+    """Undirected, unweighted (binary) largest connected component."""
+    G = nx.read_graphml(path)
+    G = nx.Graph(G)  # collapse multi-edges + direction
     G.remove_edges_from(nx.selfloop_edges(G))
     cc = max(nx.connected_components(G), key=len)
     return nx.convert_node_labels_to_integers(G.subgraph(cc).copy())
 
 
-def _bfs_subgraph(G, root, cap, rng):
-    """Induced subgraph of a randomized BFS ball of up to ``cap`` nodes."""
-    seen = {root}
-    order = [root]
-    frontier = [root]
-    while frontier and len(seen) < cap:
-        nxt = []
-        for u in frontier:
-            nbrs = list(G.neighbors(u))
-            rng.shuffle(nbrs)
-            for v in nbrs:
-                if v not in seen:
-                    seen.add(v)
-                    order.append(v)
-                    nxt.append(v)
-                    if len(seen) >= cap:
-                        break
-            if len(seen) >= cap:
-                break
-        rng.shuffle(nxt)
-        frontier = nxt
-    H = G.subgraph(order[:cap])
-    cc = max(nx.connected_components(H), key=len)
-    return nx.convert_node_labels_to_integers(H.subgraph(cc).copy())
-
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
-    path = _data_path()
-    out_dir = _here / "runs" / "arxiv_closedform"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        print(f"cit-HepTh not found at {path} (gitignored — place it there or set "
-              f"LG_ARCF_DATA).")
+    data_dir = _repo_root / "data" / "connectomes"
+    files = sorted(data_dir.glob("*.graphml"))
+    if not files:
+        print(f"No .graphml files under {data_dir} — connectome data is gitignored; "
+              f"place the 18 .graphml files there first.")
         return
+    out_dir = _here / "runs" / "connectomes_closedform"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"arxiv closed-form experiment  seed={SEED}  quick={QUICK}  "
-          f"cap={CAP}  subgraphs={SUBGRAPHS}  n_runs={N_RUNS}  grid_points={GRID_POINTS}  "
-          f"(BFS subgraphs of cit-HepTh)")
-    t_load = time.perf_counter()
-    Gfull = _load_citation(path)
-    print(f"loaded cit-HepTh GCC: n={Gfull.number_of_nodes()} E={Gfull.number_of_edges()} "
-          f"[{time.perf_counter() - t_load:.0f}s]")
+    print(f"connectomes closed-form experiment  seed={SEED}  quick={QUICK}  "
+          f"window=[{MIN_NODES},{MAX_NODES}]  max_nets={MAX_NETS}  "
+          f"n_runs={N_RUNS}  grid_points={GRID_POINTS}  "
+          f"lg_burn=max({LG_BURN_MIN},{LG_BURN_PER_N}n)  lg_stride=max({LG_STRIDE_MIN},{LG_STRIDE_PER_N}n)")
 
-    rng = random.Random(SEED)
-    roots = rng.sample(list(Gfull.nodes()), SUBGRAPHS)
+    # Sort connectomes by node count so smaller (faster) ones run first.
+    loaded = []
+    for f in files:
+        try:
+            G = _load_graphml(f)
+        except Exception as e:
+            print(f"  skip {f.stem}: {e}")
+            continue
+        loaded.append((f.stem, G))
+    loaded.sort(key=lambda t: t[1].number_of_nodes())
+
     rows = []
     picked = 0
-    for ri, root in enumerate(roots):
-        G = _bfs_subgraph(Gfull, root, CAP, rng)
+    for name, G in loaded:
+        if picked >= MAX_NETS:
+            break
         n = G.number_of_nodes()
-        if n < 20:
+        if not (MIN_NODES <= n <= MAX_NODES):
             continue
         picked += 1
         t0 = time.perf_counter()
         cf = closed_form_params(G)
-        adj = nx.to_numpy_array(G)
+        adj = nx.to_numpy_array(G, weight=None)  # binarize (connectomes are weighted)
         real_nx = nx.from_numpy_array(adj)
-        name = f"sub#{ri}"
         print(f"\n[{picked}] {name}  n={n}  E={cf['E']}  density={cf['density']:.3f}  "
               f"kbar={cf['kbar']:.1f}  C={cf['C_obs']:.3f}")
 
@@ -344,12 +352,12 @@ def main():
 
     df = pd.DataFrame(rows)
     if df.empty:
-        print("\nNo subgraphs scored.")
+        print("\nNo connectomes in window.")
         return
     df.to_csv(out_dir / "results.csv", index=False)
 
     print("\n" + "=" * 78)
-    print("AGGREGATE (mean GIC across BFS subgraphs, lower = better)")
+    print("AGGREGATE (mean GIC across connectomes, lower = better)")
     print("=" * 78)
     for fam in ("ER", "BA", "WS"):
         g = df[f"{fam}_grid"].mean()
@@ -366,7 +374,7 @@ def main():
     ranks.columns = list(rank_cols.keys())
     print("\nMean rank (LG + closed-form baselines, lower = better):")
     print(ranks.mean().sort_values().to_string())
-    print(f"\nWrote {out_dir / 'results.csv'}  ({len(df)} subgraphs)")
+    print(f"\nWrote {out_dir / 'results.csv'}  ({len(df)} connectomes)")
 
 
 if __name__ == "__main__":
