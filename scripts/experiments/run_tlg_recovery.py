@@ -2,7 +2,7 @@
 """Temporal Logit-Graph (TLG) parameter-recovery experiment.
 
 Generates growth graphs with KNOWN ground truth (sigma, alpha) for d in {0,1,2}
-and n in {10,50,100,500,1000}, estimates (sigma, alpha) by logistic regression on
+and n in {10,20,50,75,100,150,500,1000}, estimates (sigma, alpha) by logistic regression on
 the at-risk dyads, and shows the estimates converge to the truth as n grows.
 Several (sigma, alpha) scenarios are swept and overlaid in ONE figure.
 
@@ -82,7 +82,7 @@ ALPHAS = _floats("LG_TLG_ALPHAS",
 USE_CACHE = os.environ.get("LG_TLG_USE_CACHE", "1") == "1"
 
 DS = [0, 1] if QUICK else [0, 1, 2]
-NS = [10, 50] if QUICK else [10, 50, 100, 500, 1000]
+NS = [10, 50] if QUICK else [10, 20, 50, 75, 100, 150, 500, 1000]
 
 PARAMS = ("sigma", "alpha")
 LABEL = {"sigma": r"$\hat{\sigma}$", "alpha": r"$\hat{\alpha}$ (degree)"}
@@ -140,8 +140,13 @@ def aggregate(raw, sigma, alpha) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def plot_combined_recovery(combined, scenarios, out_path):
-    palette = plt.get_cmap("tab10")
-    colors = {sc: palette(i % 10) for i, sc in enumerate(scenarios)}
+    # Colorblind-safe (Okabe-Ito) colors + distinct markers, so scenarios are
+    # distinguishable by BOTH hue and shape (accessible for color-vision deficiency).
+    cb_colors = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#D55E00",
+                 "#000000", "#56B4E9"]
+    cb_markers = ["o", "s", "^", "D", "v", "P", "X"]
+    colors = {sc: cb_colors[i % len(cb_colors)] for i, sc in enumerate(scenarios)}
+    marks = {sc: cb_markers[i % len(cb_markers)] for i, sc in enumerate(scenarios)}
     sig_vals = [s for s, _ in scenarios]
     alp_vals = [a for _, a in scenarios]
     ylim = {"sigma": (min(sig_vals) - 2.0, max(sig_vals) + 2.0),
@@ -151,6 +156,7 @@ def plot_combined_recovery(combined, scenarios, out_path):
                              sharex=True, squeeze=False)
     for (sigma, alpha) in scenarios:
         c = colors[(sigma, alpha)]
+        mk = marks[(sigma, alpha)]
         true = {"sigma": sigma, "alpha": alpha}
         sc = combined[(combined["true_sigma"] == sigma) &
                       (combined["true_alpha"] == alpha)]
@@ -160,16 +166,16 @@ def plot_combined_recovery(combined, scenarios, out_path):
                 sub = sc[(sc["param"] == p) & (sc["d"] == d)].sort_values("n")
                 x = sub["n"].to_numpy()
                 ax.fill_between(x, sub["ci_lo"], sub["ci_hi"], color=c,
-                                alpha=0.10, zorder=1)
-                ax.plot(x, sub["mean"], marker="o", ms=4, color=c, lw=1.6, zorder=3)
-                ax.axhline(true[p], color=c, ls="--", lw=0.8, alpha=0.6, zorder=2)
+                                alpha=0.08, zorder=1)
+                ax.plot(x, sub["mean"], marker=mk, ms=5, color=c, lw=1.6, zorder=3)
+                ax.axhline(true[p], color=c, ls="--", lw=0.9, alpha=0.6, zorder=2)
 
     for ri, p in enumerate(PARAMS):
         for ci, d in enumerate(DS):
             ax = axes[ri][ci]
             ax.set_xscale("log"); ax.set_xticks(NS)
-            ax.set_xticklabels([str(v) for v in NS]); ax.set_ylim(*ylim[p])
-            ax.grid(alpha=0.25)
+            ax.set_xticklabels([str(v) for v in NS], rotation=45, fontsize=8)
+            ax.set_ylim(*ylim[p]); ax.grid(alpha=0.25)
             if ri == 0:
                 ax.set_title(f"d = {d}")
             if ci == 0:
@@ -177,13 +183,13 @@ def plot_combined_recovery(combined, scenarios, out_path):
             if ri == len(PARAMS) - 1:
                 ax.set_xlabel("n (nodes)")
 
-    handles = [Line2D([0], [0], color=colors[sc], marker="o", lw=1.6,
+    handles = [Line2D([0], [0], color=colors[sc], marker=marks[sc], lw=1.6,
                       label=f"σ={sc[0]:g}, α={sc[1]:g}") for sc in scenarios]
     fig.legend(handles=handles, loc="lower center",
-               ncol=min(len(scenarios), 4), fontsize=9, frameon=False,
+               ncol=min(len(scenarios), 5), fontsize=9, frameon=False,
                bbox_to_anchor=(0.5, -0.02))
     fig.suptitle("TLG parameter recovery — estimates → true value as n grows "
-                 "(color = (σ,α) scenario; dashed = truth)")
+                 "(colorblind-safe: color+marker = (σ,α) scenario; dashed = truth)")
     fig.tight_layout(rect=[0, 0.03, 1, 1])
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
