@@ -291,6 +291,13 @@ tlg-recovery-quick:  ## Smoke run of the TLG recovery experiment (d={0,1}, small
 	LG_TLG_QUICK=1 \
 		$(UV) run python scripts/experiments/run_tlg_recovery.py
 
+tlg-roc:  ## TLG ROC: group-difference tests on sigma AND alpha (effect-size + sample-size; single-graph Wald SE)
+	$(UV) run python scripts/experiments/run_tlg_roc_experiments.py
+
+tlg-roc-quick:  ## Smoke run of the TLG ROC experiment (d={0}, small grids, ~30s)
+	LG_TLGROC_QUICK=1 \
+		$(UV) run python scripts/experiments/run_tlg_roc_experiments.py
+
 tlg-convergence-diagnostics:  ## TLG (add+remove) convergence: chains from different initial densities mix to the same stationary distribution
 	$(UV) run python scripts/diagnostics/run_tlg_convergence_diagnostics.py
 
