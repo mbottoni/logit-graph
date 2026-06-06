@@ -273,6 +273,13 @@ sigma-convergence-quick:  ## Smoke (n∈{20,50,100}, n_reps=2, ~30 sec)
 	LG_SIGMA_JOBS=$(JOBS) \
 		$(UV) run python scripts/experiments/run_sigma_convergence.py
 
+anova-twitch-robust:  ## Twitch sigma ANOVA with dyadic-cluster-robust SE (Wald, full graphs, ~3-5 min)
+	$(UV) run python scripts/experiments/run_twitch_anova_robust.py
+
+anova-twitch-robust-quick:  ## Smoke of the robust Twitch ANOVA (2 small regions, ~5s)
+	LG_TWA_QUICK=1 \
+		$(UV) run python scripts/experiments/run_twitch_anova_robust.py
+
 # ─────────────────────────────────────────────────────────────
 #  Cleanup
 # ─────────────────────────────────────────────────────────────
