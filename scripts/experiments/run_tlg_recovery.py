@@ -2,7 +2,7 @@
 """Temporal Logit-Graph (TLG) parameter-recovery experiment.
 
 Generates growth graphs with KNOWN ground truth (sigma, alpha) for d in {0,1,2}
-and n in {10,20,50,75,100,150,500,1000}, estimates (sigma, alpha) by logistic regression on
+and n in {10,20,50,75,100,150,500,1000,1500}, estimates (sigma, alpha) by logistic regression on
 the at-risk dyads, and shows the estimates converge to the truth as n grows.
 Several (sigma, alpha) scenarios are swept and overlaid in ONE figure.
 
@@ -82,7 +82,7 @@ ALPHAS = _floats("LG_TLG_ALPHAS",
 USE_CACHE = os.environ.get("LG_TLG_USE_CACHE", "1") == "1"
 
 DS = [0, 1] if QUICK else [0, 1, 2]
-NS = [10, 50] if QUICK else [10, 20, 50, 75, 100, 150, 500, 1000]
+NS = [10, 50] if QUICK else [10, 20, 50, 75, 100, 150, 500, 1000, 1500]
 
 PARAMS = ("sigma", "alpha")
 LABEL = {"sigma": r"$\hat{\sigma}$", "alpha": r"$\hat{\alpha}$ (degree)"}
