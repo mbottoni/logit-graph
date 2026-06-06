@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.special import expit
+from scipy.stats import entropy
 import statsmodels.api as sm
 
 from .lg_features import FeatureMode, build_pair_dataset
@@ -36,6 +37,24 @@ from .offset_logit import aic_from_offset_fit
 
 # The feature carrying alpha (the degree slope).
 DEGREE_MODE: FeatureMode = "bounded"
+
+
+def _adjacency_esd_kl(cur: np.ndarray, prev: np.ndarray, nbins: int = 50) -> float:
+    """KL divergence between two graphs' adjacency eigenvalue spectral densities.
+
+    Both eigenvalue spectra are histogrammed on common bins spanning their combined
+    range; KL is computed with a 1e-10 floor (as in the convergence diagnostics).
+    """
+    ec = np.linalg.eigvalsh(cur)
+    ep = np.linalg.eigvalsh(prev)
+    lo = float(min(ec.min(), ep.min()))
+    hi = float(max(ec.max(), ep.max()))
+    if hi <= lo:
+        return 0.0
+    bins = np.linspace(lo, hi, nbins + 1)
+    hc, _ = np.histogram(ec, bins=bins, density=True)
+    hp, _ = np.histogram(ep, bins=bins, density=True)
+    return float(entropy(hc + 1e-10, hp + 1e-10))
 
 
 @dataclass
@@ -81,6 +100,10 @@ def grow_graph(
     record_design: bool = True,
     store_snapshots: bool = True,
     allow_removal: bool = True,
+    until_convergence: bool = False,
+    esd_tol: float = 1e-2,
+    patience: int = 3,
+    esd_nbins: int = 50,
 ) -> GrowthResult:
     """Grow a temporal Logit-Graph from a sparse ER seed (degree-only model).
 
@@ -97,6 +120,16 @@ def grow_graph(
     at-risk non-edges (outcome = formed?) and the graph grows monotonically toward
     saturation. With ``record_design`` the per-step dyads (D, outcome) are pooled into
     ``GrowthResult.X/y`` for estimation.
+
+    Stopping. By default the chain runs for exactly ``n_steps``. With
+    ``until_convergence=True`` it instead runs *until mixed* — ``n_steps`` becomes a
+    safety cap and the loop stops early once the adjacency-ESD KL divergence between
+    consecutive snapshots stays below ``esd_tol`` for ``patience`` consecutive steps
+    (the spectrum has stopped changing). ``GrowthResult.params`` then carries
+    ``n_steps_run``, ``converged``, and the per-step ``esd_kl_trace``. The criterion
+    is reliable for moderately large graphs (n ≳ 300); for small graphs the ESD itself
+    fluctuates between independent draws, so the noise floor is high and convergence
+    may not trigger before the cap.
     """
     rng = np.random.default_rng(seed)
     rows, cols = np.triu_indices(n, k=1)
@@ -110,7 +143,13 @@ def grow_graph(
     Xs: list[np.ndarray] = []
     ys: list[np.ndarray] = []
 
-    for _ in range(n_steps):
+    esd_kl_trace: list[float] = []
+    below = 0
+    converged = False
+    n_steps_run = n_steps
+
+    for step in range(n_steps):
+        prev_adj = adj.copy() if until_convergence else None
         D, labels = _degree_feature(adj, d, degree_mode)
         p = expit(sigma + alpha * D)
         draw = rng.random(p.shape[0]) < p
@@ -136,13 +175,24 @@ def grow_graph(
         if store_snapshots:
             snapshots.append(adj.copy())
 
+        if until_convergence:
+            kl = _adjacency_esd_kl(adj, prev_adj, esd_nbins)
+            esd_kl_trace.append(kl)
+            below = below + 1 if kl < esd_tol else 0
+            if below >= patience:
+                converged = True
+                n_steps_run = step + 1
+                break
+
     X = np.vstack(Xs) if Xs else np.empty((0, 1), dtype=np.float64)
     y = np.concatenate(ys) if ys else np.empty(0, dtype=np.int8)
-    return GrowthResult(
-        adj=adj, X=X, y=y, snapshots=snapshots,
-        params=dict(n=n, d=d, sigma=sigma, alpha=alpha, n_steps=n_steps,
-                    degree_mode=degree_mode, p0=p0, allow_removal=allow_removal),
-    )
+    params = dict(n=n, d=d, sigma=sigma, alpha=alpha, n_steps=n_steps,
+                  degree_mode=degree_mode, p0=p0, allow_removal=allow_removal)
+    if until_convergence:
+        params.update(until_convergence=True, esd_tol=esd_tol, patience=patience,
+                      n_steps_run=n_steps_run, converged=converged,
+                      esd_kl_trace=esd_kl_trace)
+    return GrowthResult(adj=adj, X=X, y=y, snapshots=snapshots, params=params)
 
 
 # ---------------------------------------------------------------------------
