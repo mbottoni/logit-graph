@@ -112,6 +112,33 @@ def test_removal_recovers_params():
     assert large.std() < small.std()
 
 
+def test_until_convergence_stops_early_and_records_trace():
+    """until_convergence stops before the cap once the ESD spectrum settles, and
+    records the convergence metadata; the fixed-step path is unchanged."""
+    cap = 60
+    res = grow_graph(400, d=0, sigma=-2.0, alpha=0.05, n_steps=cap, seed=7,
+                     until_convergence=True, esd_tol=1e-2, patience=3)
+    p = res.params
+    assert p["converged"] is True
+    assert p["n_steps_run"] < cap
+    assert len(p["esd_kl_trace"]) == p["n_steps_run"]
+    # the last `patience` recorded KL values are all below the tolerance
+    assert all(v < 1e-2 for v in p["esd_kl_trace"][-3:])
+
+    # fixed-step mode carries no convergence keys (backward compatible)
+    fixed = grow_graph(400, d=0, sigma=-2.0, alpha=0.05, n_steps=5, seed=7)
+    assert "converged" not in fixed.params
+
+
+def test_until_convergence_still_recovers_params():
+    """Stopping early at the ESD plateau does not bias estimation."""
+    res = grow_graph(400, d=0, sigma=-2.0, alpha=0.05, n_steps=60, seed=11,
+                     until_convergence=True)
+    out = fit_growth_from_result(res)
+    assert abs(out["sigma"] - (-2.0)) < 0.3
+    assert abs(out["alpha"] - 0.05) < 0.03
+
+
 def test_equilibrium_path_untouched():
     """Sanity: the equilibrium API still imports and runs (additive change)."""
     from logit_graph import simulate_graph
