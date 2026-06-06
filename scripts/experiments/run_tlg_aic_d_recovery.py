@@ -184,11 +184,13 @@ def _plot_confusion(df, out_path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
 
     ns = sorted(df["n"].unique())
     d_trues = sorted(df["d_true"].unique())
-    fig, axes = plt.subplots(1, len(ns), figsize=(3.6 * len(ns), 3.4),
+    fig, axes = plt.subplots(1, len(ns), figsize=(4.0 * len(ns), 4.0),
                              squeeze=False)
+    im = None
     for ci, n in enumerate(ns):
         ax = axes[0][ci]
         M = np.zeros((len(d_trues), len(DGRID)))
@@ -196,21 +198,36 @@ def _plot_confusion(df, out_path):
             for cj, de in enumerate(DGRID):
                 v = df[(df.n == n) & (df.d_true == dt) & (df.d_hat == de)]["frac"]
                 M[ri, cj] = float(v.iloc[0]) if len(v) else 0.0
-        im = ax.imshow(M, cmap="viridis", vmin=0, vmax=1, aspect="auto")
+        im = ax.imshow(M, cmap="Blues", vmin=0, vmax=1, aspect="equal")
+        # overall accuracy = mean of the diagonal (true == est) entries
+        diag = [M[ri, DGRID.index(dt)] for ri, dt in enumerate(d_trues)
+                if dt in DGRID]
+        acc = 100.0 * np.mean(diag) if diag else 0.0
+        ax.set_title(f"$n = {n}$  (overall accuracy $= {acc:.0f}\\%$)", fontsize=12)
         ax.set_xticks(range(len(DGRID))); ax.set_xticklabels(DGRID)
         ax.set_yticks(range(len(d_trues))); ax.set_yticklabels(d_trues)
-        ax.set_xlabel(r"$\hat{d}$ (AIC)")
+        ax.set_xlabel(r"Selected $\hat{d} = \arg\min\,\mathrm{AIC}(d_{\mathrm{est}})$")
         if ci == 0:
-            ax.set_ylabel(r"$d_{\mathrm{true}}$")
-        ax.set_title(f"n = {n}")
+            ax.set_ylabel(r"True $d_{\mathrm{true}}$")
         for ri in range(len(d_trues)):
             for cj in range(len(DGRID)):
-                ax.text(cj, ri, f"{M[ri, cj]:.2f}", ha="center", va="center",
-                        color="white" if M[ri, cj] < 0.6 else "black", fontsize=8)
+                ax.text(cj, ri, f"{100 * M[ri, cj]:.0f}%", ha="center", va="center",
+                        color="white" if M[ri, cj] > 0.5 else "#333333",
+                        fontsize=10, fontweight="bold" if M[ri, cj] > 0.5 else "normal")
+        # box the diagonal (correct-recovery) cells
+        for ri, dt in enumerate(d_trues):
+            if dt in DGRID:
+                cj = DGRID.index(dt)
+                ax.add_patch(Rectangle((cj - 0.5, ri - 0.5), 1, 1, fill=False,
+                                       edgecolor="black", lw=2.0, zorder=5))
+        for sp in ("top", "right", "left", "bottom"):
+            ax.spines[sp].set_visible(False)
+        ax.tick_params(length=0)
+
     fig.colorbar(im, ax=axes[0].tolist(), fraction=0.046, pad=0.02,
-                 label="P(d_hat | d_true)")
-    fig.suptitle(f"TLG AIC d-recovery confusion (σ={SIGMA:g}, α={ALPHA:g}, "
-                 f"{NREPS} reps/cell)", y=1.04)
+                 label=r"$\mathbb{P}(\hat{d} = d_{\mathrm{est}} \mid d_{\mathrm{true}})$")
+    fig.suptitle(r"AIC-based selection of $d$: accuracy improves with graph size $n$",
+                 fontsize=14, y=1.02)
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved {out_path}")
