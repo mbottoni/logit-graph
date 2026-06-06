@@ -115,6 +115,13 @@ convergence-diagnostics-quick:  ## Quick smoke (n=200, 50k iter, ~1 min)
 	LG_CONV_QUICK=1 \
 		$(UV) run python scripts/diagnostics/run_convergence_diagnostics.py
 
+anova-validation-robust:  ## Validate single-graph dyadic-robust Wald: Type-I calibration + power vs effect/n
+	$(UV) run python scripts/experiments/run_anova_validation_robust.py
+
+anova-validation-robust-quick:  ## Smoke run of the robust-Wald validation (d=0, few reps, ~30s)
+	LG_AVR_QUICK=1 \
+		$(UV) run python scripts/experiments/run_anova_validation_robust.py
+
 gic-facebook-ego:  ## Rank LG vs ER/WS/BA on the 10 SNAP Facebook ego networks (~30-60s)
 	LG_FBEGO_USE_CACHE=1 \
 		$(UV) run python scripts/gic/run_facebook_ego_gic.py
