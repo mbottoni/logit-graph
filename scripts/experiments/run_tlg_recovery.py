@@ -25,8 +25,8 @@ Env knobs (all optional):
   LG_TLG_SEED (12345)     LG_TLG_QUICK (0 -> full; 1 -> 2 scenarios, d={0,1}, small n)
   LG_TLG_NREPS (12)       replicates per (d, n) cell
   LG_TLG_NSTEPS (4)       growth steps per generated graph
-  LG_TLG_SIGMAS (-2,-4,-6)  comma-separated true intercepts to sweep
-  LG_TLG_ALPHAS (0.05,0.1)  comma-separated true degree coefficients to sweep
+  LG_TLG_SIGMAS (-2,-3,-4,-5,-6)  true intercepts; PAIRED index-wise with ALPHAS
+  LG_TLG_ALPHAS (0.04,0.06,0.08,0.10,0.12)  true degree coeffs; one distinct pair each
   LG_TLG_USE_CACHE (1)    1 -> reload + replot if cache exists; 0 -> always simulate
 
   make tlg-recovery         full run (scenario grid)
@@ -73,8 +73,12 @@ QUICK = os.environ.get("LG_TLG_QUICK", "0") == "1"
 SEED = _int("LG_TLG_SEED", 12345)
 NREPS = _int("LG_TLG_NREPS", 3 if QUICK else 12)
 NSTEPS = _int("LG_TLG_NSTEPS", 3 if QUICK else 4)
-SIGMAS = _floats("LG_TLG_SIGMAS", [-2.0, -4.0] if QUICK else [-2.0, -4.0, -6.0])
-ALPHAS = _floats("LG_TLG_ALPHAS", [0.05] if QUICK else [0.05, 0.1])
+# Scenarios are DISTINCT (sigma, alpha) PAIRS (zipped index-wise) — every sigma and
+# every alpha is unique across scenarios, so no two scenarios share a value/dashed line.
+SIGMAS = _floats("LG_TLG_SIGMAS",
+                 [-2.0, -4.0] if QUICK else [-2.0, -3.0, -4.0, -5.0, -6.0])
+ALPHAS = _floats("LG_TLG_ALPHAS",
+                 [0.05, 0.10] if QUICK else [0.04, 0.06, 0.08, 0.10, 0.12])
 USE_CACHE = os.environ.get("LG_TLG_USE_CACHE", "1") == "1"
 
 DS = [0, 1] if QUICK else [0, 1, 2]
@@ -191,7 +195,7 @@ def plot_combined_recovery(combined, scenarios, out_path):
 
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    scenarios = [(s, a) for s in SIGMAS for a in ALPHAS]
+    scenarios = list(zip(SIGMAS, ALPHAS))  # distinct (sigma, alpha) pairs
     print(f"TLG recovery  seed={SEED}  quick={QUICK}  d={DS}  n={NS}  reps={NREPS}  "
           f"steps={NSTEPS}\n  scenarios (sigma,alpha)={scenarios}")
     all_summaries = []
