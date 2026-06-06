@@ -240,13 +240,34 @@ def main():
     print(f"\nWrote {OUT_DIR}/ (roc_long.csv, roc_effect.png, roc_sample.png)")
 
 
+# Colorblind-safe redundant encoding: Okabe-Ito colors + distinct line styles +
+# distinct markers, so series are told apart by hue AND shape AND dash pattern.
+CB_COLORS = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#D55E00", "#56B4E9"]
+CB_LS = ["-", (0, (5, 1)), (0, (1, 1)), (0, (3, 1, 1, 1)), (0, (5, 1, 1, 1)),
+         (0, (3, 1, 1, 1, 1, 1))]
+CB_MARK = ["o", "s", "^", "D", "v", "P"]
+NULL_STYLE = ("#555555", (0, (4, 3)), None, 1.5)  # grey dashed, no marker (chance)
+
+
+def _series_styles(keys, sweep):
+    """Map each series key -> (color, linestyle, marker, linewidth), null distinct."""
+    styles, i = {}, 0
+    for k in keys:
+        if sweep == "effect" and abs(k) < 1e-9:  # null effect = chance line
+            styles[k] = NULL_STYLE
+        else:
+            styles[k] = (CB_COLORS[i % len(CB_COLORS)], CB_LS[i % len(CB_LS)],
+                         CB_MARK[i % len(CB_MARK)], 2.2)
+            i += 1
+    return styles
+
+
 def _plot(df, sweep, out_path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
-    cb = ["#999999", "#0072B2", "#E69F00", "#009E73", "#CC79A7", "#D55E00"]
     sub = df[df["sweep"] == sweep]
     if sub.empty:
         return
@@ -258,17 +279,16 @@ def _plot(df, sweep, out_path):
     for ri, param in enumerate(PARAMS):
         psub = sub[sub["param"] == param]
         keys = sorted(psub[series_key].unique())
-        colors = {k: cb[i % len(cb)] for i, k in enumerate(keys)}
+        styles = _series_styles(keys, sweep)
         for ci, d in enumerate(ds):
             ax = axes[ri][ci]
             ax.plot([0, 1], [0, 1], color="#bbbbbb", ls=":", lw=1.2, zorder=1)
             for k in keys:
+                col, ls, mk, lw = styles[k]
                 c = psub[(psub["d"] == d) & (psub[series_key] == k)].sort_values("level")
-                # the null effect (|Δ|=0) is the chance line; draw it thin/grey
-                is_null = (sweep == "effect" and abs(k) < 1e-9)
-                ax.plot(c["level"], c["rejection_rate"], color=colors[k],
-                        lw=1.4 if is_null else 2.2,
-                        ls="--" if is_null else "-", zorder=3)
+                ax.plot(c["level"], c["rejection_rate"], color=col, ls=ls, lw=lw,
+                        marker=mk, markevery=25, ms=5.5, markerfacecolor=col,
+                        markeredgecolor="white", markeredgewidth=0.5, zorder=3)
             ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.grid(alpha=0.2)
             if ri == 0:
                 ax.set_title(f"d = {d}")
@@ -282,18 +302,19 @@ def _plot(df, sweep, out_path):
     for ri, param in enumerate(PARAMS):
         psub = sub[sub["param"] == param]
         keys = sorted(psub[series_key].unique())
-        colors = {k: cb[i % len(cb)] for i, k in enumerate(keys)}
+        styles = _series_styles(keys, sweep)
         sym = r"\sigma" if param == "sigma" else r"\alpha"
-        if sweep == "effect":
-            handles = [Line2D([], [], color=colors[k],
-                              lw=1.4 if abs(k) < 1e-9 else 2.2,
-                              ls="--" if abs(k) < 1e-9 else "-",
-                              label=(f"$|\\Delta {sym}|={k:g}$ (null)" if abs(k) < 1e-9
-                                     else f"$|\\Delta {sym}|={k:g}$"))
-                       for k in keys]
-        else:
-            handles = [Line2D([], [], color=colors[k], lw=2.2, label=f"$n={int(k)}$")
-                       for k in keys]
+        handles = []
+        for k in keys:
+            col, ls, mk, lw = styles[k]
+            if sweep == "effect":
+                label = (f"$|\\Delta {sym}|={k:g}$ (null)" if abs(k) < 1e-9
+                         else f"$|\\Delta {sym}|={k:g}$")
+            else:
+                label = f"$n={int(k)}$"
+            handles.append(Line2D([], [], color=col, ls=ls, lw=lw, marker=mk, ms=5.5,
+                                  markerfacecolor=col, markeredgecolor="white",
+                                  markeredgewidth=0.5, label=label))
         axes[ri][-1].legend(handles=handles, fontsize=8, loc="lower right",
                             title=None)
 
