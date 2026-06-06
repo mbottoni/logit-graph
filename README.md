@@ -171,6 +171,48 @@ jupyter notebook examples/pypi_fit_real_network.ipynb
 
 ---
 
+## Experiments
+
+Each experiment is a reproducible `make` target (fixed seeds, BLAS threads pinned) that writes
+artifacts to a gitignored `runs/` directory. Every target has a fast `-quick` smoke variant; run
+`make help` for the full list with timings. Real-network experiments expect their data under
+`data/` (gitignored) — each script prints the path it needs if the files are missing.
+
+### Robust ANOVA on σ̂ (single-graph dyadic-robust Wald)
+
+Tests whether the Logit-Graph intercept `σ` (baseline edge log-odds) differs across groups, using
+**one graph per group** with a dyadic-cluster-robust SE — no re-subsampling of a single graph, so
+the p-values have a genuine sampling interpretation.
+
+| Command | Objective |
+|---------|-----------|
+| `make anova-twitch-robust` | Compare σ̂ across the 6 Twitch language communities (omnibus + pairwise Wald). |
+| `make anova-connectomes-robust` | Compare σ̂ across the 18 animal connectomes (corrected "Table 2", 153 pairwise tests). |
+| `make anova-validation-robust` | Simulation check of the test itself: Type-I calibration + ROC/AUC vs standardized effect and graph size. |
+
+### Paper figures (simulation)
+
+| Command | Objective |
+|---------|-----------|
+| `make sigma-convergence` | Fig 2 — σ̂ converges to the true σ as `n` grows. |
+| `make roc-paper` | Figs 3–4 — ANOVA-on-σ̂ ROC curves vs effect size and `n`. |
+| `make aic-paper-fast` | AIC `d`-selection sweep — recovers the true neighborhood radius `d` across `n`. |
+| `make convergence-diagnostics` | MCMC convergence diagnostics for the Layer-2 Gibbs sampler. |
+
+### Model selection on real networks (spectral GIC)
+
+Rank Logit-Graph against ER / WS / BA on real graphs. Two flavors per dataset:
+
+- `make gic-<dataset>` — LG vs baselines scored by spectral GIC.
+- `make gic-<dataset>-closedform` — closed-form (moment-matched) baselines vs fixed-grid search,
+  with a fairly-scored LG.
+
+`<dataset>` ∈ `facebook-ego`, `arxiv`, `twitch`, `twitter`, `gplus`, `connectomes` (animal),
+`human-connectomes` (OASIS-3) — both flavors available. `facebook` (full MUSAE page–page graph) is
+GIC-only (`make gic-facebook`).
+
+---
+
 ## Core API
 
 | Function / class | Purpose |
