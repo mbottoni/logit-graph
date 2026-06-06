@@ -1,4 +1,4 @@
-"""Tests for the temporal / growth Logit-Graph (generation + estimation)."""
+"""Tests for the temporal / growth Logit-Graph (degree-only: generation + estimation)."""
 import numpy as np
 
 from logit_graph.temporal import (
@@ -19,8 +19,7 @@ def test_grow_graph_density_grows_smoothly():
     (no equilibrium-style bimodality / degeneracy)."""
     traces = []
     for s in range(4):
-        res = grow_graph(120, d=1, sigma=-4.0, alpha=0.05, beta=0.3,
-                         n_steps=3, seed=s)
+        res = grow_graph(120, d=1, sigma=-4.0, alpha=0.05, n_steps=3, seed=s)
         tr = [_density(g) for g in res.snapshots]
         traces.append(tr)
         # monotone non-decreasing (edges only added)
@@ -33,29 +32,30 @@ def test_grow_graph_density_grows_smoothly():
 
 def test_design_matches_snapshot_rebuild():
     """growth_design_from_snapshots reproduces grow_graph's recorded design."""
-    res = grow_graph(60, d=1, sigma=-3.5, alpha=0.1, beta=0.5, n_steps=3, seed=1)
+    res = grow_graph(60, d=1, sigma=-3.5, alpha=0.1, n_steps=3, seed=1)
     X2, y2 = growth_design_from_snapshots(res.snapshots, d=1)
     assert res.X.shape == X2.shape
+    assert res.X.shape[1] == 1  # degree-only design
     assert np.allclose(res.X, X2)
     assert np.array_equal(res.y, y2)
 
 
-def test_fit_returns_three_finite_params():
-    res = grow_graph(100, d=1, sigma=-4.0, alpha=0.05, beta=0.3, n_steps=3, seed=2)
+def test_fit_returns_two_finite_params():
+    res = grow_graph(100, d=1, sigma=-4.0, alpha=0.05, n_steps=3, seed=2)
     out = fit_growth_from_result(res)
-    assert out["n_params"] == 3
-    for k in ("sigma", "alpha", "beta", "se_sigma", "se_alpha", "se_beta", "ll", "aic"):
+    assert out["n_params"] == 2
+    for k in ("sigma", "alpha", "se_sigma", "se_alpha", "ll", "aic"):
         assert np.isfinite(out[k]), k
 
 
 def test_recovery_and_consistency():
-    """The degree slope alpha (and sigma, beta) recover, and the estimate tightens
-    as n grows — the property the equilibrium model lacks."""
-    sigma, alpha, beta = -4.0, 0.05, 0.3
+    """The degree slope alpha (and sigma) recover, and the estimate tightens as n
+    grows — the property the equilibrium model lacks."""
+    sigma, alpha = -4.0, 0.05
 
     def fit_at(n, seed):
-        res = grow_graph(n, d=1, sigma=sigma, alpha=alpha, beta=beta,
-                         n_steps=3, seed=seed, store_snapshots=False)
+        res = grow_graph(n, d=1, sigma=sigma, alpha=alpha, n_steps=3,
+                         seed=seed, store_snapshots=False)
         return fit_growth_from_result(res)
 
     small = [fit_at(80, s) for s in range(5)]
@@ -64,9 +64,8 @@ def test_recovery_and_consistency():
     a_large = np.array([o["alpha"] for o in large])
 
     # recovered in a loose band at the larger n
-    assert abs(a_large.mean() - alpha) < 0.05
+    assert abs(a_large.mean() - alpha) < 0.04
     assert abs(np.mean([o["sigma"] for o in large]) - sigma) < 0.7
-    assert abs(np.mean([o["beta"] for o in large]) - beta) < 0.3
     # consistency: spread shrinks with n
     assert a_large.std() < a_small.std()
 

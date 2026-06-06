@@ -1,4 +1,4 @@
-"""Temporal / growth Logit-Graph: generation + estimation.
+"""Temporal / growth Logit-Graph: generation + estimation (degree-only).
 
 The equilibrium Logit-Graph (graph.py / simulate_graph) samples a graph at
 stationarity. There, a *free* coefficient on a node-degree feature is neither
@@ -6,14 +6,15 @@ recoverable by logistic regression nor non-degenerate (see FINDINGS). This modul
 adds the **growth** reformulation, where an edge forms at step t from the
 *predetermined* previous snapshot:
 
-    logit( P[edge_ij forms at t] ) = sigma + alpha * D_ij(t-1) + beta * C_ij(t-1)
+    logit( P[edge_ij forms at t] ) = sigma + alpha * D_ij(t-1)
 
-with D = degree feature ("bounded": log(1+S_i)+log(1+S_j)) and C = structural
-feature ("incremental": GWESP overlap), both read from the snapshot at t-1.
-Because the predictors are predetermined, each formation is — conditional on the
-snapshot — an independent Bernoulli, so the pooled "at-risk dyad" design is an
-ordinary logistic regression whose MLE recovers (sigma, alpha, beta) consistently,
+with D = degree feature ("bounded": log(1+S_i)+log(1+S_j)), read from the snapshot
+at t-1. Because the predictors are predetermined, each formation is — conditional
+on the snapshot — an independent Bernoulli, so the pooled "at-risk dyad" design is
+an ordinary logistic regression whose MLE recovers (sigma, alpha) consistently,
 with no degeneracy.
+
+(The structural feature has been removed for now; only the degree slope is modeled.)
 
 This is a separate, additive path: the equilibrium model is untouched. Features
 reuse logit_graph.lg_features; the fit reuses statsmodels.
@@ -30,9 +31,8 @@ import statsmodels.api as sm
 from .lg_features import FeatureMode, build_pair_dataset
 from .offset_logit import aic_from_offset_fit
 
-# The two features carrying alpha (degree) and beta (structure).
+# The feature carrying alpha (the degree slope).
 DEGREE_MODE: FeatureMode = "bounded"
-STRUCT_MODE: FeatureMode = "incremental"
 
 
 @dataclass
@@ -40,7 +40,7 @@ class GrowthResult:
     """Output of :func:`grow_graph`.
 
     adj        final adjacency (n x n, 0/1, symmetric).
-    X          (m, 2) pooled design [D, C] over all at-risk dyads across steps.
+    X          (m, 1) pooled design [D] over all at-risk dyads across steps.
     y          (m,) formation outcomes (1 = the at-risk non-edge formed that step).
     snapshots  list of adjacency snapshots G(0), ..., G(n_steps) (empty if not stored).
     params     the generative parameters used.
@@ -52,16 +52,13 @@ class GrowthResult:
     params: dict
 
 
-def _pair_features(adj, d, degree_mode, struct_mode):
-    """Degree (D) and structural (C) features + current-edge labels over all pairs.
+def _degree_feature(adj, d, degree_mode):
+    """Degree feature (D) + current-edge labels over all pairs.
 
     Pairs are in row-major upper-triangle order, matching np.triu_indices(n, 1).
     """
     D, labels = build_pair_dataset(adj, d=d, mode=degree_mode, layer2=True)
-    C, _ = build_pair_dataset(adj, d=d, mode=struct_mode, layer2=True)
-    return (np.asarray(D, dtype=np.float64),
-            np.asarray(C, dtype=np.float64),
-            np.asarray(labels, dtype=np.int8))
+    return np.asarray(D, dtype=np.float64), np.asarray(labels, dtype=np.int8)
 
 
 # ---------------------------------------------------------------------------
@@ -73,23 +70,21 @@ def grow_graph(
     d: int,
     sigma: float,
     alpha: float,
-    beta: float,
     *,
     n_steps: int,
     degree_mode: FeatureMode = DEGREE_MODE,
-    struct_mode: FeatureMode = STRUCT_MODE,
     seed: int | None = None,
     p0: float = 0.02,
     record_design: bool = True,
     store_snapshots: bool = True,
 ) -> GrowthResult:
-    """Grow a temporal Logit-Graph from a sparse ER seed.
+    """Grow a temporal Logit-Graph from a sparse ER seed (degree-only model).
 
-    At each step, features are read from the current snapshot (predetermined), every
-    at-risk non-edge (i,j) forms with p = expit(sigma + alpha*D + beta*C), and the
-    formations are applied afterwards (edges are only added). With ``record_design``
-    the per-step at-risk dyads (D, C, formed?) are pooled into ``GrowthResult.X/y``
-    for estimation.
+    At each step, the degree feature D is read from the current snapshot
+    (predetermined), every at-risk non-edge (i,j) forms with
+    p = expit(sigma + alpha*D), and the formations are applied afterwards (edges
+    are only added). With ``record_design`` the per-step at-risk dyads (D, formed?)
+    are pooled into ``GrowthResult.X/y`` for estimation.
     """
     rng = np.random.default_rng(seed)
     rows, cols = np.triu_indices(n, k=1)
@@ -104,12 +99,12 @@ def grow_graph(
     ys: list[np.ndarray] = []
 
     for _ in range(n_steps):
-        D, C, labels = _pair_features(adj, d, degree_mode, struct_mode)
+        D, labels = _degree_feature(adj, d, degree_mode)
         at_risk = labels == 0
-        p = expit(sigma + alpha * D + beta * C)
+        p = expit(sigma + alpha * D)
         form = at_risk & (rng.random(p.shape[0]) < p)
         if record_design:
-            Xs.append(np.column_stack([D[at_risk], C[at_risk]]))
+            Xs.append(D[at_risk].reshape(-1, 1))
             ys.append(form[at_risk].astype(np.int8))
         fi, fj = rows[form], cols[form]
         adj[fi, fj] = 1.0
@@ -117,12 +112,12 @@ def grow_graph(
         if store_snapshots:
             snapshots.append(adj.copy())
 
-    X = np.vstack(Xs) if Xs else np.empty((0, 2), dtype=np.float64)
+    X = np.vstack(Xs) if Xs else np.empty((0, 1), dtype=np.float64)
     y = np.concatenate(ys) if ys else np.empty(0, dtype=np.int8)
     return GrowthResult(
         adj=adj, X=X, y=y, snapshots=snapshots,
-        params=dict(n=n, d=d, sigma=sigma, alpha=alpha, beta=beta, n_steps=n_steps,
-                    degree_mode=degree_mode, struct_mode=struct_mode, p0=p0),
+        params=dict(n=n, d=d, sigma=sigma, alpha=alpha, n_steps=n_steps,
+                    degree_mode=degree_mode, p0=p0),
     )
 
 
@@ -135,13 +130,12 @@ def growth_design_from_snapshots(
     d: int,
     *,
     degree_mode: FeatureMode = DEGREE_MODE,
-    struct_mode: FeatureMode = STRUCT_MODE,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build the at-risk logistic-regression design from observed snapshots.
 
-    For each consecutive pair (G(t-1), G(t)): predictors D, C from G(t-1); the
-    at-risk set is the non-edges of G(t-1); the outcome is whether each became an
-    edge in G(t). Reproduces the design recorded by :func:`grow_graph`.
+    For each consecutive pair (G(t-1), G(t)): predictor D from G(t-1); the at-risk
+    set is the non-edges of G(t-1); the outcome is whether each became an edge in
+    G(t). Reproduces the design recorded by :func:`grow_graph`.
     """
     Xs: list[np.ndarray] = []
     ys: list[np.ndarray] = []
@@ -150,20 +144,20 @@ def growth_design_from_snapshots(
         nxt = np.asarray(snapshots[t + 1])
         n = prev.shape[0]
         rows, cols = np.triu_indices(n, k=1)
-        D, C, labels_prev = _pair_features(prev, d, degree_mode, struct_mode)
+        D, labels_prev = _degree_feature(prev, d, degree_mode)
         at_risk = labels_prev == 0
         formed = (nxt[rows, cols] > 0)
-        Xs.append(np.column_stack([D[at_risk], C[at_risk]]))
+        Xs.append(D[at_risk].reshape(-1, 1))
         ys.append(formed[at_risk].astype(np.int8))
-    X = np.vstack(Xs) if Xs else np.empty((0, 2), dtype=np.float64)
+    X = np.vstack(Xs) if Xs else np.empty((0, 1), dtype=np.float64)
     y = np.concatenate(ys) if ys else np.empty(0, dtype=np.int8)
     return X, y
 
 
 def fit_growth_params(X: np.ndarray, labels: np.ndarray) -> dict:
-    """Fit logit(P[form]) = sigma + alpha*D + beta*C by ordinary logistic regression.
+    """Fit logit(P[form]) = sigma + alpha*D by ordinary logistic regression.
 
-    Returns sigma, alpha, beta (and their SEs), the log-likelihood, AIC (k=3), and
+    Returns sigma, alpha (and their SEs), the log-likelihood, AIC (k=2), and
     n_params. This is the exact MLE for the growth model (dyad-independent given the
     past), so the estimates are consistent.
     """
@@ -187,18 +181,16 @@ def fit_growth_params(X: np.ndarray, labels: np.ndarray) -> dict:
     try:
         bse = np.asarray(res.bse, dtype=np.float64)
     except Exception:
-        bse = np.full(3, np.nan)
+        bse = np.full(2, np.nan)
     ll = float(res.llf)
     return {
         "sigma": float(params[0]),
         "alpha": float(params[1]),
-        "beta": float(params[2]),
         "se_sigma": float(bse[0]),
         "se_alpha": float(bse[1]),
-        "se_beta": float(bse[2]),
         "ll": ll,
-        "aic": float(aic_from_offset_fit(params[0], ll, k=3.0)["aic"]),
-        "n_params": 3,
+        "aic": float(aic_from_offset_fit(params[0], ll, k=2.0)["aic"]),
+        "n_params": 2,
     }
 
 
