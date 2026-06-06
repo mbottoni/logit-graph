@@ -77,6 +77,7 @@ def grow_graph(
     p0: float = 0.02,
     record_design: bool = True,
     store_snapshots: bool = True,
+    allow_removal: bool = False,
 ) -> GrowthResult:
     """Grow a temporal Logit-Graph from a sparse ER seed (degree-only model).
 
@@ -85,6 +86,14 @@ def grow_graph(
     p = expit(sigma + alpha*D), and the formations are applied afterwards (edges
     are only added). With ``record_design`` the per-step at-risk dyads (D, formed?)
     are pooled into ``GrowthResult.X/y`` for estimation.
+
+    With ``allow_removal=True`` the step instead resamples **every** dyad from the
+    lagged probability — y_ij(t) ~ Bernoulli(expit(sigma + alpha*D_ij(t-1))) — so
+    existing edges can be removed, not only formed. The predictors stay predetermined
+    (read from t-1), so the design (now over *all* dyads, outcome = the new state) is
+    still an ordinary logistic regression and the MLE stays consistent. This turns
+    the monotone growth into an ergodic Markov chain with a stationary distribution
+    (no saturation), at the cost of possible ERGM-style bistability for strong alpha.
     """
     rng = np.random.default_rng(seed)
     rows, cols = np.triu_indices(n, k=1)
@@ -100,15 +109,27 @@ def grow_graph(
 
     for _ in range(n_steps):
         D, labels = _degree_feature(adj, d, degree_mode)
-        at_risk = labels == 0
         p = expit(sigma + alpha * D)
-        form = at_risk & (rng.random(p.shape[0]) < p)
-        if record_design:
-            Xs.append(D[at_risk].reshape(-1, 1))
-            ys.append(form[at_risk].astype(np.int8))
-        fi, fj = rows[form], cols[form]
-        adj[fi, fj] = 1.0
-        adj[fj, fi] = 1.0
+        draw = rng.random(p.shape[0]) < p
+        if allow_removal:
+            # Resample every dyad from the lagged probability: edges may form OR
+            # dissolve. Design is over all dyads, outcome = the new state.
+            if record_design:
+                Xs.append(D.reshape(-1, 1))
+                ys.append(draw.astype(np.int8))
+            adj[:] = 0.0
+            ki, kj = rows[draw], cols[draw]
+            adj[ki, kj] = 1.0
+            adj[kj, ki] = 1.0
+        else:
+            at_risk = labels == 0
+            form = at_risk & draw
+            if record_design:
+                Xs.append(D[at_risk].reshape(-1, 1))
+                ys.append(form[at_risk].astype(np.int8))
+            fi, fj = rows[form], cols[form]
+            adj[fi, fj] = 1.0
+            adj[fj, fi] = 1.0
         if store_snapshots:
             snapshots.append(adj.copy())
 
@@ -117,7 +138,7 @@ def grow_graph(
     return GrowthResult(
         adj=adj, X=X, y=y, snapshots=snapshots,
         params=dict(n=n, d=d, sigma=sigma, alpha=alpha, n_steps=n_steps,
-                    degree_mode=degree_mode, p0=p0),
+                    degree_mode=degree_mode, p0=p0, allow_removal=allow_removal),
     )
 
 
@@ -130,12 +151,16 @@ def growth_design_from_snapshots(
     d: int,
     *,
     degree_mode: FeatureMode = DEGREE_MODE,
+    allow_removal: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build the at-risk logistic-regression design from observed snapshots.
 
     For each consecutive pair (G(t-1), G(t)): predictor D from G(t-1); the at-risk
     set is the non-edges of G(t-1); the outcome is whether each became an edge in
     G(t). Reproduces the design recorded by :func:`grow_graph`.
+
+    With ``allow_removal=True`` the at-risk set is *all* dyads and the outcome is the
+    full new state of each dyad in G(t) — matching ``grow_graph(allow_removal=True)``.
     """
     Xs: list[np.ndarray] = []
     ys: list[np.ndarray] = []
@@ -145,10 +170,14 @@ def growth_design_from_snapshots(
         n = prev.shape[0]
         rows, cols = np.triu_indices(n, k=1)
         D, labels_prev = _degree_feature(prev, d, degree_mode)
-        at_risk = labels_prev == 0
-        formed = (nxt[rows, cols] > 0)
-        Xs.append(D[at_risk].reshape(-1, 1))
-        ys.append(formed[at_risk].astype(np.int8))
+        state = (nxt[rows, cols] > 0)
+        if allow_removal:
+            Xs.append(D.reshape(-1, 1))
+            ys.append(state.astype(np.int8))
+        else:
+            at_risk = labels_prev == 0
+            Xs.append(D[at_risk].reshape(-1, 1))
+            ys.append(state[at_risk].astype(np.int8))
     X = np.vstack(Xs) if Xs else np.empty((0, 1), dtype=np.float64)
     y = np.concatenate(ys) if ys else np.empty(0, dtype=np.int8)
     return X, y
