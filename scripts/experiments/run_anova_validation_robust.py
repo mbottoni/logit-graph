@@ -275,8 +275,8 @@ def main():
         out_dir / "roc_sample_robust.png",
         r"Robust-Wald ROC vs graph size at a fixed raw effect "
         r"(discrimination grows with $n$)",
-        {d: [(f"n={n} ($\\delta${chr(0x2248)}{_field(sample_rows, d, 'n', n, 'delta'):.1f}, "
-              f"AUC {_field(sample_rows, d, 'n', n, 'auc_emp'):.2f})", *sample_curves[(d, n)])
+        {d: [(f"n={n} (AUC {_field(sample_rows, d, 'n', n, 'auc_emp'):.2f})",
+              *sample_curves[(d, n)])
              for n in N_SAMPLE if (d, n) in sample_curves] for d in DS},
         title_suffix={d: rf"$\Delta\sigma$={sample_dsig[d]:.3f}" for d in DS},
     )
