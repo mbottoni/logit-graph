@@ -17,6 +17,9 @@ for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
 import numpy as np
 import networkx as nx
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from scipy.special import expit
 from scipy.stats import norm, chi2
 from statsmodels.stats.multitest import multipletests
@@ -208,6 +211,49 @@ def _write_tex(pdf, regions, out_path):
     out_path.write_text("\n".join(lines) + "\n")
 
 
+def _plot(df, pdf, regions, out_path):
+    """Left: sigma_hat with robust (wide) vs naive (narrow) SE per region.
+    Right: pairwise -log10(Bonferroni p) heatmap."""
+    order = np.argsort(df["sigma_hat"].to_numpy())
+    sig = df["sigma_hat"].to_numpy()[order]
+    se_r = df["se_robust"].to_numpy()[order]
+    se_n = df["se_naive"].to_numpy()[order]
+    disp = [DISPLAY.get(regions[i], regions[i]) for i in order]
+    y = np.arange(len(order))
+
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(12, 4.6),
+                                   gridspec_kw={"width_ratios": [1, 1]})
+    ax0.errorbar(sig, y, xerr=se_r, fmt="o", color="#1f77b4", ecolor="#1f77b4",
+                 elinewidth=1.6, capsize=4, label="robust SE", zorder=2)
+    ax0.errorbar(sig, y, xerr=se_n, fmt="none", ecolor="#d62728", elinewidth=2.4,
+                 capsize=0, label="naive SE", zorder=3)
+    ax0.set_yticks(y); ax0.set_yticklabels(disp)
+    ax0.set_xlabel(r"$\hat{\sigma}$ (offset-logit MLE)")
+    ax0.set_title("Per-region sigma (robust vs naive SE)")
+    ax0.grid(axis="x", ls=":", alpha=0.4)
+    ax0.legend(fontsize=8, loc="lower right")
+
+    k = len(regions)
+    P = np.ones((k, k))
+    idx = {r: i for i, r in enumerate(regions)}
+    for _, r in pdf.iterrows():
+        i, j = idx[r["region_i"]], idx[r["region_j"]]
+        P[i, j] = P[j, i] = r["p_bonf"]
+    M = -np.log10(np.clip(P, 1e-300, 1.0))
+    np.fill_diagonal(M, np.nan)
+    codes = [DISPLAY.get(r, r) for r in regions]
+    im = ax1.imshow(M, cmap="viridis", vmin=0, vmax=min(80, np.nanmax(M)))
+    ax1.set_xticks(range(k)); ax1.set_xticklabels(codes)
+    ax1.set_yticks(range(k)); ax1.set_yticklabels(codes)
+    ax1.set_title(r"Pairwise $-\log_{10}$(Bonferroni $p$); white diag")
+    cbar = fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04)
+    cbar.set_label(r"$-\log_{10} p_{\mathrm{bonf}}$  ($>1.3 \Rightarrow$ sig. @0.05)")
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def main():
     if os.environ.get("LG_TWA_VALIDATE", "0") == "1":
         _validate()
@@ -255,6 +301,7 @@ def main():
     pdf_disp["region_j"] = [DISPLAY.get(r, r) for r in pdf["region_j"]]
     pdf_disp.to_csv(out_dir / "pairwise.csv", index=False)
     _write_tex(pdf, regions, out_dir / "twitch_pairwise_robust.tex")
+    _plot(df, pdf, regions, out_dir / "twitch_anova_robust.png")
     (out_dir / "results.json").write_text(json.dumps({
         "omnibus": {"Q": Q, "dof": dof, "p": p_omni},
         "regions": df.drop(columns=["aic_by_d"]).to_dict(orient="records"),
@@ -284,7 +331,8 @@ def main():
                    f"across different d, so read cross-d pairs with care.")
     print("\nNOTE: SEs are dyadic-cluster-robust (real sampling interpretation, not "
           f"dial-able by subsample size). {cross_d}")
-    print(f"Wrote {out_dir}/ (summary.csv, pairwise.csv, twitch_pairwise_robust.tex, results.json)")
+    print(f"Wrote {out_dir}/ (summary.csv, pairwise.csv, twitch_pairwise_robust.tex, "
+          f"twitch_anova_robust.png, results.json)")
 
 
 if __name__ == "__main__":
