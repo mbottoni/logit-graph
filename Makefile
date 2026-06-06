@@ -291,6 +291,13 @@ tlg-recovery-quick:  ## Smoke run of the TLG recovery experiment (d={0,1}, small
 	LG_TLG_QUICK=1 \
 		$(UV) run python scripts/experiments/run_tlg_recovery.py
 
+tlg-convergence-diagnostics:  ## TLG (add+remove) convergence: chains from different initial densities mix to the same stationary distribution
+	$(UV) run python scripts/diagnostics/run_tlg_convergence_diagnostics.py
+
+tlg-convergence-diagnostics-quick:  ## Smoke run of the TLG convergence diagnostics (~30s)
+	LG_TLGC_QUICK=1 \
+		$(UV) run python scripts/diagnostics/run_tlg_convergence_diagnostics.py
+
 # ─────────────────────────────────────────────────────────────
 #  Cleanup
 # ─────────────────────────────────────────────────────────────
