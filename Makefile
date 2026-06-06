@@ -188,6 +188,13 @@ gic-connectomes-closedform-quick:  ## Smoke run of the connectomes closed-form e
 	LG_CCF_QUICK=1 \
 		$(UV) run python scripts/closedform/run_connectomes_closedform.py
 
+anova-connectomes-robust:  ## Dyadic-robust Wald ANOVA on sigma across animal connectomes (reproducible)
+	$(UV) run python scripts/experiments/run_connectomes_anova_robust.py
+
+anova-connectomes-robust-quick:  ## Smoke run of the connectomes robust ANOVA (~30s)
+	LG_CAR_QUICK=1 \
+		$(UV) run python scripts/experiments/run_connectomes_anova_robust.py
+
 gic-twitch:  ## Rank LG vs ER/WS/BA by GIC on Twitch country networks (6 graphs, ~2-5 min)
 	LG_TWITCH_USE_CACHE=1 \
 		$(UV) run python scripts/gic/run_twitch_gic.py
