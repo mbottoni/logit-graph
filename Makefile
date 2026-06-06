@@ -281,6 +281,17 @@ lg-anova-twitch-robust-quick:  ## Smoke of the robust Twitch ANOVA (2 small regi
 		$(UV) run python scripts/experiments/run_lg_twitch_anova_robust.py
 
 # ─────────────────────────────────────────────────────────────
+#  Temporal Logit-Graph experiments (tlg- prefix)
+# ─────────────────────────────────────────────────────────────
+
+tlg-recovery:  ## TLG param recovery vs n for d=0,1,2 (sigma,alpha + 95% bands, reproducible)
+	$(UV) run python scripts/experiments/run_tlg_recovery.py
+
+tlg-recovery-quick:  ## Smoke run of the TLG recovery experiment (d={0,1}, small n, ~30s)
+	LG_TLG_QUICK=1 \
+		$(UV) run python scripts/experiments/run_tlg_recovery.py
+
+# ─────────────────────────────────────────────────────────────
 #  Cleanup
 # ─────────────────────────────────────────────────────────────
 
