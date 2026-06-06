@@ -22,9 +22,10 @@ against the theoretical Phi(delta/sqrt(2)).
 Two figures:
   * roc_effect_robust  -- ROC (TPR vs FPR) for delta in {0.5,1,1.5,2,3} at
     n_effect=500. Curves span diagonal -> top-left; empirical AUC ~= theory.
-  * roc_sample_robust  -- n-invariance: the SAME standardized delta across
-    n in {100,500,2000} (d=1 capped). Curves coincide (raw gap shrinks ~1/sqrt(n)),
-    direct evidence the robust SE is calibrated.
+  * roc_sample_robust  -- vary n at ONE fixed raw effect (sigma gap), pinned so
+    the mid-grid n lands at DELTA_REF. Larger n -> larger non-centrality ->
+    better AUC, so the ROC curves separate (discrimination grows with graph
+    size) without saturating -- the honest version of the old Fig 4.
 
 Per replicate we generate two *independent* graphs (experiments.sweeps.simulate_graph:
 d=0 direct ER at p=expit(sigma); d=1 Layer-2 Gibbs at beta=1, adaptive_stopping
@@ -104,8 +105,12 @@ D1_BURN_PER_N = _int("LG_AVR_D1_BURN_PER_N", 40)
 SIGMA1 = -1.0
 DELTAS = [0.5, 1.0] if QUICK else [0.5, 1.0, 1.5, 2.0, 3.0]  # standardized effects
 N_EFFECT = 500                                # graph size for the effect ROC
-DELTA_FIXED = 1.5                             # standardized effect for n-invariance
-N_VALUES = ([50, 100] if QUICK else [100, 500, 2000])
+# Sample ROC: fix ONE raw effect (sigma gap) and vary n -> discrimination
+# improves with graph size (the honest version of the old Fig 4). The raw gap is
+# pinned so the mid-grid n lands at standardized DELTA_REF; smaller/larger n then
+# spread below/above it, giving visibly separated (non-overlapping) ROC curves.
+DELTA_REF = 1.5
+N_SAMPLE = [50, 100] if QUICK else [50, 100, 200, 350, 500]
 PILOT_K = _int("LG_AVR_PILOT_K", 6 if QUICK else 16)  # graphs to estimate typical SE
 
 
@@ -194,7 +199,8 @@ def main():
     print(f"robust-Wald validation (standardized-effect ROC)  seed={SEED}  "
           f"quick={QUICK}  alpha={ALPHA}  d={DS}  n_exp(d0)={N_EXP}  n_exp(d1)={D1_N_EXP}")
     print(f"  effect ROC: delta={DELTAS} at n={N_EFFECT}")
-    print(f"  n-invariance: delta={DELTA_FIXED} over n={N_VALUES} (d1 cap {D1_MAX_N})")
+    print(f"  sample ROC: fixed raw effect (delta_ref={DELTA_REF}) over n={N_SAMPLE} "
+          f"(d1 cap {D1_MAX_N})")
 
     # --- Effect ROC: sweep standardized delta at n_effect --------------------
     effect_rows, effect_curves = [], {}
@@ -221,30 +227,34 @@ def main():
                   f"AUC_emp={auc:.3f} AUC_theory={_theory_auc(delta):.3f} "
                   f"power={float(np.mean(h1 < ALPHA)):.3f}  [{time.perf_counter()-t0:.0f}s]")
 
-    # --- n-invariance: same standardized delta across n ----------------------
-    sample_rows, sample_curves = [], {}
+    # --- Sample ROC: ONE fixed raw effect, vary n (discrimination grows with n) -
+    sample_rows, sample_curves, sample_dsig = [], {}, {}
     for d in DS:
-        for k, n in enumerate(N_VALUES):
-            if d >= 1 and n > D1_MAX_N:
-                print(f"  [Sample] d={d} n={n}: SKIPPED (n>d1_max_n={D1_MAX_N})")
-                continue
+        grid = [n for n in N_SAMPLE if not (d >= 1 and n > D1_MAX_N)]
+        n_ref = grid[len(grid) // 2]
+        se_ref = _typical_se(n_ref, d, SIGMA1, _pilot_k(d), SEED + 600 * (d + 1))
+        raw_ds = DELTA_REF * math.sqrt(2.0) * se_ref   # pinned across all n
+        sigma2 = SIGMA1 - raw_ds
+        sample_dsig[d] = raw_ds
+        print(f"  [Sample] d={d}  raw dsigma={raw_ds:.4f} "
+              f"(pinned at n_ref={n_ref}, delta_ref={DELTA_REF})  sigma2={sigma2:.4f}")
+        for k, n in enumerate(grid):
             t0 = time.perf_counter()
-            se_typ = _typical_se(n, d, SIGMA1, _pilot_k(d), SEED + 300 * (d + 1) + 7 * k)
-            dsig = DELTA_FIXED * math.sqrt(2.0) * se_typ
-            sigma2 = SIGMA1 - dsig
+            se_n = _typical_se(n, d, SIGMA1, _pilot_k(d), SEED + 650 * (d + 1) + 7 * k)
+            delta_n = raw_ds / (math.sqrt(2.0) * se_n) if se_n > 0 else float("nan")
             h0 = _collect_pvalues(n, d, SIGMA1, SIGMA1, _n_exp(d),
                                   SEED + 4000 * (d + 1) + 50 * k)
             h1 = _collect_pvalues(n, d, SIGMA1, sigma2, _n_exp(d),
                                   SEED + 5000 * (d + 1) + 50 * k)
             fpr, tpr, auc = _roc(h0, h1)
             sample_curves[(d, n)] = (fpr, tpr)
-            sample_rows.append(dict(d=d, n=n, delta=DELTA_FIXED, raw_dsigma=dsig,
-                                    sigma2=sigma2, se_typ=se_typ,
+            sample_rows.append(dict(d=d, n=n, raw_dsigma=raw_ds, sigma2=sigma2,
+                                    se_typ=se_n, delta=delta_n,
                                     typeI=float(np.mean(h0 < ALPHA)),
                                     power=float(np.mean(h1 < ALPHA)), auc_emp=auc,
-                                    auc_theory=_theory_auc(DELTA_FIXED), n_exp=len(h1)))
-            print(f"  [Sample] d={d} n={n}: SE_typ={se_typ:.4f} raw dsigma={dsig:.4f} "
-                  f"AUC_emp={auc:.3f} (theory {_theory_auc(DELTA_FIXED):.3f}) "
+                                    auc_theory=_theory_auc(delta_n), n_exp=len(h1)))
+            print(f"    n={n:4d}: delta~={delta_n:.2f}  AUC_emp={auc:.3f} "
+                  f"(theory {_theory_auc(delta_n):.3f})  "
                   f"typeI={float(np.mean(h0 < ALPHA)):.3f}  [{time.perf_counter()-t0:.0f}s]")
 
     effect_df = pd.DataFrame(effect_rows)
@@ -257,16 +267,18 @@ def main():
     _plot_roc(
         out_dir / "roc_effect_robust.png",
         rf"Robust-Wald ROC vs standardized effect $\delta=\Delta\sigma/SE$ (n={N_EFFECT})",
-        {d: [(rf"$\delta$={delta:.1f} (AUC {_lookup(effect_rows, d, 'delta', delta):.2f})",
+        {d: [(rf"$\delta$={delta:.1f} (AUC {_field(effect_rows, d, 'delta', delta, 'auc_emp'):.2f})",
               *effect_curves[(d, delta)])
              for delta in DELTAS if (d, delta) in effect_curves] for d in DS},
     )
     _plot_roc(
         out_dir / "roc_sample_robust.png",
-        rf"Robust-Wald ROC at fixed $\delta$={DELTA_FIXED} across graph size "
-        rf"(theory AUC={_theory_auc(DELTA_FIXED):.2f})",
-        {d: [(f"n={n} (AUC {_lookup(sample_rows, d, 'n', n):.2f})", *sample_curves[(d, n)])
-             for n in N_VALUES if (d, n) in sample_curves] for d in DS},
+        r"Robust-Wald ROC vs graph size at a fixed raw effect "
+        r"(discrimination grows with $n$)",
+        {d: [(f"n={n} ($\\delta${chr(0x2248)}{_field(sample_rows, d, 'n', n, 'delta'):.1f}, "
+              f"AUC {_field(sample_rows, d, 'n', n, 'auc_emp'):.2f})", *sample_curves[(d, n)])
+             for n in N_SAMPLE if (d, n) in sample_curves] for d in DS},
+        title_suffix={d: rf"$\Delta\sigma$={sample_dsig[d]:.3f}" for d in DS},
     )
 
     (out_dir / "results.json").write_text(json.dumps({
@@ -280,22 +292,23 @@ def main():
         print(f"  [effect] d={r['d']} n={r['n']} delta={r['delta']:.1f}: "
               f"AUC_emp={r['auc_emp']:.3f}  theory={r['auc_theory']:.3f}  "
               f"(raw dsigma={r['raw_dsigma']:.4f})")
+    print("Sample ROC (fixed raw dsigma per d; discrimination grows with n):")
     for r in sample_rows:
-        print(f"  [sample] d={r['d']} n={r['n']:4d} delta={r['delta']:.1f}: "
+        print(f"  [sample] d={r['d']} n={r['n']:4d} (delta~={r['delta']:.2f}): "
               f"AUC_emp={r['auc_emp']:.3f}  theory={r['auc_theory']:.3f}  "
               f"(raw dsigma={r['raw_dsigma']:.4f}, typeI={r['typeI']:.3f})")
     print(f"\nWrote {out_dir}/ (roc_effect_robust.{{png,csv}}, "
           f"roc_sample_robust.{{png,csv}}, typeI.csv, results.json)")
 
 
-def _lookup(rows, d, key, val):
+def _field(rows, d, key, val, field):
     for r in rows:
         if r["d"] == d and r[key] == val:
-            return r["auc_emp"]
+            return r[field]
     return float("nan")
 
 
-def _plot_roc(path, suptitle, curves_by_d):
+def _plot_roc(path, suptitle, curves_by_d, title_suffix=None):
     ds = sorted(curves_by_d.keys())
     fig, axes = plt.subplots(1, len(ds), figsize=(5.2 * len(ds), 4.6), squeeze=False)
     for ax, d in zip(axes[0], ds):
@@ -304,7 +317,8 @@ def _plot_roc(path, suptitle, curves_by_d):
         ax.plot([0, 1], [0, 1], color="k", lw=0.8, ls="--", label="chance")
         ax.set_xlabel("false positive rate")
         ax.set_ylabel("true positive rate")
-        ax.set_title(f"d={d}")
+        suffix = f"  ({title_suffix[d]})" if title_suffix and d in title_suffix else ""
+        ax.set_title(f"d={d}{suffix}")
         ax.set_xlim(-0.02, 1.02)
         ax.set_ylim(-0.02, 1.02)
         ax.legend(fontsize=8, loc="lower right")
