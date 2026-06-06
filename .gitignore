@@ -73,3 +73,6 @@ statGraph/
 *.pdf
 
 notebooks/changes_article/
+
+# local research notes
+FINDINGS.md

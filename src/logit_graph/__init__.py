@@ -40,6 +40,14 @@ from .experiments.presets import (
     PRESETS,
     SigmaSweepConfig,
 )
+# Temporal / growth Logit-Graph (additive; the equilibrium model is unchanged).
+from .temporal import (
+    GrowthResult,
+    fit_growth_from_result,
+    fit_growth_params,
+    grow_graph,
+    growth_design_from_snapshots,
+)
 
 __all__ = [
     # Core model
@@ -67,4 +75,10 @@ __all__ = [
     "AICSweepConfig",
     "SigmaSweepConfig",
     "PRESETS",
+    # Temporal / growth Logit-Graph (generation + estimation)
+    "grow_graph",
+    "GrowthResult",
+    "growth_design_from_snapshots",
+    "fit_growth_params",
+    "fit_growth_from_result",
 ]
