@@ -15,11 +15,12 @@ def _density(adj):
 
 
 def test_grow_graph_density_grows_smoothly():
-    """Density should increase step-by-step and be consistent across seeds
-    (no equilibrium-style bimodality / degeneracy)."""
+    """Add-only variant (allow_removal=False): density should increase step-by-step
+    and be consistent across seeds (no equilibrium-style bimodality / degeneracy)."""
     traces = []
     for s in range(4):
-        res = grow_graph(120, d=1, sigma=-4.0, alpha=0.05, n_steps=3, seed=s)
+        res = grow_graph(120, d=1, sigma=-4.0, alpha=0.05, n_steps=3, seed=s,
+                         allow_removal=False)
         tr = [_density(g) for g in res.snapshots]
         traces.append(tr)
         # monotone non-decreasing (edges only added)
@@ -86,7 +87,8 @@ def test_removal_design_matches_snapshot_rebuild():
 def test_removal_reaches_moderate_density_not_saturation():
     """allow_removal turns growth into an ergodic chain: edges dissolve, so the
     process settles at a moderate density instead of drifting to saturation."""
-    grow = grow_graph(150, d=0, sigma=-2.0, alpha=0.05, n_steps=2, seed=3)
+    grow = grow_graph(150, d=0, sigma=-2.0, alpha=0.05, n_steps=2, seed=3,
+                      allow_removal=False)
     stat = grow_graph(150, d=0, sigma=-2.0, alpha=0.05, n_steps=8, seed=3,
                       allow_removal=True)
     # add-only keeps climbing; add+remove balances well below saturation

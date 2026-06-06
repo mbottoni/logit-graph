@@ -3,16 +3,19 @@
 The equilibrium Logit-Graph (graph.py / simulate_graph) samples a graph at
 stationarity. There, a *free* coefficient on a node-degree feature is neither
 recoverable by logistic regression nor non-degenerate (see FINDINGS). This module
-adds the **growth** reformulation, where an edge forms at step t from the
-*predetermined* previous snapshot:
+adds the **temporal** reformulation, where each dyad's state at step t is drawn from
+the *predetermined* previous snapshot:
 
-    logit( P[edge_ij forms at t] ) = sigma + alpha * D_ij(t-1)
+    logit( P[edge_ij at t] ) = sigma + alpha * D_ij(t-1)
 
 with D = degree feature ("bounded": log(1+S_i)+log(1+S_j)), read from the snapshot
-at t-1. Because the predictors are predetermined, each formation is — conditional
-on the snapshot — an independent Bernoulli, so the pooled "at-risk dyad" design is
-an ordinary logistic regression whose MLE recovers (sigma, alpha) consistently,
-with no degeneracy.
+at t-1. By default (``allow_removal=True``) every dyad is resampled each step, so
+edges form AND dissolve and the process is an ergodic Markov chain with a stationary
+distribution at moderate density. Setting ``allow_removal=False`` recovers the
+add-only growth variant (edges only formed, drifting to saturation). Either way the
+predictors are predetermined, so conditional on the snapshot each draw is an
+independent Bernoulli and the pooled dyad design is an ordinary logistic regression
+whose MLE recovers (sigma, alpha) consistently, with no degeneracy.
 
 (The structural feature has been removed for now; only the degree slope is modeled.)
 
@@ -77,23 +80,23 @@ def grow_graph(
     p0: float = 0.02,
     record_design: bool = True,
     store_snapshots: bool = True,
-    allow_removal: bool = False,
+    allow_removal: bool = True,
 ) -> GrowthResult:
     """Grow a temporal Logit-Graph from a sparse ER seed (degree-only model).
 
-    At each step, the degree feature D is read from the current snapshot
-    (predetermined), every at-risk non-edge (i,j) forms with
-    p = expit(sigma + alpha*D), and the formations are applied afterwards (edges
-    are only added). With ``record_design`` the per-step at-risk dyads (D, formed?)
-    are pooled into ``GrowthResult.X/y`` for estimation.
+    By default (``allow_removal=True``) each step resamples **every** dyad from the
+    lagged probability — y_ij(t) ~ Bernoulli(expit(sigma + alpha*D_ij(t-1))), D read
+    from the current snapshot — so edges form AND dissolve. The design is over *all*
+    dyads with the new state as outcome. Because predictors are predetermined, it is
+    an ordinary logistic regression and the MLE stays consistent. This is an ergodic
+    Markov chain with a stationary distribution (no saturation), at the cost of
+    possible ERGM-style bistability for strong positive alpha.
 
-    With ``allow_removal=True`` the step instead resamples **every** dyad from the
-    lagged probability — y_ij(t) ~ Bernoulli(expit(sigma + alpha*D_ij(t-1))) — so
-    existing edges can be removed, not only formed. The predictors stay predetermined
-    (read from t-1), so the design (now over *all* dyads, outcome = the new state) is
-    still an ordinary logistic regression and the MLE stays consistent. This turns
-    the monotone growth into an ergodic Markov chain with a stationary distribution
-    (no saturation), at the cost of possible ERGM-style bistability for strong alpha.
+    With ``allow_removal=False`` the step instead only forms at-risk non-edges with
+    p = expit(sigma + alpha*D) (edges are never removed); the design is over the
+    at-risk non-edges (outcome = formed?) and the graph grows monotonically toward
+    saturation. With ``record_design`` the per-step dyads (D, outcome) are pooled into
+    ``GrowthResult.X/y`` for estimation.
     """
     rng = np.random.default_rng(seed)
     rows, cols = np.triu_indices(n, k=1)
@@ -151,7 +154,7 @@ def growth_design_from_snapshots(
     d: int,
     *,
     degree_mode: FeatureMode = DEGREE_MODE,
-    allow_removal: bool = False,
+    allow_removal: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build the at-risk logistic-regression design from observed snapshots.
 
