@@ -298,6 +298,13 @@ tlg-convergence-diagnostics-quick:  ## Smoke run of the TLG convergence diagnost
 	LG_TLGC_QUICK=1 \
 		$(UV) run python scripts/diagnostics/run_tlg_convergence_diagnostics.py
 
+tlg-esd-stop-eval:  ## Evaluate ESD-KL convergence stopping (until_convergence): stop-step + bias vs n, tol sensitivity
+	$(UV) run python scripts/diagnostics/run_tlg_esd_stop_eval.py
+
+tlg-esd-stop-eval-quick:  ## Smoke run of the ESD-stop evaluation (~30s)
+	LG_ESS_QUICK=1 \
+		$(UV) run python scripts/diagnostics/run_tlg_esd_stop_eval.py
+
 # ─────────────────────────────────────────────────────────────
 #  Cleanup
 # ─────────────────────────────────────────────────────────────

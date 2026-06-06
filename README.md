@@ -190,6 +190,7 @@ Experiments on the growth/temporal model `logit(P[edge forms at t]) = σ + α·D
 |---------|-----------|
 | `make tlg-recovery` | Recover (σ, α) from growth graphs at known ground truth, swept over d∈{0,1,2}, n∈{10…1500}, and several (σ,α) scenarios; one `recovery.png` overlaying scenarios (color = scenario) shows estimates converging onto the truth with 95% bands. |
 | `make tlg-convergence-diagnostics` | Convergence of the add+remove TLG (`allow_removal=True`): 8 chains from different initial ER densities mix to the same stationary distribution — Laplacian-spectrum / edge-count / degree-KS / adjacency-ESD-KL vs growth step all converge to a moderate-density reference. |
+| `make tlg-esd-stop-eval` | Evaluate `grow_graph(until_convergence=True)`, which stops once the consecutive-snapshot adjacency-ESD KL stays below `esd_tol`: stop-step vs n, bias of the stopped graph vs a long stationary draw (KS vs noise floor), and `esd_tol` sensitivity. |
 
 ### Robust ANOVA on σ̂ (single-graph dyadic-robust Wald)
 
