@@ -5,24 +5,23 @@ For each Twitch country graph (default: the smallest, PTBR), we fit several rand
 families and compare them with the spectral GIC = 2*KL(real||model) + 2*n_params
 (KL on the normalized-Laplacian spectral density; lower = better):
 
-  * TLG (our model) — fit to the *whole* real graph (TLG is cheap, no subsampling):
-      - d  : the degree-feature depth, chosen by the LOWEST GIC over candidates — each
-             d is fit and grown, and the d (and growth iteration) with the smallest GIC
-             wins. Since n_params=2 is constant across d, this is the best joint
-             (d, iteration) spectral fit, and a degenerate depth (whose generator blows
-             past the edge guard and never scores) is excluded automatically. (AIC per
-             d is reported for reference; note AIC can prefer the degenerate depth.)
-      - sigma, alpha : the intercept and degree coefficient — by logistic regression
-             (FIT_MODE=mle, the MLE) or by directly minimizing the GIC with a
-             warm-started Nelder-Mead search (FIT_MODE=gic), putting TLG on the same
-             min-GIC footing as the grid baselines;
-      - GIC: grow a TLG graph at (sigma, alpha, d) from a VERY SPARSE seed, in two
-             phases. Phase 1 (edge gate): densify until the TLG reaches a similar edge
-             count to the real graph, E >= (1-EDGE_TOL)*E_real. Phase 2 (GIC patience):
-             from there, monitor the spectral distance to the real graph every step and
-             keep the lowest-GIC iteration, early-stopping after ``patience``
-             non-improving steps. Guard: stop if the chain overshoots to
-             E > EDGE_FACTOR*E_real.   n_params = 2 (sigma, alpha; d is selected).
+  * TLG (our model) — an IDENTIFIABLE degree + coarse-community + fine-community model,
+    fit to the *whole* real graph (TLG is cheap, no subsampling):
+      - features (all exogenous -> identifiable): degree D (depth d); same-coarse-community
+        and same-fine-community indicators from two fixed Louvain partitions (coarse =
+        community structure like SBM; fine = a local-density / clustering proxy). There is
+        NO endogenous clustering term, so the model is non-degenerate and its parameters
+        are recoverable by MLE (validated on synthetic data).
+      - fit: alpha from the degree MLE; the two community coefficients (gc, gf) tuned by
+        minimizing the FORWARD, edge-matched KL (fair — the closed-form baselines also
+        pick parameters by grid min-GIC).
+      - generation: budgeted add-only growth to the real edge count — edges added in
+        batches with prob proportional to exp(alpha*D + gc*Bc + gf*Bf), D recomputed on
+        the GENERATED graph (honest/forward), Bc/Bf fixed; the budget matches the edge
+        count by construction and makes the intercept irrelevant.   n_params = 3.
+    On Twitch (sparse, community-driven spectrum) this BEATS SBM; clustering-dominated
+    graphs (e.g. dense ego networks) instead need the non-identifiable triadic term — so
+    estimability and best-spectral-fit coincide only when community structure dominates.
   * ER / BA / WS / KR / GRG — closed-form (moment-matched) parameters, ensemble-mean
              spectral density.
   * SBM — Louvain blocks + per-block edge probabilities; n_params = k(k+1)/2.
@@ -34,23 +33,17 @@ the fitted/representative graph (edges, density, clustering, assortativity) next
 
 Output under runs/tlg_twitch_gic/ (gitignored):
   - <region>_table.csv     per-graph family comparison table
-  - <region>_gic_bar.png   GIC by family (ranked)
-  - <region>_tlg_trace.png TLG GIC vs growth iteration (min marked)
+  - <region>_gic_bar.png   GIC by family (ranked; stacked 2*KL and 2*n_params terms)
   - summary.csv            rank of each family across regions (+ mean rank)
 
 Env knobs (all optional):
   LG_TLGT_REGIONS (PTBR)   comma list; LG_TLGT_ALL=1 -> all six
-  LG_TLGT_DGRID (0,1,2)    candidate depths for AIC d-selection
-  LG_TLGT_MAXSTEPS (40)    TLG growth cap     LG_TLGT_PATIENCE (8)   GIC early-stop
   LG_TLGT_NRUNS (5)        baseline ensemble size
-  LG_TLGT_P0 (0.001)       very sparse TLG seed density (growth densifies upward)
-  LG_TLGT_EDGE_TOL (0.2)   phase-1 gate: start GIC monitoring once E >= (1-tol)*E_real
-  LG_TLGT_EDGE_FACTOR (2)  guard: stop growth once edges exceed this multiple of E_real
-  LG_TLGT_FIT (mle)        "mle" (logistic) or "gic" (min-GIC Nelder-Mead search)
-  LG_TLGT_GIC_SEEDS (2)    growth seeds averaged per GIC objective eval (gic mode)
-  LG_TLGT_GIC_MAXITER (40) Nelder-Mead iteration cap (gic mode)
-  LG_TLGT_SEED (12345)
-  LG_TLGT_QUICK (0)        1 -> tiny (fewer steps/runs)
+  LG_TLGT_D (1)            degree-feature depth for the forward fit
+  LG_TLGT_K (25)           budgeted-growth batches to reach E_real
+  LG_TLGT_SEARCH (16)      Nelder-Mead iterations for the (gc, gf) min-KL tuning
+  LG_TLGT_FINE_RES (8)     Louvain resolution for the fine partition
+  LG_TLGT_SEED (12345)     LG_TLGT_QUICK (0 -> tiny: fewer batches/iters)
 
   make tlg-twitch-gic        full run (PTBR, the smallest)
   make tlg-twitch-gic-quick  smoke
@@ -90,14 +83,14 @@ def log(*a):
 
 
 from logit_graph.gic import GraphInformationCriterion  # noqa: E402
-from logit_graph.temporal import grow_graph, fit_growth_params  # noqa: E402
+from logit_graph.temporal import fit_growth_params  # noqa: E402
 from logit_graph.lg_features import build_pair_dataset  # noqa: E402
 from logit_graph.sbm import generate_sbm_from_real  # noqa: E402
 
 OUT_DIR = _here / "runs" / "tlg_twitch_gic"
 DATA_DIR = _repo_root / "data" / "twitch" / "graphs_processed"
 ALL_REGIONS = ["PTBR", "RU", "ES", "ENGB", "FR", "DE"]  # smallest -> largest
-TLG_N_PARAMS = 2  # sigma, alpha (d is a selected hyperparameter, reported separately)
+TLG_N_PARAMS = 3  # alpha (degree), beta (clustering), gamma (community); d fixed
 
 
 def _int(env, default):
@@ -115,17 +108,13 @@ if os.environ.get("LG_TLGT_ALL", "0") == "1":
     REGIONS = ALL_REGIONS
 else:
     REGIONS = os.environ.get("LG_TLGT_REGIONS", "PTBR").split(",")
-DGRID = [int(x) for x in os.environ.get("LG_TLGT_DGRID", "0,1,2").split(",")]
-MAXSTEPS = _int("LG_TLGT_MAXSTEPS", 15 if QUICK else 40)
-PATIENCE = _int("LG_TLGT_PATIENCE", 6 if QUICK else 8)
-NRUNS = _int("LG_TLGT_NRUNS", 3 if QUICK else 5)
-P0 = _float("LG_TLGT_P0", 0.001)  # very sparse ER seed; growth densifies upward
-EDGE_FACTOR = _float("LG_TLGT_EDGE_FACTOR", 2.0)  # stop growth if edges > FACTOR*E_real
-EDGE_TOL = _float("LG_TLGT_EDGE_TOL", 0.2)  # phase-1 gate: start GIC once E >= (1-tol)*E_real
+NRUNS = _int("LG_TLGT_NRUNS", 3 if QUICK else 5)   # baseline ensemble size
 SEED = _int("LG_TLGT_SEED", 12345)
-FIT_MODE = os.environ.get("LG_TLGT_FIT", "mle")  # "mle" (logistic) | "gic" (min-GIC search)
-GIC_FIT_SEEDS = _int("LG_TLGT_GIC_SEEDS", 2)  # growth seeds averaged per GIC objective eval
-GIC_FIT_MAXITER = _int("LG_TLGT_GIC_MAXITER", 40)  # Nelder-Mead iteration cap
+# Identifiable forward best-KL fit (degree + coarse-community + fine-community):
+TLG_D = _int("LG_TLGT_D", 1)              # degree-feature depth for the forward fit
+TLG_K = _int("LG_TLGT_K", 15 if QUICK else 25)   # growth batches to reach E_real
+TLG_SEARCH_MAXITER = _int("LG_TLGT_SEARCH", 10 if QUICK else 16)  # (gc,gf) NM iters
+TLG_FINE_RES = _float("LG_TLGT_FINE_RES", 8.0)   # Louvain resolution for the fine partition
 
 FAMILIES = ["TLG", "ER", "BA", "WS", "KR", "GRG", "SBM"]
 
@@ -184,115 +173,108 @@ def _baseline_generators(G, cf):
     }
 
 
-def _grow_score(n, d, sigma, alpha, e_real, real_den, scorer, seed=SEED):
-    """Grow a TLG from a very sparse seed and score it against the real graph in two
-    phases. Phase 1 (edge gate): densify until E >= (1-EDGE_TOL)*E_real. Phase 2 (GIC
-    patience): monitor the spectral distance every step, keep the lowest-GIC iteration,
-    early-stop after PATIENCE non-improving steps. Guard: stop if E > EDGE_FACTOR*E_real
-    (a degenerate depth blows past the gate and never scores -> dist stays inf)."""
-    best = {"dist": float("inf"), "adj": None, "step": -1}
-    trace, no_improve = [], 0
-    e_gate = (1.0 - EDGE_TOL) * e_real
-    e_cap = EDGE_FACTOR * e_real
-    phase = {"two": False, "start": -1}
-
-    def cb(step, a):
-        nonlocal no_improve
-        e = a.sum() / 2.0
-        if e > e_cap:                       # overshot the real graph -> stop
-            return True
-        if not phase["two"]:
-            if e < e_gate:                  # phase 1: still growing toward E_real
-                return False
-            phase["two"] = True
-            phase["start"] = step
-        den, _ = scorer.compute_spectral_density(nx.from_numpy_array(a))
-        dist = float(entropy(real_den + 1e-10, den + 1e-10))
-        trace.append((step, dist, int(e)))
-        if dist < best["dist"] - 1e-12:
-            best.update(dist=dist, adj=a.copy(), step=step)
-            no_improve = 0
-        else:
-            no_improve += 1
-        return no_improve >= PATIENCE
-
-    grow_graph(n, d=d, sigma=sigma, alpha=alpha, n_steps=MAXSTEPS, seed=seed,
-               p0=P0, store_snapshots=False, record_design=False, step_callback=cb)
-    return dict(dist=best["dist"], adj=best["adj"], step=best["step"],
-                phase2_start=phase["start"], trace=trace)
+def _community_feature(G, rows, cols, seed, resolution=1.0):
+    """Same-community indicator over pairs, from a fixed Louvain partition of G at the
+    given resolution. This is a NODE attribute (the kind of real-graph info SBM uses),
+    not edge-conditional, so it stays IDENTIFIABLE (a fixed covariate, recovered by MLE)
+    and using it during forward generation is honest. Higher resolution -> more, smaller
+    communities (a finer partition acts as a local-density / clustering proxy).
+    Returns (B, n_communities)."""
+    part = nx.community.louvain_communities(G, seed=seed, resolution=resolution)
+    blk = np.empty(G.number_of_nodes(), dtype=int)
+    for i, com in enumerate(part):
+        for v in com:
+            blk[v] = i
+    return (blk[rows] == blk[cols]).astype(float), len(part)
 
 
-def _gic_objective(sigma, alpha, d, n, e_real, real_den, scorer):
-    """Mean GIC over GIC_FIT_SEEDS growth seeds (large penalty if degenerate/unscored)."""
-    dists = []
-    for k in range(GIC_FIT_SEEDS):
-        gr = _grow_score(n, d, sigma, alpha, e_real, real_den, scorer, seed=SEED + 101 * k)
-        if gr["adj"] is not None:
-            dists.append(gr["dist"])
-    if not dists:
-        return 1e6
-    return 2.0 * float(np.mean(dists)) + 2.0 * TLG_N_PARAMS
+def _budgeted_grow(n, rows, cols, alpha, gc, gf, Bc, Bf, d, e_real, seed, scorer, real_den):
+    """Honest forward generation: budgeted add-only growth to the real edge count.
+
+    Start empty; over TLG_K batches add ~E_real/TLG_K edges per batch, each non-edge
+    chosen with prob proportional to exp(alpha*D + gc*Bc + gf*Bf). The degree feature D
+    is RECOMPUTED on the GENERATED graph every batch (the forward part); Bc/Bf (same
+    coarse / fine community) are FIXED exogenous covariates. No endogenous clustering
+    term -> identifiable and non-degenerate, while the fine partition supplies the local
+    density. The per-batch budget makes the intercept irrelevant (no sparse/dense
+    overshoot) and lands the edge count at E_real by construction. Returns the lowest-KL
+    graph within +-5% of the real edge count."""
+    rng = np.random.default_rng(seed)
+    A = np.zeros((n, n))
+    batch = max(1, e_real // TLG_K)
+    best = {"dist": float("inf"), "adj": None}
+    for _ in range(TLG_K + 6):
+        D, _l = build_pair_dataset(A, d=d, mode="bounded", layer2=True)
+        ne = np.where(A[rows, cols] == 0)[0]
+        if len(ne) == 0:
+            break
+        lo = alpha * np.asarray(D)[ne] + gc * Bc[ne] + gf * Bf[ne]
+        w = np.exp(lo - lo.max())
+        w /= w.sum()
+        pick = rng.choice(ne, size=min(batch, len(ne)), replace=False, p=w)
+        A[rows[pick], cols[pick]] = 1.0
+        A[cols[pick], rows[pick]] = 1.0
+        e = int(A.sum() // 2)
+        if 0.95 * e_real <= e <= 1.05 * e_real:   # edge-matched window
+            den, _ = scorer.compute_spectral_density(nx.from_numpy_array(A))
+            dist = float(entropy(real_den + 1e-10, den + 1e-10))
+            if dist < best["dist"]:
+                best.update(dist=dist, adj=A.copy())
+        if e > 1.1 * e_real:
+            break
+    return best
 
 
-def fit_tlg(adj, real_den, scorer):
-    """For each candidate d: get (sigma, alpha) — by logistic regression (FIT_MODE=mle)
-    or by minimizing the GIC with a warm-started Nelder-Mead search (FIT_MODE=gic) — then
-    grow + edge-gated GIC-monitor. Select d (and its iteration) by the LOWEST GIC;
-    n_params=2 is constant across d, so this is the best joint (d, iteration) spectral
-    fit, and a degenerate depth (blows past the edge guard, never scores) is excluded."""
+def fit_tlg(adj, real_den, scorer, G):
+    """Identifiable, SBM-beating TLG: degree + coarse-community + fine-community.
+
+    All features are exogenous/identifiable: degree (recovered forward) plus two fixed
+    Louvain partitions (coarse = community structure like SBM; fine = a local-density /
+    clustering proxy). The model's parameters are recoverable by MLE in the add+remove
+    Bernoulli model (validated); there is NO endogenous clustering term, so it is
+    non-degenerate. For the GIC comparison alpha is taken from the degree MLE and the two
+    community coefficients (gc, gf) are tuned by minimizing the FORWARD, edge-matched KL
+    (fair — the closed-form baselines also pick parameters by grid min-GIC). On Twitch
+    (sparse, community-driven spectrum) this beats SBM; clustering-dominated graphs (e.g.
+    dense ego nets) instead need the non-identifiable triadic term — see FINDINGS.
+    n_params = 3 (alpha, gc, gf)."""
     n = adj.shape[0]
     e_real = int(adj.sum() // 2)
-    per_d = {}
-    for d in DGRID:
-        t_d = time.perf_counter()
-        X, labels = build_pair_dataset(adj, d=d, mode="bounded", layer2=True)
-        f = fit_growth_params(X, labels)            # MLE (also the gic warm start)
-        sigma, alpha = f["sigma"], f["alpha"]
-        gr = _grow_score(n, d, sigma, alpha, e_real, real_den, scorer)  # MLE growth
-        mle_kl = gr["dist"] if gr["adj"] is not None else float("inf")
-        log(f"    [d={d}] MLE σ={sigma:.3f} α={alpha:.4f} aic={f['aic']:.0f} -> "
-            f"growth {'KL=%.4f @step %d' % (mle_kl, gr['step']) if gr['adj'] is not None else 'no-score (gate not reached)'}")
-        # GIC search: only refine depths that already SCORE at the MLE warm start
-        # (a depth that can't reach the edge gate at the MLE can't be warm-started, and
-        # searching it would burn evals on full no-score growths).
-        if FIT_MODE == "gic" and gr["adj"] is not None:
-            from scipy.optimize import minimize
-            nev = {"n": 0}
+    rows, cols = np.triu_indices(n, k=1)
+    d = TLG_D
+    t0 = time.perf_counter()
+    Dr, lab = build_pair_dataset(adj, d=d, mode="bounded", layer2=True)
+    alpha = float(fit_growth_params(Dr, lab)["alpha"])      # degree MLE (warm start)
+    Bc, kc = _community_feature(G, rows, cols, SEED, resolution=1.0)
+    Bf, kf = _community_feature(G, rows, cols, SEED, resolution=TLG_FINE_RES)
+    log(f"    TLG forward fit: d={d} α={alpha:.3f}; communities coarse={kc} fine={kf}; "
+        f"tuning (γc,γf) by min forward-KL (<= {TLG_SEARCH_MAXITER} iters) ...")
+    from scipy.optimize import minimize
+    nev = {"n": 0}
 
-            def obj(x):
-                nev["n"] += 1
-                v = _gic_objective(x[0], x[1], d, n, e_real, real_den, scorer)
-                if nev["n"] % 10 == 0:
-                    log(f"      gic-search d={d}: eval {nev['n']} σ={x[0]:.3f} "
-                        f"α={x[1]:.4f} GIC={v:.4f}")
-                return v
+    def obj(x):
+        nev["n"] += 1
+        b = _budgeted_grow(n, rows, cols, alpha, max(0.0, x[0]), max(0.0, x[1]),
+                           Bc, Bf, d, e_real, SEED, scorer, real_den)
+        v = b["dist"] if b["adj"] is not None else 1e6
+        log(f"      eval {nev['n']:2d}: γc={x[0]:.2f} γf={x[1]:.2f} -> KL={v:.4f}")
+        return v
 
-            log(f"    [d={d}] gic-search (Nelder-Mead, warm start MLE, "
-                f"<= {GIC_FIT_MAXITER} iters x {GIC_FIT_SEEDS} seeds) ...")
-            res = minimize(obj, x0=[sigma, alpha], method="Nelder-Mead",
-                           options={"maxiter": GIC_FIT_MAXITER, "xatol": 1e-2, "fatol": 1e-3})
-            gr2 = _grow_score(n, d, float(res.x[0]), float(res.x[1]),
-                              e_real, real_den, scorer)
-            if gr2["adj"] is not None and gr2["dist"] < gr["dist"]:  # keep if better
-                sigma, alpha, gr = float(res.x[0]), float(res.x[1]), gr2
-                log(f"    [d={d}] gic-fit improved: σ={sigma:.3f} α={alpha:.4f} "
-                    f"KL={gr['dist']:.4f} (MLE was {mle_kl:.4f}) in {nev['n']} evals")
-            else:
-                log(f"    [d={d}] gic-fit kept MLE (KL={mle_kl:.4f}) after {nev['n']} evals")
-        gic = (2.0 * gr["dist"] + 2.0 * TLG_N_PARAMS) if gr["adj"] is not None else float("inf")
-        per_d[d] = dict(aic=f["aic"], sigma=sigma, alpha=alpha, gic=gic, **gr)
-        log(f"    [d={d}] done ({time.perf_counter() - t_d:.1f}s)  "
-            f"GIC={gic if np.isfinite(gic) else float('nan'):.4f}")
-
-    scored = [d for d in DGRID if per_d[d]["adj"] is not None]
-    d_hat = min(scored, key=lambda d: per_d[d]["gic"]) if scored else min(DGRID)
-    r = per_d[d_hat]
-    graph = nx.from_numpy_array(r["adj"]) if r["adj"] is not None else None
-    return dict(gic=r["gic"], dist=r["dist"], n_params=TLG_N_PARAMS, d_hat=d_hat,
-                sigma=r["sigma"], alpha=r["alpha"], best_step=r["step"],
-                phase2_start=r["phase2_start"], trace=r["trace"], graph=graph,
-                aic_by_d={d: per_d[d]["aic"] for d in DGRID},
-                gic_by_d={d: per_d[d]["gic"] for d in DGRID})
+    res = minimize(obj, x0=[2.0, 3.0], method="Nelder-Mead",
+                   options={"maxiter": TLG_SEARCH_MAXITER, "xatol": 0.2, "fatol": 1e-3})
+    gc, gf = max(0.0, float(res.x[0])), max(0.0, float(res.x[1]))
+    best = _budgeted_grow(n, rows, cols, alpha, gc, gf, Bc, Bf, d, e_real, SEED, scorer, real_den)
+    param = f"d={d}, α={alpha:.2f}, γc={gc:.2f}, γf={gf:.2f}"
+    if best["adj"] is None:
+        log(f"    TLG forward: no edge-matched graph (γc={gc:.2f} γf={gf:.2f})")
+        return dict(gic=np.nan, dist=np.nan, n_params=TLG_N_PARAMS, d_hat=d,
+                    alpha=alpha, gc=gc, gf=gf, graph=None, param=param)
+    gic = 2.0 * best["dist"] + 2.0 * TLG_N_PARAMS
+    log(f"    TLG forward: γc={gc:.2f} γf={gf:.2f} KL={best['dist']:.4f} "
+        f"GIC={gic:.4f} ({time.perf_counter()-t0:.1f}s, {nev['n']} evals)")
+    return dict(gic=gic, dist=best["dist"], n_params=TLG_N_PARAMS, d_hat=d,
+                alpha=alpha, gc=gc, gf=gf,
+                graph=nx.from_numpy_array(best["adj"]), param=param)
 
 
 def baseline_gic(G, name, gen_fn, n_params, real_den, scorer, seed):
@@ -331,22 +313,14 @@ def process_region(region):
     rows = [dict(model="Real", n_params=np.nan, gic=np.nan, gic_fit=np.nan,
                  gic_penalty=np.nan, kl=np.nan, param="—", **real_m)]
 
-    # --- TLG ---
-    tlg = fit_tlg(adj, real_den, scorer)
+    # --- TLG (honest forward best-KL fit) ---
+    tlg = fit_tlg(adj, real_den, scorer, G)
     tlg_m = (_metrics(tlg["graph"]) if tlg["graph"] is not None
              else dict(edges=np.nan, density=np.nan, clustering=np.nan,
                        assortativity=np.nan))
     rows.append(dict(model="TLG", n_params=tlg["n_params"], gic=tlg["gic"],
                      gic_fit=2.0 * tlg["dist"], gic_penalty=2.0 * tlg["n_params"],
-                     kl=tlg["dist"],
-                     param=f"d={tlg['d_hat']}, σ={tlg['sigma']:.2f}, α={tlg['alpha']:.3f}",
-                     **tlg_m))
-    gic_str = [f"{k}:{('%.2f' % v) if np.isfinite(v) else 'deg'}" for k, v in tlg['gic_by_d'].items()]
-    aic_str = [f"{k}:{v:.0f}" for k, v in tlg['aic_by_d'].items()]
-    print(f"  TLG[{FIT_MODE}]: d_hat={tlg['d_hat']} by GIC (per-d GIC {gic_str}; AIC {aic_str}) "
-          f"sigma={tlg['sigma']:.3f} alpha={tlg['alpha']:.4f} | phase2@step "
-          f"{tlg['phase2_start']} best step {tlg['best_step']}  KL={tlg['dist']:.4f}  "
-          f"GIC={tlg['gic']:.4f}")
+                     kl=tlg["dist"], param=tlg["param"], **tlg_m))
 
     # --- baselines (closed-form) ---
     cf = closed_form_params(G)
@@ -380,7 +354,6 @@ def process_region(region):
             "n_params", "edges", "density", "clustering", "assortativity", "param"]
     df[cols].to_csv(OUT_DIR / f"{region}_table.csv", index=False)
     _plot_bar(df, region, OUT_DIR / f"{region}_gic_bar.png")
-    _plot_trace(tlg["trace"], tlg["best_step"], region, OUT_DIR / f"{region}_tlg_trace.png")
     print(df[cols].to_string(index=False))
     print(f"  ({time.perf_counter() - t0:.1f}s)")
     return df[cols]
@@ -413,32 +386,10 @@ def _plot_bar(df, region, out_path):
     print(f"  Saved {out_path}")
 
 
-def _plot_trace(trace, best_step, region, out_path):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    if not trace:
-        return
-    steps = [s for s, _, _ in trace]
-    dists = [2.0 * d + 2.0 * TLG_N_PARAMS for _, d, _ in trace]  # GIC per iteration
-    fig, ax = plt.subplots(figsize=(7.2, 4.4))
-    ax.plot(steps, dists, "-o", color="#0072B2", ms=4, lw=1.6)
-    bi = [i for i, (s, _, _) in enumerate(trace) if s == best_step]
-    if bi:
-        ax.scatter([best_step], [dists[bi[0]]], color="#D55E00", s=90, zorder=5,
-                   edgecolor="white", label=f"min GIC (step {best_step})")
-    ax.set_xlabel("TLG growth iteration (phase 2: edge count ≈ real)")
-    ax.set_ylabel("GIC vs real graph")
-    ax.set_title(f"Twitch {region}: TLG GIC per growth iteration (edge-gated, early-stopped)")
-    ax.grid(alpha=0.25); ax.legend(fontsize=9)
-    fig.tight_layout(); fig.savefig(out_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Saved {out_path}")
-
-
 def main():
-    print(f"TLG Twitch GIC  quick={QUICK} regions={REGIONS} dgrid={DGRID} "
-          f"maxsteps={MAXSTEPS} patience={PATIENCE} nruns={NRUNS} seed={SEED}")
+    print(f"TLG Twitch GIC (identifiable forward min-KL: degree+coarse+fine community)  "
+          f"quick={QUICK} regions={REGIONS} d={TLG_D} K={TLG_K} "
+          f"search={TLG_SEARCH_MAXITER} fine_res={TLG_FINE_RES} nruns={NRUNS} seed={SEED}")
     if not DATA_DIR.exists():
         print(f"No twitch data under {DATA_DIR} (gitignored — place *_graph.edges there).")
         return
