@@ -737,6 +737,11 @@ def _run_pool(tasks, workers, label):
     family KL ranking per network. This is the shared engine for both the single-dataset
     sweep and the all-datasets run (one global pool -> parallel across datasets AND across
     networks, with load balancing)."""
+    # Seeded shuffle: spread the few large graphs (twitch/arxiv/big connectomes) through the
+    # queue so small graphs stream in steadily (visible progress) and no big graph piles up
+    # at the end as a straggler. Deterministic -> still reproducible.
+    tasks = list(tasks)
+    random.Random(SEED).shuffle(tasks)
     n_total = len(tasks)
     log(f"latent-TLG SWEEP [{label}]: {n_total} networks | {workers} workers | "
         f"quick={QUICK} NRUNS={NRUNS} kernels={KERNELS} klist={KLIST} seed={SEED} "
