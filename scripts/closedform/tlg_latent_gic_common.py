@@ -49,7 +49,10 @@ LG_TLM_QUICK (0 -> tiny smoke).
 """
 from __future__ import annotations
 
+import contextlib
 import glob
+import json
+import multiprocessing as mp
 import os
 import random
 import sys
@@ -238,12 +241,23 @@ def _deg_feature_nonedges(A, rows, cols, ne):
 
 
 def _metrics(G):
+    n = G.number_of_nodes()
+    e = G.number_of_edges()
     try:
         assort = float(nx.degree_assortativity_coefficient(G))
     except Exception:
         assort = float("nan")
-    return dict(edges=G.number_of_edges(), density=float(nx.density(G)),
+    return dict(nodes=int(n), edges=int(e), density=float(nx.density(G)),
+                avg_degree=float(2 * e / n) if n else 0.0,
                 clustering=float(nx.average_clustering(G)), assortativity=assort)
+
+
+def _gmetrics(G):
+    """Structural metrics of a generated/representative graph, NaN-safe when None."""
+    if G is None:
+        return dict(nodes=np.nan, edges=np.nan, density=np.nan, avg_degree=np.nan,
+                    clustering=np.nan, assortativity=np.nan)
+    return _metrics(G)
 
 
 # --------------------------------------------------------------------------- TLG
@@ -498,3 +512,251 @@ def run_all(names=None):
         log(f"  {ds:12} TLG={t:.4f} SBM={s:.4f} -> {w}")
     log(f"  TLG beats SBM on {nwin}/{len(wins)} datasets (raw KL)")
     log(f"\nWrote {OUT_DIR}/")
+
+
+# ===========================================================================
+# Per-dataset SWEEP: fit EVERY network of a dataset, cached/resumable/parallel.
+# Each per-dataset entry script (run_tlg_<dataset>_latent_gic.py) calls run_sweep(name);
+# run_tlg_all_latent_gic.py invokes those individual scripts in turn.
+# ===========================================================================
+
+SWEEP_NMIN = _int("LG_SWEEP_NMIN", 50)        # per-ego BAND filter (twitter/gplus ONLY)
+SWEEP_NMAX = _int("LG_SWEEP_NMAX", 1000)
+SWEEP_FLOOR = _int("LG_SWEEP_FLOOR", 10)      # min-n fit-sanity floor for the "all" datasets
+SWEEP_WORKERS = _int("LG_SWEEP_WORKERS", 8)
+HUMAN_SCALE = os.environ.get("LG_SWEEP_HUMAN_SCALE", "1")
+ARXIV_CAP = _int("LG_SWEEP_ARXIV_CAP", 1500)
+SWEEP_DATASETS = ["twitch", "facebook", "connectome", "arxiv", "gplus", "twitter", "human"]
+OVERALL_OUT = _here / "runs" / "tlg_latent_overall_gic"
+
+
+def _out_dir(dataset):
+    """Per-dataset results dir runs/tlg_latent_<dataset>_gic/ (network cache under cache/)."""
+    return _here / "runs" / f"tlg_latent_{dataset}_gic"
+
+
+def _sweep_enumerate(dataset):
+    """List of (network_id, kind, arg, nmin, nmax) tasks for a dataset."""
+    g = lambda *p: sorted(glob.glob(str(DATA.joinpath(*p))))
+    if dataset == "twitch":
+        return [(Path(f).stem, "edges", f, SWEEP_FLOOR, 10**9)
+                for f in g("twitch", "graphs_processed", "*.edges")]
+    if dataset == "twitter":
+        return [(Path(f).stem, "edges", f, SWEEP_NMIN, SWEEP_NMAX)
+                for f in g("misc", "twitter", "*.edges")]
+    if dataset == "facebook":
+        return [(Path(f).stem, "edges", f, SWEEP_FLOOR, 10**9)
+                for f in g("misc", "facebook", "*.edges")]
+    if dataset == "gplus":
+        return [(Path(f).stem, "edges", f, SWEEP_NMIN, SWEEP_NMAX)
+                for f in g("misc", "gplus", "*.edges")]
+    if dataset == "connectome":
+        return [(Path(f).stem, "graphml", f, SWEEP_FLOOR, 10**9)
+                for f in g("connectomes", "*.graphml")]
+    if dataset == "human":
+        return [(Path(f).stem, "graphml", f, SWEEP_FLOOR, 10**9)
+                for f in g("brain_graph", f"oasis3_graphmls_scale{HUMAN_SCALE}", "*.graphml")]
+    if dataset == "arxiv":
+        return [("cit-HepTh", "citation", str(ARXIV_CAP), SWEEP_FLOOR, 10**9)]
+    raise ValueError(f"unknown dataset {dataset!r}")
+
+
+def _sweep_load(kind, arg):
+    if kind == "edges":
+        return _edges(arg)
+    if kind == "graphml":
+        return _graphml(arg)
+    if kind == "citation":
+        global CAP
+        old, CAP = CAP, int(arg)
+        try:
+            return _citation()
+        finally:
+            CAP = old
+    raise ValueError(kind)
+
+
+def _sweep_worker(task):
+    """Fit one network (cache-aware). Returns (status, dataset, nid, info)."""
+    dataset, nid, kind, arg, nmin, nmax = task
+    cdir = _out_dir(dataset) / "cache"
+    done = cdir / f"{nid}.json"
+    skip = cdir / f"{nid}.skip"
+    if done.exists():
+        try:
+            return ("cached", dataset, nid, json.loads(done.read_text()))
+        except Exception:
+            pass
+    if skip.exists():
+        return ("skipped", dataset, nid, None)
+    try:
+        G = _sweep_load(kind, arg)
+    except Exception as ex:
+        return ("error", dataset, nid, f"load: {ex}")
+    n = G.number_of_nodes()
+    if not (nmin < n < nmax):
+        cdir.mkdir(parents=True, exist_ok=True)
+        skip.write_text(json.dumps({"n": int(n), "reason": "out_of_range"}))
+        return ("skipped", dataset, nid, int(n))
+    try:
+        with contextlib.redirect_stdout(open(os.devnull, "w")):  # silence inner fit log
+            scorer = GraphInformationCriterion(G, model="LG", dist="KL")
+            real_den, _ = scorer.compute_spectral_density(G)
+            fams = []
+            tlg = fit_tlg(G, scorer, real_den)
+            fams.append(dict(model="TLG", kl=float(tlg["kl"]), gic=float(tlg["gic"]),
+                             n_params=int(tlg["n_params"]), param=tlg["param"],
+                             **_gmetrics(tlg["graph"])))
+            cf = tw.closed_form_params(G)
+            gens = tw._baseline_generators(G, cf)
+            for fam in ("ER", "BA", "WS", "KR", "GRG", "SBM"):
+                gen_fn, npar = gens[fam]
+                if fam == "SBM":
+                    _, npar = generate_sbm_from_real(G, seed=SEED)
+                res = baseline_gic(G, gen_fn, npar, real_den, scorer)
+                if res is not None:
+                    fams.append(dict(model=fam, kl=float(res["kl"]), gic=float(res["gic"]),
+                                     n_params=int(res["n_params"]),
+                                     **_gmetrics(res.get("graph"))))
+        result = dict(dataset=dataset, id=nid, real=_metrics(G), families=fams)
+        cdir.mkdir(parents=True, exist_ok=True)
+        done.write_text(json.dumps(result))
+        return ("done", dataset, nid, result)
+    except Exception as ex:
+        return ("error", dataset, nid, f"fit: {ex}")
+
+
+def _ranked_kl_str(result):
+    """Full KL ranking of all families for one network: 'TLG#1 0.246 | SBM#2 0.598 | ...'."""
+    fams = sorted(result.get("families", []), key=lambda f: f["kl"])
+    return " | ".join(f"{f['model']}#{i} {f['kl']:.3f}" for i, f in enumerate(fams, 1))
+
+
+def _aggregate_dataset(dataset):
+    """Per-dataset: recompute per-graph family ranks + per-family win rates from the cache;
+    write per_graph.csv + summary.csv under runs/tlg_latent_<dataset>_gic/. Returns the
+    per-family summary DataFrame (or None)."""
+    odir = _out_dir(dataset)
+    jsons = sorted(glob.glob(str(odir / "cache" / "*.json")))
+    rows = []
+    for jp in jsons:
+        try:
+            d = json.loads(Path(jp).read_text())
+        except Exception:
+            continue
+        fam = pd.DataFrame(d["families"])
+        fam["kl_rank"] = fam["kl"].rank(method="min").astype(int)
+        real = d.get("real", {})
+        for _, fr in fam.iterrows():
+            rows.append(dict(dataset=dataset, file=d["id"], model=fr["model"],
+                             kl=fr["kl"], gic=fr["gic"], n_params=fr["n_params"],
+                             kl_rank=fr["kl_rank"],
+                             real_nodes=real.get("nodes"), real_edges=real.get("edges"),
+                             real_clustering=real.get("clustering"),
+                             real_assortativity=real.get("assortativity"),
+                             gen_nodes=fr.get("nodes"), gen_edges=fr.get("edges"),
+                             gen_avg_degree=fr.get("avg_degree"),
+                             gen_clustering=fr.get("clustering"),
+                             gen_assortativity=fr.get("assortativity")))
+    if not rows:
+        return None
+    per = pd.DataFrame(rows)
+    odir.mkdir(parents=True, exist_ok=True)
+    per.to_csv(odir / "per_graph.csv", index=False)
+    piv = per.pivot_table(index="file", columns="model", values="kl", aggfunc="first")
+    tvs = (float((piv["TLG"] < piv["SBM"]).mean())
+           if {"TLG", "SBM"} <= set(piv.columns) else float("nan"))
+    agg = []
+    for fam in FAMILIES:
+        sub = per[per["model"] == fam]
+        if not len(sub):
+            continue
+        agg.append(dict(dataset=dataset, model=fam, n_graphs=int(sub["file"].nunique()),
+                        win_rate=float((sub["kl_rank"] == 1).mean()),
+                        mean_kl_rank=float(sub["kl_rank"].mean()),
+                        median_kl=float(sub["kl"].median()),
+                        tlg_beats_sbm=(tvs if fam == "TLG" else float("nan"))))
+    summ = pd.DataFrame(agg).sort_values("mean_kl_rank")
+    summ.to_csv(odir / "summary.csv", index=False)
+    return summ
+
+
+def _report_overall(datasets):
+    """Per-dataset family KL rankings + an OVERALL ranking macro-averaged across datasets
+    (each dataset weighted equally, so human's 975 graphs don't drown twitch's 6)."""
+    summaries = []
+    for ds in datasets:
+        summ = _aggregate_dataset(ds)
+        if summ is None:
+            continue
+        summaries.append(summ)
+        ng = int(summ["n_graphs"].max())
+        tvs = float(summ[summ["model"] == "TLG"]["tlg_beats_sbm"].iloc[0])
+        log(f"\n=== [{ds}] {ng} graphs — family KL ranking (mean rank; win_rate = % ranked #1) ===")
+        log(summ.drop(columns=["tlg_beats_sbm"]).to_string(index=False))
+        log(f"  TLG beats SBM on raw KL: {tvs*100:.1f}% of {ds} graphs")
+    if not summaries:
+        return
+    alls = pd.concat(summaries, ignore_index=True)
+    macro = (alls.groupby("model")
+             .agg(datasets=("dataset", "nunique"),
+                  mean_win_rate=("win_rate", "mean"),
+                  mean_kl_rank=("mean_kl_rank", "mean"))
+             .sort_values("mean_kl_rank").reset_index())
+    OVERALL_OUT.mkdir(parents=True, exist_ok=True)
+    alls.to_csv(OVERALL_OUT / "per_dataset_summary.csv", index=False)
+    macro.to_csv(OVERALL_OUT / "overall_kl_ranking.csv", index=False)
+    log(f"\n{'='*70}\n=== OVERALL family KL ranking across {len(summaries)} datasets "
+        f"(macro-averaged; lower mean rank = better) ===")
+    log(macro.to_string(index=False))
+    log(f"\nWrote {OVERALL_OUT}/")
+
+
+def _run_pool(tasks, workers, label):
+    """Drive a single spawn Pool over the given (dataset, ...) tasks, streaming the full
+    family KL ranking per network. This is the shared engine for both the single-dataset
+    sweep and the all-datasets run (one global pool -> parallel across datasets AND across
+    networks, with load balancing)."""
+    n_total = len(tasks)
+    log(f"latent-TLG SWEEP [{label}]: {n_total} networks | {workers} workers | "
+        f"quick={QUICK} NRUNS={NRUNS} kernels={KERNELS} klist={KLIST} seed={SEED} "
+        f"(reproducible: fixed seeds, results cached per network)")
+    counts = dict(done=0, cached=0, skipped=0, error=0)
+    t0 = time.perf_counter()
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(workers) as pool:
+        for i, (status, ds, nid, info) in enumerate(
+                pool.imap_unordered(_sweep_worker, tasks, chunksize=1), 1):
+            counts[status if status in counts else "error"] += 1
+            if status in ("done", "cached") and isinstance(info, dict):
+                rn = (info.get("real") or {}).get("nodes", "?")
+                log(f"  [{i}/{n_total}] {status} {ds}/{nid} (n={rn}): {_ranked_kl_str(info)}")
+            elif status == "skipped":
+                log(f"  [{i}/{n_total}] skip {ds}/{nid} (n={info})")
+            elif status == "error":
+                log(f"  [{i}/{n_total}] ERROR {ds}/{nid}: {info}")
+            if i % 20 == 0 or i == n_total:
+                el = time.perf_counter() - t0
+                eta = (n_total - i) / (i / el) if el > 0 else 0
+                log(f"  --- {i}/{n_total} | done {counts['done']} cached {counts['cached']} "
+                    f"skip {counts['skipped']} err {counts['error']} | "
+                    f"{el/60:.1f}m elapsed, ETA {eta/60:.1f}m ---")
+    log(f"\n[{label}] processed {n_total} in {(time.perf_counter()-t0)/60:.1f}m: {counts}")
+
+
+def run_sweep(dataset, workers=None):
+    """Cached/resumable parallel sweep over EVERY network of ONE dataset (networks fit in
+    parallel). Writes runs/tlg_latent_<dataset>_gic/{cache,per_graph.csv,summary.csv}."""
+    tasks = [(dataset, *t) for t in _sweep_enumerate(dataset)]
+    _run_pool(tasks, workers or SWEEP_WORKERS, dataset)
+    _report_overall([dataset])
+
+
+def run_sweep_multi(datasets, workers=None):
+    """Sweep MANY datasets in ONE global pool -> parallel across datasets AND across
+    networks within each dataset (better load balancing than per-dataset pools). Streams
+    per-network rankings, writes each dataset under its own runs/tlg_latent_<dataset>_gic/,
+    and prints the overall cross-dataset KL ranking."""
+    tasks = [(ds, *t) for ds in datasets for t in _sweep_enumerate(ds)]
+    _run_pool(tasks, workers or SWEEP_WORKERS, "+".join(datasets))
+    _report_overall(datasets)
