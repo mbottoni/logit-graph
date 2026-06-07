@@ -12,8 +12,10 @@ families and compare them with the spectral GIC = 2*KL(real||model) + 2*n_params
              (d, iteration) spectral fit, and a degenerate depth (whose generator blows
              past the edge guard and never scores) is excluded automatically. (AIC per
              d is reported for reference; note AIC can prefer the degenerate depth.)
-      - sigma, alpha : the intercept and degree coefficient, by logistic regression
-             on the real graph at d_hat;
+      - sigma, alpha : the intercept and degree coefficient — by logistic regression
+             (FIT_MODE=mle, the MLE) or by directly minimizing the GIC with a
+             warm-started Nelder-Mead search (FIT_MODE=gic), putting TLG on the same
+             min-GIC footing as the grid baselines;
       - GIC: grow a TLG graph at (sigma, alpha, d) from a VERY SPARSE seed, in two
              phases. Phase 1 (edge gate): densify until the TLG reaches a similar edge
              count to the real graph, E >= (1-EDGE_TOL)*E_real. Phase 2 (GIC patience):
@@ -44,6 +46,9 @@ Env knobs (all optional):
   LG_TLGT_P0 (0.001)       very sparse TLG seed density (growth densifies upward)
   LG_TLGT_EDGE_TOL (0.2)   phase-1 gate: start GIC monitoring once E >= (1-tol)*E_real
   LG_TLGT_EDGE_FACTOR (2)  guard: stop growth once edges exceed this multiple of E_real
+  LG_TLGT_FIT (mle)        "mle" (logistic) or "gic" (min-GIC Nelder-Mead search)
+  LG_TLGT_GIC_SEEDS (2)    growth seeds averaged per GIC objective eval (gic mode)
+  LG_TLGT_GIC_MAXITER (40) Nelder-Mead iteration cap (gic mode)
   LG_TLGT_SEED (12345)
   LG_TLGT_QUICK (0)        1 -> tiny (fewer steps/runs)
 
@@ -74,6 +79,15 @@ if str(_src) not in sys.path:
     sys.path.insert(0, str(_src))
 
 warnings.filterwarnings("ignore")
+try:
+    sys.stdout.reconfigure(line_buffering=True)  # stream progress live (no buffering)
+except Exception:
+    pass
+
+
+def log(*a):
+    print(*a, flush=True)
+
 
 from logit_graph.gic import GraphInformationCriterion  # noqa: E402
 from logit_graph.temporal import grow_graph, fit_growth_params  # noqa: E402
@@ -109,6 +123,9 @@ P0 = _float("LG_TLGT_P0", 0.001)  # very sparse ER seed; growth densifies upward
 EDGE_FACTOR = _float("LG_TLGT_EDGE_FACTOR", 2.0)  # stop growth if edges > FACTOR*E_real
 EDGE_TOL = _float("LG_TLGT_EDGE_TOL", 0.2)  # phase-1 gate: start GIC once E >= (1-tol)*E_real
 SEED = _int("LG_TLGT_SEED", 12345)
+FIT_MODE = os.environ.get("LG_TLGT_FIT", "mle")  # "mle" (logistic) | "gic" (min-GIC search)
+GIC_FIT_SEEDS = _int("LG_TLGT_GIC_SEEDS", 2)  # growth seeds averaged per GIC objective eval
+GIC_FIT_MAXITER = _int("LG_TLGT_GIC_MAXITER", 40)  # Nelder-Mead iteration cap
 
 FAMILIES = ["TLG", "ER", "BA", "WS", "KR", "GRG", "SBM"]
 
@@ -167,7 +184,7 @@ def _baseline_generators(G, cf):
     }
 
 
-def _grow_score(n, d, sigma, alpha, e_real, real_den, scorer):
+def _grow_score(n, d, sigma, alpha, e_real, real_den, scorer, seed=SEED):
     """Grow a TLG from a very sparse seed and score it against the real graph in two
     phases. Phase 1 (edge gate): densify until E >= (1-EDGE_TOL)*E_real. Phase 2 (GIC
     patience): monitor the spectral distance every step, keep the lowest-GIC iteration,
@@ -199,27 +216,73 @@ def _grow_score(n, d, sigma, alpha, e_real, real_den, scorer):
             no_improve += 1
         return no_improve >= PATIENCE
 
-    grow_graph(n, d=d, sigma=sigma, alpha=alpha, n_steps=MAXSTEPS, seed=SEED,
+    grow_graph(n, d=d, sigma=sigma, alpha=alpha, n_steps=MAXSTEPS, seed=seed,
                p0=P0, store_snapshots=False, record_design=False, step_callback=cb)
     return dict(dist=best["dist"], adj=best["adj"], step=best["step"],
                 phase2_start=phase["start"], trace=trace)
 
 
+def _gic_objective(sigma, alpha, d, n, e_real, real_den, scorer):
+    """Mean GIC over GIC_FIT_SEEDS growth seeds (large penalty if degenerate/unscored)."""
+    dists = []
+    for k in range(GIC_FIT_SEEDS):
+        gr = _grow_score(n, d, sigma, alpha, e_real, real_den, scorer, seed=SEED + 101 * k)
+        if gr["adj"] is not None:
+            dists.append(gr["dist"])
+    if not dists:
+        return 1e6
+    return 2.0 * float(np.mean(dists)) + 2.0 * TLG_N_PARAMS
+
+
 def fit_tlg(adj, real_den, scorer):
-    """For each candidate d: fit (sigma, alpha) by logistic regression, then grow +
-    edge-gated GIC-monitor. Select d (and its iteration) by the LOWEST GIC — n_params=2
-    is constant across d, so this is the best joint (d, iteration) spectral fit, and a
-    degenerate depth (which blows past the edge guard and never scores) is excluded
-    automatically. AIC per d is kept only for reference."""
+    """For each candidate d: get (sigma, alpha) — by logistic regression (FIT_MODE=mle)
+    or by minimizing the GIC with a warm-started Nelder-Mead search (FIT_MODE=gic) — then
+    grow + edge-gated GIC-monitor. Select d (and its iteration) by the LOWEST GIC;
+    n_params=2 is constant across d, so this is the best joint (d, iteration) spectral
+    fit, and a degenerate depth (blows past the edge guard, never scores) is excluded."""
     n = adj.shape[0]
     e_real = int(adj.sum() // 2)
     per_d = {}
     for d in DGRID:
+        t_d = time.perf_counter()
         X, labels = build_pair_dataset(adj, d=d, mode="bounded", layer2=True)
-        f = fit_growth_params(X, labels)
-        gr = _grow_score(n, d, f["sigma"], f["alpha"], e_real, real_den, scorer)
+        f = fit_growth_params(X, labels)            # MLE (also the gic warm start)
+        sigma, alpha = f["sigma"], f["alpha"]
+        gr = _grow_score(n, d, sigma, alpha, e_real, real_den, scorer)  # MLE growth
+        mle_kl = gr["dist"] if gr["adj"] is not None else float("inf")
+        log(f"    [d={d}] MLE σ={sigma:.3f} α={alpha:.4f} aic={f['aic']:.0f} -> "
+            f"growth {'KL=%.4f @step %d' % (mle_kl, gr['step']) if gr['adj'] is not None else 'no-score (gate not reached)'}")
+        # GIC search: only refine depths that already SCORE at the MLE warm start
+        # (a depth that can't reach the edge gate at the MLE can't be warm-started, and
+        # searching it would burn evals on full no-score growths).
+        if FIT_MODE == "gic" and gr["adj"] is not None:
+            from scipy.optimize import minimize
+            nev = {"n": 0}
+
+            def obj(x):
+                nev["n"] += 1
+                v = _gic_objective(x[0], x[1], d, n, e_real, real_den, scorer)
+                if nev["n"] % 10 == 0:
+                    log(f"      gic-search d={d}: eval {nev['n']} σ={x[0]:.3f} "
+                        f"α={x[1]:.4f} GIC={v:.4f}")
+                return v
+
+            log(f"    [d={d}] gic-search (Nelder-Mead, warm start MLE, "
+                f"<= {GIC_FIT_MAXITER} iters x {GIC_FIT_SEEDS} seeds) ...")
+            res = minimize(obj, x0=[sigma, alpha], method="Nelder-Mead",
+                           options={"maxiter": GIC_FIT_MAXITER, "xatol": 1e-2, "fatol": 1e-3})
+            gr2 = _grow_score(n, d, float(res.x[0]), float(res.x[1]),
+                              e_real, real_den, scorer)
+            if gr2["adj"] is not None and gr2["dist"] < gr["dist"]:  # keep if better
+                sigma, alpha, gr = float(res.x[0]), float(res.x[1]), gr2
+                log(f"    [d={d}] gic-fit improved: σ={sigma:.3f} α={alpha:.4f} "
+                    f"KL={gr['dist']:.4f} (MLE was {mle_kl:.4f}) in {nev['n']} evals")
+            else:
+                log(f"    [d={d}] gic-fit kept MLE (KL={mle_kl:.4f}) after {nev['n']} evals")
         gic = (2.0 * gr["dist"] + 2.0 * TLG_N_PARAMS) if gr["adj"] is not None else float("inf")
-        per_d[d] = dict(aic=f["aic"], sigma=f["sigma"], alpha=f["alpha"], gic=gic, **gr)
+        per_d[d] = dict(aic=f["aic"], sigma=sigma, alpha=alpha, gic=gic, **gr)
+        log(f"    [d={d}] done ({time.perf_counter() - t_d:.1f}s)  "
+            f"GIC={gic if np.isfinite(gic) else float('nan'):.4f}")
 
     scored = [d for d in DGRID if per_d[d]["adj"] is not None]
     d_hat = min(scored, key=lambda d: per_d[d]["gic"]) if scored else min(DGRID)
@@ -280,7 +343,7 @@ def process_region(region):
                      **tlg_m))
     gic_str = [f"{k}:{('%.2f' % v) if np.isfinite(v) else 'deg'}" for k, v in tlg['gic_by_d'].items()]
     aic_str = [f"{k}:{v:.0f}" for k, v in tlg['aic_by_d'].items()]
-    print(f"  TLG: d_hat={tlg['d_hat']} by GIC (per-d GIC {gic_str}; AIC {aic_str}) "
+    print(f"  TLG[{FIT_MODE}]: d_hat={tlg['d_hat']} by GIC (per-d GIC {gic_str}; AIC {aic_str}) "
           f"sigma={tlg['sigma']:.3f} alpha={tlg['alpha']:.4f} | phase2@step "
           f"{tlg['phase2_start']} best step {tlg['best_step']}  KL={tlg['dist']:.4f}  "
           f"GIC={tlg['gic']:.4f}")
