@@ -6,12 +6,15 @@ families and compare them with the spectral GIC = 2*KL(real||model) + 2*n_params
 (KL on the normalized-Laplacian spectral density; lower = better):
 
   * TLG (our model) — fit to the *whole* real graph (TLG is cheap, no subsampling):
-      - d  : the degree-feature depth, by AIC over candidates — RESTRICTED to depths
-             whose growth is non-degenerate (a cheap probe drops any depth whose
-             generator blows up toward the complete graph, the ERGM-style degeneracy);
+      - d  : the degree-feature depth, chosen by the LOWEST GIC over candidates — each
+             d is fit and grown, and the d (and growth iteration) with the smallest GIC
+             wins. Since n_params=2 is constant across d, this is the best joint
+             (d, iteration) spectral fit, and a degenerate depth (whose generator blows
+             past the edge guard and never scores) is excluded automatically. (AIC per
+             d is reported for reference; note AIC can prefer the degenerate depth.)
       - sigma, alpha : the intercept and degree coefficient, by logistic regression
              on the real graph at d_hat;
-      - GIC: grow a TLG graph at (sigma, alpha, d_hat) from a VERY SPARSE seed, in two
+      - GIC: grow a TLG graph at (sigma, alpha, d) from a VERY SPARSE seed, in two
              phases. Phase 1 (edge gate): densify until the TLG reaches a similar edge
              count to the real graph, E >= (1-EDGE_TOL)*E_real. Phase 2 (GIC patience):
              from there, monitor the spectral distance to the real graph every step and
@@ -164,48 +167,12 @@ def _baseline_generators(G, cf):
     }
 
 
-def _growth_stable(n, d, sigma, alpha, seed, probe_steps=15):
-    """Non-degenerate if growth from a very sparse seed never approaches a dense
-    graph. Sparse social-graph models settle far below density 0.5; an ERGM-style
-    degenerate chain shoots toward the complete graph. The probe stops early on a
-    blow-up, so degenerate depths stay cheap."""
-    bad = {"flag": False}
-
-    def cb(step, a):
-        if a.sum() / (n * (n - 1)) > 0.5:
-            bad["flag"] = True
-            return True
-        return False
-
-    grow_graph(n, d=d, sigma=sigma, alpha=alpha, n_steps=probe_steps, seed=seed,
-               p0=P0, store_snapshots=False, record_design=False, step_callback=cb)
-    return not bad["flag"]
-
-
-def fit_tlg(adj, real_den, scorer):
-    """d by AIC (restricted to non-degenerate depths), (sigma, alpha) by logistic
-    regression, GIC by growth from a very sparse seed monitored every iteration with
-    two stops: GIC patience, and an edge-count guard (stop if E > EDGE_FACTOR*E_real)."""
-    n = adj.shape[0]
-    e_real = int(adj.sum() // 2)
-    # --- fit every candidate d; keep AIC and a growth-stability flag ---
-    aic_by_d, fits, stable = {}, {}, {}
-    for d in DGRID:
-        X, labels = build_pair_dataset(adj, d=d, mode="bounded", layer2=True)
-        fits[d] = fit_growth_params(X, labels)
-        aic_by_d[d] = fits[d]["aic"]
-        stable[d] = _growth_stable(n, d, fits[d]["sigma"], fits[d]["alpha"], SEED)
-    # AIC d-selection RESTRICTED to depths whose growth is non-degenerate
-    candidates = [d for d in DGRID if stable[d]] or [min(DGRID, key=aic_by_d.get)]
-    d_hat = min(candidates, key=lambda d: aic_by_d[d])
-    sigma, alpha = fits[d_hat]["sigma"], fits[d_hat]["alpha"]
-
-    # --- GIC by monitored growth from a very sparse seed, in two phases ---
-    # Phase 1 (edge gate): grow until the TLG reaches a similar edge count to the
-    #   real graph, E >= (1-EDGE_TOL)*E_real (no GIC computed while still too sparse).
-    # Phase 2 (GIC patience): from there, monitor the spectral distance every step,
-    #   keep the lowest-GIC iteration, early-stop after PATIENCE non-improving steps.
-    # Safety guard: stop if the chain overshoots to E > EDGE_FACTOR*E_real.
+def _grow_score(n, d, sigma, alpha, e_real, real_den, scorer):
+    """Grow a TLG from a very sparse seed and score it against the real graph in two
+    phases. Phase 1 (edge gate): densify until E >= (1-EDGE_TOL)*E_real. Phase 2 (GIC
+    patience): monitor the spectral distance every step, keep the lowest-GIC iteration,
+    early-stop after PATIENCE non-improving steps. Guard: stop if E > EDGE_FACTOR*E_real
+    (a degenerate depth blows past the gate and never scores -> dist stays inf)."""
     best = {"dist": float("inf"), "adj": None, "step": -1}
     trace, no_improve = [], 0
     e_gate = (1.0 - EDGE_TOL) * e_real
@@ -220,7 +187,7 @@ def fit_tlg(adj, real_den, scorer):
         if not phase["two"]:
             if e < e_gate:                  # phase 1: still growing toward E_real
                 return False
-            phase["two"] = True             # reached the real edge scale
+            phase["two"] = True
             phase["start"] = step
         den, _ = scorer.compute_spectral_density(nx.from_numpy_array(a))
         dist = float(entropy(real_den + 1e-10, den + 1e-10))
@@ -232,19 +199,37 @@ def fit_tlg(adj, real_den, scorer):
             no_improve += 1
         return no_improve >= PATIENCE
 
-    grow_graph(n, d=d_hat, sigma=sigma, alpha=alpha, n_steps=MAXSTEPS, seed=SEED,
+    grow_graph(n, d=d, sigma=sigma, alpha=alpha, n_steps=MAXSTEPS, seed=SEED,
                p0=P0, store_snapshots=False, record_design=False, step_callback=cb)
+    return dict(dist=best["dist"], adj=best["adj"], step=best["step"],
+                phase2_start=phase["start"], trace=trace)
 
-    if best["adj"] is None:  # never reached the edge gate within MAXSTEPS
-        return dict(gic=np.nan, dist=np.nan, n_params=TLG_N_PARAMS, d_hat=d_hat,
-                    sigma=sigma, alpha=alpha, aic_by_d=aic_by_d, stable=stable,
-                    best_step=-1, phase2_start=-1, trace=trace, graph=None)
-    gic = 2.0 * best["dist"] + 2.0 * TLG_N_PARAMS
-    tlg_graph = nx.from_numpy_array(best["adj"])
-    return dict(gic=gic, dist=best["dist"], n_params=TLG_N_PARAMS, d_hat=d_hat,
-                sigma=sigma, alpha=alpha, aic_by_d=aic_by_d, stable=stable,
-                best_step=best["step"], phase2_start=phase["start"],
-                trace=trace, graph=tlg_graph)
+
+def fit_tlg(adj, real_den, scorer):
+    """For each candidate d: fit (sigma, alpha) by logistic regression, then grow +
+    edge-gated GIC-monitor. Select d (and its iteration) by the LOWEST GIC — n_params=2
+    is constant across d, so this is the best joint (d, iteration) spectral fit, and a
+    degenerate depth (which blows past the edge guard and never scores) is excluded
+    automatically. AIC per d is kept only for reference."""
+    n = adj.shape[0]
+    e_real = int(adj.sum() // 2)
+    per_d = {}
+    for d in DGRID:
+        X, labels = build_pair_dataset(adj, d=d, mode="bounded", layer2=True)
+        f = fit_growth_params(X, labels)
+        gr = _grow_score(n, d, f["sigma"], f["alpha"], e_real, real_den, scorer)
+        gic = (2.0 * gr["dist"] + 2.0 * TLG_N_PARAMS) if gr["adj"] is not None else float("inf")
+        per_d[d] = dict(aic=f["aic"], sigma=f["sigma"], alpha=f["alpha"], gic=gic, **gr)
+
+    scored = [d for d in DGRID if per_d[d]["adj"] is not None]
+    d_hat = min(scored, key=lambda d: per_d[d]["gic"]) if scored else min(DGRID)
+    r = per_d[d_hat]
+    graph = nx.from_numpy_array(r["adj"]) if r["adj"] is not None else None
+    return dict(gic=r["gic"], dist=r["dist"], n_params=TLG_N_PARAMS, d_hat=d_hat,
+                sigma=r["sigma"], alpha=r["alpha"], best_step=r["step"],
+                phase2_start=r["phase2_start"], trace=r["trace"], graph=graph,
+                aic_by_d={d: per_d[d]["aic"] for d in DGRID},
+                gic_by_d={d: per_d[d]["gic"] for d in DGRID})
 
 
 def baseline_gic(G, name, gen_fn, n_params, real_den, scorer, seed):
@@ -293,9 +278,10 @@ def process_region(region):
                      kl=tlg["dist"],
                      param=f"d={tlg['d_hat']}, σ={tlg['sigma']:.2f}, α={tlg['alpha']:.3f}",
                      **tlg_m))
-    aic_str = [f"{k}:{v:.0f}{'' if tlg['stable'][k] else '*'}" for k, v in tlg['aic_by_d'].items()]
-    print(f"  TLG: d_hat={tlg['d_hat']} (AIC {aic_str}; *=degenerate-growth, dropped)"
-          f" sigma={tlg['sigma']:.3f} alpha={tlg['alpha']:.4f} | phase2@step "
+    gic_str = [f"{k}:{('%.2f' % v) if np.isfinite(v) else 'deg'}" for k, v in tlg['gic_by_d'].items()]
+    aic_str = [f"{k}:{v:.0f}" for k, v in tlg['aic_by_d'].items()]
+    print(f"  TLG: d_hat={tlg['d_hat']} by GIC (per-d GIC {gic_str}; AIC {aic_str}) "
+          f"sigma={tlg['sigma']:.3f} alpha={tlg['alpha']:.4f} | phase2@step "
           f"{tlg['phase2_start']} best step {tlg['best_step']}  KL={tlg['dist']:.4f}  "
           f"GIC={tlg['gic']:.4f}")
 
