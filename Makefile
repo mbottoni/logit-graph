@@ -305,6 +305,17 @@ tlg-aic-d-quick:  ## Smoke run of the TLG AIC d-recovery experiment (~30s)
 	LG_TLGAIC_QUICK=1 \
 		$(UV) run python scripts/experiments/run_tlg_aic_d_recovery.py
 
+tlg-twitch-gic:  ## Fit Twitch nets with the TLG (d by AIC, sigma/alpha by logistic regression, GIC by edge-gated growth) vs closed-form ER/BA/WS/KR/GRG/SBM
+	$(UV) run python scripts/closedform/run_tlg_twitch_gic.py
+
+tlg-twitch-gic-all:  ## Same, all six Twitch country networks (PTBR..DE)
+	LG_TLGT_ALL=1 \
+		$(UV) run python scripts/closedform/run_tlg_twitch_gic.py
+
+tlg-twitch-gic-quick:  ## Smoke run of the TLG Twitch GIC experiment (PTBR, tiny)
+	LG_TLGT_QUICK=1 \
+		$(UV) run python scripts/closedform/run_tlg_twitch_gic.py
+
 tlg-convergence-diagnostics:  ## TLG (add+remove) convergence: chains from different initial densities mix to the same stationary distribution
 	$(UV) run python scripts/diagnostics/run_tlg_convergence_diagnostics.py
 
