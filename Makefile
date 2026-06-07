@@ -291,6 +291,13 @@ tlg-recovery-quick:  ## Smoke run of the TLG recovery experiment (d={0,1}, small
 	LG_TLG_QUICK=1 \
 		$(UV) run python scripts/experiments/run_tlg_recovery.py
 
+tlg-identifiability:  ## Unified latent-TLG identifiability: recover sigma,alpha,gamma_c,gamma_f,lambda vs n (MLE, add+remove)
+	$(UV) run python scripts/experiments/run_tlg_latent_identifiability.py
+
+tlg-identifiability-quick:  ## Smoke run of the latent-TLG identifiability experiment (1 scenario, small n, ~5s)
+	LG_TLI_QUICK=1 \
+		$(UV) run python scripts/experiments/run_tlg_latent_identifiability.py
+
 tlg-roc:  ## TLG ROC: group-difference tests on sigma AND alpha (effect-size + sample-size; single-graph Wald SE)
 	$(UV) run python scripts/experiments/run_tlg_roc_experiments.py
 
