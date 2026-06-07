@@ -323,6 +323,34 @@ tlg-twitch-gic-quick:  ## Smoke run of the TLG Twitch GIC experiment (PTBR, tiny
 	LG_TLGT_QUICK=1 \
 		$(UV) run python scripts/closedform/run_tlg_twitch_gic.py
 
+tlg-twitch-latent-gic:  ## Latent-TLG GIC (degree+community+latent) vs ER/BA/WS/KR/GRG/SBM on Twitch
+	$(UV) run python scripts/closedform/run_tlg_twitch_latent_gic.py
+
+tlg-twitter-latent-gic:  ## Latent-TLG GIC on a Twitter ego network
+	$(UV) run python scripts/closedform/run_tlg_twitter_latent_gic.py
+
+tlg-facebook-latent-gic:  ## Latent-TLG GIC on a Facebook ego network
+	$(UV) run python scripts/closedform/run_tlg_facebook_latent_gic.py
+
+tlg-arxiv-latent-gic:  ## Latent-TLG GIC on the arXiv HEP-Th citation network (BFS subgraph)
+	$(UV) run python scripts/closedform/run_tlg_arxiv_latent_gic.py
+
+tlg-gplus-latent-gic:  ## Latent-TLG GIC on a Google+ ego network (BFS subgraph)
+	$(UV) run python scripts/closedform/run_tlg_gplus_latent_gic.py
+
+tlg-connectome-latent-gic:  ## Latent-TLG GIC on an animal connectome (C. elegans)
+	$(UV) run python scripts/closedform/run_tlg_connectome_latent_gic.py
+
+tlg-human-latent-gic:  ## Latent-TLG GIC on a human connectome (OASIS3 brain)
+	$(UV) run python scripts/closedform/run_tlg_human_latent_gic.py
+
+tlg-all-latent-gic:  ## Latent-TLG GIC across all datasets + combined cross-dataset KL-rank summary
+	$(UV) run python scripts/closedform/run_tlg_all_latent_gic.py
+
+tlg-all-latent-gic-quick:  ## Smoke run of the latent-TLG GIC across all datasets (tiny)
+	LG_TLM_QUICK=1 \
+		$(UV) run python scripts/closedform/run_tlg_all_latent_gic.py
+
 tlg-convergence-diagnostics:  ## TLG (add+remove) convergence: chains from different initial densities mix to the same stationary distribution
 	$(UV) run python scripts/diagnostics/run_tlg_convergence_diagnostics.py
 
