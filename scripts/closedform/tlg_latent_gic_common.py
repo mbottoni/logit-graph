@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
-"""Fit a representative network from each dataset with the unified Temporal Logit-Graph
-(TLG) and rank families by the spectral GIC / raw KL.
+"""Shared machinery for the per-dataset latent-TLG GIC experiments.
+
+This module holds the unified Temporal Logit-Graph (TLG) fit + the baseline families +
+the (lossless) performance optimizations; the per-dataset entry points
+(run_tlg_<dataset>_latent_gic.py) only supply a loader and call :func:`run_one`. Run all
+datasets + a combined ranking with run_tlg_all_latent_gic.py.
+
+Fit a representative network from a dataset with the unified Temporal Logit-Graph (TLG)
+and rank families by the spectral GIC / raw KL.
 
 The TLG here is the IDENTIFIABLE, SBM-beating model with three exogenous feature groups
 (all recoverable by MLE in the add+remove Bernoulli model — validated on synthetic data;
@@ -86,7 +93,7 @@ from logit_graph.lg_features import build_pair_dataset  # noqa: E402
 from logit_graph.sbm import generate_sbm_from_real  # noqa: E402
 import run_tlg_twitch_gic as tw  # noqa: E402  (closed_form_params, _baseline_generators, _community_feature)
 
-OUT_DIR = _here / "runs" / "tlg_multidataset_gic"
+OUT_DIR = _here / "runs" / "tlg_latent_gic"
 DATA = _repo_root / "data"
 
 
@@ -351,10 +358,10 @@ def baseline_gic(G, gen_fn, n_params, real_den, scorer):
 
 
 # --------------------------------------------------------------------------- driver
-def process_dataset(name):
+def process_dataset(name, loader):
     t0 = time.perf_counter()
     try:
-        G = DATASETS[name]()
+        G = loader()
     except Exception as ex:
         log(f"  {name}: load failed ({ex}) — skipping")
         return None
@@ -408,20 +415,58 @@ def process_dataset(name):
             "gic_penalty", "n_params", "edges", "density", "clustering",
             "assortativity", "param"]
     df[cols].to_csv(OUT_DIR / f"{name}_table.csv", index=False)
+    _plot_bar(df, name, OUT_DIR / f"{name}_gic_bar.png")
     log(df[cols].to_string(index=False))
     log(f"  ({time.perf_counter()-t0:.1f}s)")
     return df[cols]
 
 
-def main():
-    sel = os.environ.get("LG_TLM_DATASETS")
-    names = sel.split(",") if sel else list(DATASETS)
-    log(f"TLG multi-dataset GIC (unified D+community+latent, fair ensemble-mean KL)  "
-        f"quick={QUICK} datasets={names} NRUNS={NRUNS} cap={CAP} K={TLG_K} "
-        f"search={SEARCH} klist={KLIST} seed={SEED}")
+# --------------------------------------------------------------------------- plot
+CB = {"TLG": "#0072B2", "ER": "#E69F00", "BA": "#009E73", "WS": "#CC79A7",
+      "KR": "#D55E00", "GRG": "#56B4E9", "SBM": "#000000"}
+
+
+def _plot_bar(df, name, out_path):
+    """GIC by family (ranked; stacked 2*KL fit + 2*n_params penalty terms)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    m = df[df["model"] != "Real"].sort_values("gic")
+    fig, ax = plt.subplots(figsize=(8, 4.6))
+    x = range(len(m))
+    ax.bar(x, m["gic_fit"], color=[CB.get(mm, "#888") for mm in m["model"]],
+           label="2·KL (fit)")
+    ax.bar(x, m["gic_penalty"], bottom=m["gic_fit"], color="#cccccc",
+           label="2·n_params (penalty)", edgecolor="white")
+    ax.set_xticks(list(x)); ax.set_xticklabels(m["model"])
+    ax.set_ylabel("GIC  (= 2·KL + 2·n_params)")
+    ax.set_title(f"{name}: GIC by family (lower = better; stacked terms)")
+    ax.legend(fontsize=9); ax.grid(alpha=0.25, axis="y")
+    for i, (_, r) in enumerate(m.iterrows()):
+        ax.text(i, r["gic"], f"{r['gic']:.2f}", ha="center", va="bottom", fontsize=8)
+    fig.tight_layout(); fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------- runners
+def run_one(name, loader):
+    """Run the latent-TLG GIC comparison for a single dataset (the per-dataset entry
+    point). Writes <name>_table.csv + <name>_gic_bar.png under OUT_DIR."""
+    log(f"latent-TLG GIC [{name}] (unified D+community+latent, fair ensemble-mean KL)  "
+        f"quick={QUICK} NRUNS={NRUNS} cap={CAP} K={TLG_K} search={SEARCH} "
+        f"kernels={KERNELS} klist={KLIST} fast_spectral={FAST_SPECTRAL} seed={SEED}")
+    return process_dataset(name, loader)
+
+
+def run_all(names=None):
+    """Run every selected dataset and write a combined cross-dataset KL-rank summary."""
+    names = names or (os.environ.get("LG_TLM_DATASETS").split(",")
+                      if os.environ.get("LG_TLM_DATASETS") else list(DATASETS))
+    log(f"latent-TLG GIC [ALL] datasets={names} quick={QUICK} NRUNS={NRUNS} cap={CAP} "
+        f"K={TLG_K} search={SEARCH} kernels={KERNELS} klist={KLIST} seed={SEED}")
     tables = []
     for name in names:
-        t = process_dataset(name)
+        t = process_dataset(name, DATASETS[name])
         if t is not None:
             tables.append(t)
     if not tables:
@@ -453,7 +498,3 @@ def main():
         log(f"  {ds:12} TLG={t:.4f} SBM={s:.4f} -> {w}")
     log(f"  TLG beats SBM on {nwin}/{len(wins)} datasets (raw KL)")
     log(f"\nWrote {OUT_DIR}/")
-
-
-if __name__ == "__main__":
-    main()
