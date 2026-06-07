@@ -139,6 +139,22 @@ def test_until_convergence_still_recovers_params():
     assert abs(out["alpha"] - 0.05) < 0.03
 
 
+def test_step_callback_observes_and_early_stops():
+    """step_callback sees every step's adjacency and can stop growth early."""
+    seen = []
+
+    def cb(step, adj):
+        seen.append((step, int(adj.sum() // 2)))  # (step, edge count)
+        return step == 2  # stop after step index 2 (the 3rd step)
+
+    res = grow_graph(60, d=0, sigma=-2.0, alpha=0.05, n_steps=20, seed=1,
+                     step_callback=cb)
+    assert [s for s, _ in seen] == [0, 1, 2]  # stopped early at step 2
+    assert res.params["n_steps_run"] == 3
+    # callback received live adjacencies with edges present
+    assert seen[-1][1] > 0
+
+
 def test_equilibrium_path_untouched():
     """Sanity: the equilibrium API still imports and runs (additive change)."""
     from logit_graph import simulate_graph

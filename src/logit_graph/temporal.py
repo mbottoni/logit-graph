@@ -104,6 +104,7 @@ def grow_graph(
     esd_tol: float = 1e-2,
     patience: int = 3,
     esd_nbins: int = 50,
+    step_callback=None,
 ) -> GrowthResult:
     """Grow a temporal Logit-Graph from a sparse ER seed (degree-only model).
 
@@ -130,6 +131,11 @@ def grow_graph(
     is reliable for moderately large graphs (n ≳ 300); for small graphs the ESD itself
     fluctuates between independent draws, so the noise floor is high and convergence
     may not trigger before the cap.
+
+    ``step_callback`` is an optional ``callable(step, adj) -> bool`` invoked after each
+    step with the live adjacency (copy it to retain). Returning True stops growth
+    early — e.g. a caller streaming a GIC-vs-iteration trace with its own early stop,
+    without storing every snapshot.
     """
     rng = np.random.default_rng(seed)
     rows, cols = np.triu_indices(n, k=1)
@@ -184,10 +190,17 @@ def grow_graph(
                 n_steps_run = step + 1
                 break
 
+        # Generic per-step observer: receives (step, live adj) — copy if retaining.
+        # Returning True stops growth early (e.g. GIC early-stopping by a caller).
+        if step_callback is not None and step_callback(step, adj):
+            n_steps_run = step + 1
+            break
+
     X = np.vstack(Xs) if Xs else np.empty((0, 1), dtype=np.float64)
     y = np.concatenate(ys) if ys else np.empty(0, dtype=np.int8)
     params = dict(n=n, d=d, sigma=sigma, alpha=alpha, n_steps=n_steps,
-                  degree_mode=degree_mode, p0=p0, allow_removal=allow_removal)
+                  degree_mode=degree_mode, p0=p0, allow_removal=allow_removal,
+                  n_steps_run=n_steps_run)
     if until_convergence:
         params.update(until_convergence=True, esd_tol=esd_tol, patience=patience,
                       n_steps_run=n_steps_run, converged=converged,
