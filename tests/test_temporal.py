@@ -155,6 +155,27 @@ def test_step_callback_observes_and_early_stops():
     assert seen[-1][1] > 0
 
 
+def test_two_feature_grow_and_fit():
+    """beta enables the [D, C] two-feature model: design has 2 cols, fit returns beta."""
+    res = grow_graph(120, d=1, sigma=-3.0, alpha=0.1, beta=0.5, n_steps=4, seed=1)
+    assert res.X.shape[1] == 2  # [D, C]
+    assert res.params["beta"] == 0.5
+    out = fit_growth_from_result(res)
+    assert out["n_params"] == 3
+    for key in ("sigma", "alpha", "beta", "se_beta"):
+        assert key in out and np.isfinite(out[key])
+
+
+def test_struct_feature_adds_clustering():
+    """The clustering feature (beta>0, triadic closure) raises clustering vs degree-only."""
+    import networkx as nx
+    deg = grow_graph(160, d=1, sigma=-2.0, alpha=0.05, n_steps=6, seed=3)
+    two = grow_graph(160, d=1, sigma=-2.0, alpha=0.05, beta=1.5, n_steps=6, seed=3)
+    c_deg = nx.average_clustering(nx.from_numpy_array(deg.adj))
+    c_two = nx.average_clustering(nx.from_numpy_array(two.adj))
+    assert c_two > c_deg
+
+
 def test_equilibrium_path_untouched():
     """Sanity: the equilibrium API still imports and runs (additive change)."""
     from logit_graph import simulate_graph

@@ -37,6 +37,8 @@ from .offset_logit import aic_from_offset_fit
 
 # The feature carrying alpha (the degree slope).
 DEGREE_MODE: FeatureMode = "bounded"
+# The optional feature carrying beta (the clustering / triadic-closure slope, GWESP).
+STRUCT_MODE: FeatureMode = "incremental"
 
 
 def _adjacency_esd_kl(cur: np.ndarray, prev: np.ndarray, nbins: int = 50) -> float:
@@ -83,6 +85,21 @@ def _degree_feature(adj, d, degree_mode):
     return np.asarray(D, dtype=np.float64), np.asarray(labels, dtype=np.int8)
 
 
+def _struct_feature(adj, d, struct_mode):
+    """Structural / clustering feature (C, GWESP common-neighbors) over all pairs,
+    in the same upper-triangle order as :func:`_degree_feature`."""
+    C, _ = build_pair_dataset(adj, d=d, mode=struct_mode, layer2=True)
+    return np.asarray(C, dtype=np.float64)
+
+
+def two_feature_design(adj, d, *, degree_mode=DEGREE_MODE, struct_mode=STRUCT_MODE):
+    """Static [D, C] design + edge labels from one graph (for fitting sigma, alpha,
+    beta by ordinary logistic regression on a real graph)."""
+    D, labels = _degree_feature(adj, d, degree_mode)
+    C = _struct_feature(adj, d, struct_mode)
+    return np.column_stack([D, C]), labels
+
+
 # ---------------------------------------------------------------------------
 # Generation
 # ---------------------------------------------------------------------------
@@ -105,8 +122,15 @@ def grow_graph(
     patience: int = 3,
     esd_nbins: int = 50,
     step_callback=None,
+    beta: float | None = None,
+    struct_mode: FeatureMode = STRUCT_MODE,
 ) -> GrowthResult:
-    """Grow a temporal Logit-Graph from a sparse ER seed (degree-only model).
+    """Grow a temporal Logit-Graph from a sparse ER seed (degree-only by default).
+
+    With ``beta`` given, the model adds a clustering / triadic-closure feature C
+    (GWESP common-neighbors, ``struct_mode``): logit = sigma + alpha*D + beta*C. The
+    pooled design then has two columns [D, C] and C induces real clustering — the
+    structure a degree-only model misses. ``beta=None`` keeps the degree-only model.
 
     By default (``allow_removal=True``) each step resamples **every** dyad from the
     lagged probability — y_ij(t) ~ Bernoulli(expit(sigma + alpha*D_ij(t-1))), D read
@@ -157,13 +181,20 @@ def grow_graph(
     for step in range(n_steps):
         prev_adj = adj.copy() if until_convergence else None
         D, labels = _degree_feature(adj, d, degree_mode)
-        p = expit(sigma + alpha * D)
+        if beta is None:
+            logit = sigma + alpha * D
+            feat = D.reshape(-1, 1)
+        else:
+            C = _struct_feature(adj, d, struct_mode)
+            logit = sigma + alpha * D + beta * C
+            feat = np.column_stack([D, C])   # design columns [D, C]
+        p = expit(logit)
         draw = rng.random(p.shape[0]) < p
         if allow_removal:
             # Resample every dyad from the lagged probability: edges may form OR
             # dissolve. Design is over all dyads, outcome = the new state.
             if record_design:
-                Xs.append(D.reshape(-1, 1))
+                Xs.append(feat)
                 ys.append(draw.astype(np.int8))
             adj[:] = 0.0
             ki, kj = rows[draw], cols[draw]
@@ -173,7 +204,7 @@ def grow_graph(
             at_risk = labels == 0
             form = at_risk & draw
             if record_design:
-                Xs.append(D[at_risk].reshape(-1, 1))
+                Xs.append(feat[at_risk])
                 ys.append(form[at_risk].astype(np.int8))
             fi, fj = rows[form], cols[form]
             adj[fi, fj] = 1.0
@@ -196,11 +227,14 @@ def grow_graph(
             n_steps_run = step + 1
             break
 
-    X = np.vstack(Xs) if Xs else np.empty((0, 1), dtype=np.float64)
+    n_feat = 1 if beta is None else 2
+    X = np.vstack(Xs) if Xs else np.empty((0, n_feat), dtype=np.float64)
     y = np.concatenate(ys) if ys else np.empty(0, dtype=np.int8)
     params = dict(n=n, d=d, sigma=sigma, alpha=alpha, n_steps=n_steps,
                   degree_mode=degree_mode, p0=p0, allow_removal=allow_removal,
                   n_steps_run=n_steps_run)
+    if beta is not None:
+        params.update(beta=beta, struct_mode=struct_mode)
     if until_convergence:
         params.update(until_convergence=True, esd_tol=esd_tol, patience=patience,
                       n_steps_run=n_steps_run, converged=converged,
@@ -250,14 +284,19 @@ def growth_design_from_snapshots(
 
 
 def fit_growth_params(X: np.ndarray, labels: np.ndarray) -> dict:
-    """Fit logit(P[form]) = sigma + alpha*D by ordinary logistic regression.
+    """Fit logit(P[edge]) = sigma + alpha*D (+ beta*C) by ordinary logistic regression.
 
-    Returns sigma, alpha (and their SEs), the log-likelihood, AIC (k=2), and
-    n_params. This is the exact MLE for the growth model (dyad-independent given the
-    past), so the estimates are consistent.
+    Accepts a 1-column design [D] (degree-only) or a 2-column design [D, C] (degree +
+    clustering); ``beta``/``se_beta`` are returned only in the 2-column case. Returns
+    sigma, alpha (and SEs), the log-likelihood, AIC, and n_params (= 1 + #features).
+    This is the exact MLE for the growth model (dyad-independent given the past).
     """
     y = np.asarray(labels, dtype=int)
-    Xc = sm.add_constant(np.asarray(X, dtype=np.float64), has_constant="add")
+    Xa = np.asarray(X, dtype=np.float64)
+    if Xa.ndim == 1:
+        Xa = Xa.reshape(-1, 1)
+    n_feat = Xa.shape[1]
+    Xc = sm.add_constant(Xa, has_constant="add")
     res = None
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -276,17 +315,22 @@ def fit_growth_params(X: np.ndarray, labels: np.ndarray) -> dict:
     try:
         bse = np.asarray(res.bse, dtype=np.float64)
     except Exception:
-        bse = np.full(2, np.nan)
+        bse = np.full(1 + n_feat, np.nan)
     ll = float(res.llf)
-    return {
+    k = 1 + n_feat
+    out = {
         "sigma": float(params[0]),
         "alpha": float(params[1]),
         "se_sigma": float(bse[0]),
         "se_alpha": float(bse[1]),
         "ll": ll,
-        "aic": float(aic_from_offset_fit(params[0], ll, k=2.0)["aic"]),
-        "n_params": 2,
+        "aic": float(aic_from_offset_fit(params[0], ll, k=float(k))["aic"]),
+        "n_params": k,
     }
+    if n_feat >= 2:
+        out["beta"] = float(params[2])
+        out["se_beta"] = float(bse[2])
+    return out
 
 
 def fit_growth_from_result(result: GrowthResult) -> dict:
