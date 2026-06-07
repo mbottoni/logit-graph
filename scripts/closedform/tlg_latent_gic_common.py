@@ -44,7 +44,8 @@ by BFS ball for the big ones): twitch, twitter, facebook, arxiv-cit, gplus, conn
 
 Env knobs: LG_TLM_DATASETS (comma list; default all), LG_TLM_NRUNS (6),
 LG_TLM_CAP (1500 BFS cap), LG_TLM_K (30 growth batches), LG_TLM_SEARCH (30 NM iters),
-LG_TLM_KLIST (2,4,8 latent ranks to try), LG_TLM_FINE_RES (8), LG_TLM_SEED (12345),
+LG_TLM_KLIST (2,4,8 latent ranks to try), LG_TLM_DGRID (0,1 degree depths to select over),
+LG_TLM_FINE_RES (8), LG_TLM_SEED (12345),
 LG_TLM_QUICK (0 -> tiny smoke).
 """
 from __future__ import annotations
@@ -124,9 +125,10 @@ KERNELS = os.environ.get("LG_TLM_KERNELS", "dot,dist").split(",")  # latent kern
 FAST_SPECTRAL = os.environ.get("LG_TLM_FAST_SPECTRAL", "0") == "1"
 FINE_RES = _float("LG_TLM_FINE_RES", 8.0)
 SEED = _int("LG_TLM_SEED", 12345)
-DEG_D = 1   # the fast separable degree feature (_deg_feature_nonedges) assumes d=1
-assert DEG_D == 1, "the vectorized degree feature is specialized to d=1"
-TLG_N_PARAMS = 4
+DGRID = [int(x) for x in os.environ.get("LG_TLM_DGRID", "0,1").split(",")]  # degree depths
+assert all(dd in (0, 1) for dd in DGRID), "fast separable degree feature supports d in {0,1}"
+TLG_N_PARAMS = 4   # alpha, gc, gf, lam (d/kernel/rank are selected hyperparameters, uncounted)
+CACHE_VERSION = 2   # bump to invalidate stale per-network sweep caches (schema/fit changed)
 TUNE_SEEDS = range(4)
 EVAL_SEEDS = range(100, 100 + NRUNS)
 FAMILIES = ["TLG", "ER", "BA", "WS", "KR", "GRG", "SBM"]
@@ -230,13 +232,14 @@ def _spectral_density_fast(A, scorer):
     return scorer.compute_spectral_density(nx.from_numpy_array(A))
 
 
-def _deg_feature_nonedges(A, rows, cols, ne):
-    """Degree feature D_ij = log(1+S_i)+log(1+S_j) over the non-edge set, with
-    S_v^(1) = deg(v) + sum_{u~v} deg(u) = (deg + A @ deg)_v. For non-edges adj[i,j]=0, so
-    no layer-2 subtraction applies -> identical to build_pair_dataset(d=1, "bounded",
-    layer2=True) on those pairs (validated, maxdiff 0), but vectorized (no n^2 loop)."""
+def _deg_feature_nonedges(A, rows, cols, ne, d):
+    """Degree feature D_ij = log(1+S_i)+log(1+S_j) over the non-edge set. d=0: S_v=deg(v);
+    d=1: S_v=deg(v)+sum_{u~v}deg(u)=(deg+A@deg)_v. For non-edges adj[i,j]=0 -> no layer-2
+    subtraction -> identical to build_pair_dataset(d, "bounded", layer2=True) on those pairs
+    (validated, maxdiff 0), but vectorized (no n^2 loop). Only d in {0,1} (both separable)."""
     deg = A.sum(1)
-    f = np.log1p(deg + A @ deg)
+    S = deg if d == 0 else deg + A @ deg
+    f = np.log1p(S)
     return f[rows[ne]] + f[cols[ne]]
 
 
@@ -261,7 +264,7 @@ def _gmetrics(G):
 
 
 # --------------------------------------------------------------------------- TLG
-def _grow_one(n, rows, cols, alpha, gc, gf, lam, Bc, Bf, L, e_real, seed):
+def _grow_one(n, rows, cols, alpha, gc, gf, lam, Bc, Bf, L, e_real, seed, d):
     """One budgeted add-only growth to E_real; returns the final adjacency."""
     rng = np.random.default_rng(seed)
     A = np.zeros((n, n))
@@ -274,7 +277,7 @@ def _grow_one(n, rows, cols, alpha, gc, gf, lam, Bc, Bf, L, e_real, seed):
         if len(ne) == 0:
             break
         take = min(batch, e_real - cur, len(ne))
-        D_ne = _deg_feature_nonedges(A, rows, cols, ne)  # d=1 separable fast path
+        D_ne = _deg_feature_nonedges(A, rows, cols, ne, d)  # d in {0,1} separable fast path
         lo = alpha * D_ne + gc * Bc[ne] + gf * Bf[ne] + lam * L[ne]
         w = np.exp(lo - lo.max()); w /= w.sum()
         # underflow guard: when the softmax is so peaked that fewer than `take` weights
@@ -287,7 +290,7 @@ def _grow_one(n, rows, cols, alpha, gc, gf, lam, Bc, Bf, L, e_real, seed):
     return A
 
 
-def _ensemble_kl(x, n, rows, cols, Bc, Bf, L, e_real, scorer, real_den, seeds,
+def _ensemble_kl(x, n, rows, cols, Bc, Bf, L, e_real, scorer, real_den, seeds, d,
                  want_graph=False):
     """KL of the ENSEMBLE-MEAN spectral density over `seeds` growth draws (SBM's
     estimator). Returns (kl, representative_graph_or_None)."""
@@ -295,7 +298,7 @@ def _ensemble_kl(x, n, rows, cols, Bc, Bf, L, e_real, scorer, real_den, seeds,
     dens, rep = [], None
     for s in seeds:
         A = _grow_one(n, rows, cols, a, max(0.0, gc), max(0.0, gf), lam,
-                      Bc, Bf, L, e_real, s)
+                      Bc, Bf, L, e_real, s, d)
         dens.append(_spectral_density_fast(A, scorer)[0])
         if rep is None and want_graph:
             rep = nx.from_numpy_array(A)
@@ -305,52 +308,63 @@ def _ensemble_kl(x, n, rows, cols, Bc, Bf, L, e_real, scorer, real_den, seeds,
 
 
 def fit_tlg(G, scorer, real_den):
-    """Tune (alpha, gc, gf, lam) + latent rank k by min ensemble-KL on TUNE seeds; the
-    reported KL is scored on disjoint HELD-OUT seeds. alpha warm-started from the degree
-    MLE. All features exogenous/identifiable; n_params = 4 (coefficients only)."""
+    """Tune (alpha, gc, gf, lam) and SELECT the degree depth d in {0,1}, latent kernel, and
+    latent rank k by min ensemble-KL on TUNE seeds; the reported KL is scored on disjoint
+    HELD-OUT seeds. alpha warm-started from the per-d degree MLE. All features exogenous /
+    identifiable; n_params = 4 (coefficients only — d/kernel/rank are selected
+    hyperparameters, not counted, like SBM's block count)."""
     n = G.number_of_nodes()
     adj = nx.to_numpy_array(G)
     e_real = G.number_of_edges()
     rows, cols = np.triu_indices(n, k=1)
     t0 = time.perf_counter()
-    Dr, lab = build_pair_dataset(adj, d=DEG_D, mode="bounded", layer2=True)
-    alpha0 = float(fit_growth_params(Dr, lab)["alpha"])
     Bc, kc = tw._community_feature(G, rows, cols, SEED, resolution=1.0)
     Bf, kf = tw._community_feature(G, rows, cols, SEED, resolution=FINE_RES)
     w_eig, U_eig = np.linalg.eigh(adj)   # ASE embedding computed ONCE, sliced per (k,kind)
-    log(f"    TLG fit: n={n} E={e_real} α0={alpha0:.3f} comms(coarse={kc},fine={kf}); "
-        f"latent kernels {KERNELS} x k in {KLIST}; tuning by min ensemble-KL ...")
+    log(f"    TLG fit: n={n} E={e_real} comms(coarse={kc},fine={kf}); selecting "
+        f"d in {DGRID} x kernels {KERNELS} x k in {KLIST} by min ensemble-KL ...")
 
     best = {"kl": float("inf")}
-    for kind in KERNELS:
-        for k in KLIST:
-            L = _latent_from_eig(w_eig, U_eig, k, rows, cols, kind)
-            nev = {"n": 0}
+    trace = []                       # every (d, kernel, k) config tried, for the JSON cache
+    for d in DGRID:
+        Dr, lab = build_pair_dataset(adj, d=d, mode="bounded", layer2=True)
+        alpha0 = float(fit_growth_params(Dr, lab)["alpha"])   # per-d degree-MLE warm start
+        for kind in KERNELS:
+            for k in KLIST:
+                L = _latent_from_eig(w_eig, U_eig, k, rows, cols, kind)
+                nev = {"n": 0}
 
-            def obj(x):
-                nev["n"] += 1
-                kl, _ = _ensemble_kl(x, n, rows, cols, Bc, Bf, L, e_real, scorer,
-                                     real_den, TUNE_SEEDS)
-                return kl
+                def obj(x, d=d, L=L):
+                    nev["n"] += 1
+                    kl, _ = _ensemble_kl(x, n, rows, cols, Bc, Bf, L, e_real, scorer,
+                                         real_den, TUNE_SEEDS, d)
+                    return kl
 
-            res = minimize(obj, x0=[alpha0, 2.0, 3.0, 2.0], method="Nelder-Mead",
-                           options={"maxiter": SEARCH, "xatol": 0.1, "fatol": 3e-4})
-            kl_eval, rep = _ensemble_kl(res.x, n, rows, cols, Bc, Bf, L, e_real,
-                                        scorer, real_den, EVAL_SEEDS, want_graph=True)
-            log(f"      {kind} k={k}: tuneKL={res.fun:.4f} evalKL={kl_eval:.4f} "
-                f"(α={res.x[0]:.2f} γc={res.x[1]:.2f} γf={res.x[2]:.2f} λ={res.x[3]:.2f}) "
-                f"{nev['n']} evals")
-            if kl_eval < best["kl"]:
-                best = dict(kl=kl_eval, k=k, kind=kind, x=res.x, graph=rep)
+                res = minimize(obj, x0=[alpha0, 2.0, 3.0, 2.0], method="Nelder-Mead",
+                               options={"maxiter": SEARCH, "xatol": 0.1, "fatol": 3e-4})
+                kl_eval, rep = _ensemble_kl(res.x, n, rows, cols, Bc, Bf, L, e_real,
+                                            scorer, real_den, EVAL_SEEDS, d, want_graph=True)
+                trace.append(dict(d=int(d), kernel=kind, k=int(k),
+                                  tune_kl=float(res.fun), eval_kl=float(kl_eval),
+                                  gic=float(2.0 * kl_eval + 2.0 * TLG_N_PARAMS),
+                                  alpha=float(res.x[0]), gc=float(max(0.0, res.x[1])),
+                                  gf=float(max(0.0, res.x[2])), lam=float(res.x[3]),
+                                  n_evals=int(nev["n"])))
+                log(f"      d={d} {kind} k={k}: tuneKL={res.fun:.4f} evalKL={kl_eval:.4f} "
+                    f"(α={res.x[0]:.2f} γc={res.x[1]:.2f} γf={res.x[2]:.2f} "
+                    f"λ={res.x[3]:.2f}) {nev['n']} evals")
+                if kl_eval < best["kl"]:
+                    best = dict(kl=kl_eval, d=d, k=k, kind=kind, x=res.x, graph=rep)
 
     x = best["x"]
     gic = 2.0 * best["kl"] + 2.0 * TLG_N_PARAMS
-    param = (f"d={DEG_D}, {best['kind']} k={best['k']}, α={x[0]:.2f}, "
+    param = (f"d={best['d']}, {best['kind']} k={best['k']}, α={x[0]:.2f}, "
              f"γc={max(0,x[1]):.2f}, γf={max(0,x[2]):.2f}, λ={x[3]:.2f}")
-    log(f"    TLG: best {best['kind']} k={best['k']} KL={best['kl']:.4f} GIC={gic:.4f} "
-        f"({time.perf_counter()-t0:.1f}s)")
+    log(f"    TLG: best d={best['d']} {best['kind']} k={best['k']} KL={best['kl']:.4f} "
+        f"GIC={gic:.4f} ({time.perf_counter()-t0:.1f}s)")
     return dict(gic=gic, kl=best["kl"], n_params=TLG_N_PARAMS, graph=best["graph"],
-                param=param)
+                param=param, trace=trace,
+                selected=dict(d=best["d"], kernel=best["kind"], k=best["k"]))
 
 
 def baseline_gic(G, gen_fn, n_params, real_den, scorer):
@@ -584,9 +598,11 @@ def _sweep_worker(task):
     skip = cdir / f"{nid}.skip"
     if done.exists():
         try:
-            return ("cached", dataset, nid, json.loads(done.read_text()))
+            cached = json.loads(done.read_text())
+            if cached.get("cache_version") == CACHE_VERSION:
+                return ("cached", dataset, nid, cached)
         except Exception:
-            pass
+            pass  # malformed/old-version cache -> refit below
     if skip.exists():
         return ("skipped", dataset, nid, None)
     try:
@@ -618,7 +634,11 @@ def _sweep_worker(task):
                     fams.append(dict(model=fam, kl=float(res["kl"]), gic=float(res["gic"]),
                                      n_params=int(res["n_params"]),
                                      **_gmetrics(res.get("graph"))))
-        result = dict(dataset=dataset, id=nid, real=_metrics(G), families=fams)
+        result = dict(cache_version=CACHE_VERSION, dataset=dataset, id=nid,
+                      real=_metrics(G), families=fams,
+                      tlg_selected=tlg["selected"],   # chosen (d, kernel, k)
+                      tlg_trace=tlg["trace"])         # every (d,kernel,k) config: tune/eval KL, GIC, coeffs
+
         cdir.mkdir(parents=True, exist_ok=True)
         done.write_text(json.dumps(result))
         return ("done", dataset, nid, result)
