@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Family-fingerprint dimensionality-reduction experiment on Twitch.
+"""Family-fingerprint dimensionality-reduction experiment (LG_DR_DATASET: twitch, connectome,
+...; any dataset tlg_latent_gic_common knows).
 
-For each Twitch country graph (largest CC, BFS-capped to ~1500 nodes — the same subgraph
+For each network of the dataset (largest CC, BFS-capped to ~1500 nodes — the same subgraph
 the closed-form / latent-TLG experiments use), we:
 
   1. Estimate each family's parameters with the SAME closed-form estimation as
@@ -13,11 +14,11 @@ the closed-form / latent-TLG experiments use), we:
      then iteratively drop the highest-VIF feature until every feature has VIF<VIF_THRESH.
   3. Cache every cell (estimated params, features, n, edges, seed) so reruns resume.
   4. Embed (PCA/t-SNE/UMAP, fit PER NETWORK on StandardScaler-normalized features) and plot
-     each family as its DENSITY REGION (2-sigma covariance ellipse); only the real graph is
-     drawn as a point (★). The embeddings are fit per network so the strong per-region
+     each family as its DENSITY REGION (2-sigma covariance ellipse) + its points; the real
+     graph is the highlighted ★. The embeddings are fit per network so the strong per-network
      structure differences don't split a family into separate sub-clusters.
 
-Output under runs/tlg_dimred_twitch/ (gitignored):
+Output under runs/tlg_dimred_<DATASET>/ (gitignored):
   cache/<region>_<family>_<rep>.json   per-graph record (resumable)
   features.csv          all graphs x (raw features + meta)
   kept_features.txt     the non-colinear feature subset; colinearity.png (candidates vs kept)
@@ -25,11 +26,14 @@ Output under runs/tlg_dimred_twitch/ (gitignored):
   dimred_main.{png,pdf} MAIN figure: one panel per network (LG_DR_MAIN_METHOD), family
                         density regions + real ★ + dashed line to nearest family centroid
   dimred_per_graph.{png,pdf}  supplement: rows = network, cols = PCA/t-SNE/UMAP
-  dimred_distance.{png,pdf} + distance_to_real.csv  QUANTITATIVE: distance from the real
-                        graph to each family centroid (heatmap, closest boxed; mean-rank bar)
+  dimred_distance.{png,pdf} + distance_to_real.csv  QUANTITATIVE: heatmap of the distance
+                        from the real graph to each family centroid (raw Euclidean in the
+                        standardized feature space, NOT a dim-red result; closest boxed),
+                        beside one dim-red embedding (LG_DR_DIST_METHOD) of the focus network
 
-Env: LG_DR_REGIONS (all 6), LG_DR_NREPS (10), LG_DR_FAMILIES (ER,BA,WS,KR,GRG,SBM,TLG),
-LG_DR_COLINEAR_THRESH (0.85), LG_DR_VIF_THRESH (5.0), LG_DR_MAIN_METHOD (t-SNE),
+Env: LG_DR_DATASET (twitch), LG_DR_NETWORKS (subset; default all), LG_DR_NREPS (10),
+LG_DR_FAMILIES (ER,BA,WS,KR,GRG,SBM,TLG), LG_DR_COLINEAR_THRESH (0.85), LG_DR_VIF_THRESH (5),
+LG_DR_MAIN_METHOD (t-SNE), LG_DR_FOCUS_REGION (network in the distance fig; default first),
 LG_DR_SEED (12345), LG_DR_TSNE_PERPLEXITY (30).
 """
 from __future__ import annotations
@@ -67,11 +71,6 @@ except Exception:
 import tlg_latent_gic_common as C  # noqa: E402  (loaders, latent-TLG sampler pieces, baselines)
 from logit_graph.sbm import generate_sbm_from_real  # noqa: E402
 
-OUT = _here / "runs" / "tlg_dimred_twitch"
-CACHE = OUT / "cache"
-DATA = _repo_root / "data" / "twitch" / "graphs_processed"
-
-
 def _int(env, d):
     v = os.environ.get(env); return int(v) if v else d
 
@@ -80,7 +79,23 @@ def _float(env, d):
     v = os.environ.get(env); return float(v) if v else d
 
 
-REGIONS = (os.environ.get("LG_DR_REGIONS") or "PTBR,RU,ES,ENGB,FR,DE").split(",")
+def _net_label(nid):
+    """Short display label for a network id (strip the '_graph' suffix Twitch files carry)."""
+    return nid[:-6] if nid.endswith("_graph") else nid
+
+
+# Dataset selection (any dataset tlg_latent_gic_common knows: twitch, connectome, ...). The
+# networks, loaders and the cached latent-TLG fits all come from C's dataset machinery.
+DATASET = os.environ.get("LG_DR_DATASET", "twitch")
+_NETS = C._sweep_enumerate(DATASET)              # (id, kind, arg, nmin, nmax) per network
+_sel = os.environ.get("LG_DR_NETWORKS")
+if _sel:
+    _want = set(_sel.split(","))
+    _NETS = [t for t in _NETS if t[0] in _want or _net_label(t[0]) in _want]
+NET_ORDER = [_net_label(t[0]) for t in _NETS]    # display labels, in order
+OUT = _here / "runs" / f"tlg_dimred_{DATASET}"
+CACHE = OUT / "cache"
+
 NREPS = _int("LG_DR_NREPS", 10)
 FAMILIES = (os.environ.get("LG_DR_FAMILIES") or "ER,BA,WS,KR,GRG,SBM,TLG").split(",")
 THRESH = _float("LG_DR_COLINEAR_THRESH", 0.85)   # pairwise |Pearson| pre-prune cutoff
@@ -89,6 +104,7 @@ SEED = _int("LG_DR_SEED", 12345)
 PERPLEXITY = _float("LG_DR_TSNE_PERPLEXITY", 30.0)
 MAIN_METHOD = os.environ.get("LG_DR_MAIN_METHOD", "t-SNE")  # method for the main figure
 FOCUS_REGION = os.environ.get("LG_DR_FOCUS_REGION", "")     # network shown in the distance fig
+DIST_METHOD = os.environ.get("LG_DR_DIST_METHOD", "UMAP")   # the single embedding shown there
 
 
 def log(*a):
@@ -164,18 +180,13 @@ def features(G):
 
 
 # --------------------------------------------------------------------------- generators
-def _load_region(region):
-    """Same BFS-capped largest-CC subgraph the closed-form / latent experiments use."""
-    return C._edges(str(DATA / f"{region}_graph.edges"))
-
-
-def _tlg_sampler(G, region):
-    """Reconstruct the cached latent-TLG fit for this region and return (sample_fn, params).
+def _tlg_sampler(G, net_id):
+    """Reconstruct the cached latent-TLG fit for this network and return (sample_fn, params).
     sample_fn(seed) -> nx.Graph by growing to E_real with the fitted (d,kernel,k,coeffs).
     Falls back to fitting fresh if the sweep cache is absent."""
     n = G.number_of_nodes(); adj = nx.to_numpy_array(G); e = G.number_of_edges()
     rows, cols = np.triu_indices(n, 1)
-    cache = C._out_dir("twitch") / "cache" / f"{region}_graph.json"
+    cache = C._out_dir(DATASET) / "cache" / f"{net_id}.json"
     if cache.exists():
         d = json.loads(cache.read_text()); sel = d["tlg_selected"]
         b = next(t for t in d["tlg_trace"]
@@ -200,7 +211,7 @@ def _tlg_sampler(G, region):
     return sample, params
 
 
-def _family_setup(G, region):
+def _family_setup(G, net_id):
     """Return {family: (sample_fn(seed)->Graph, est_params_dict)} for all families."""
     cf = C.tw.closed_form_params(G)
     gens = C.tw._baseline_generators(G, cf)
@@ -212,7 +223,7 @@ def _family_setup(G, region):
         setup[fam] = ((lambda s, gf=gen_fn: gf(s)), est[fam])
     _, sbm_np = generate_sbm_from_real(G, seed=SEED)
     setup["SBM"] = ((lambda s: generate_sbm_from_real(G, seed=s)[0]), {"n_params": int(sbm_np)})
-    tlg_fn, tlg_params = _tlg_sampler(G, region)
+    tlg_fn, tlg_params = _tlg_sampler(G, net_id)
     setup["TLG"] = (tlg_fn, tlg_params)
     return {f: setup[f] for f in FAMILIES if f in setup}
 
@@ -237,16 +248,21 @@ def _cell(region, family, rep, gen_fn, est_params):
 
 def generate_and_feature():
     records = []
-    for region in REGIONS:
+    for nid, kind, arg, nmin, nmax in _NETS:
+        label = _net_label(nid)
         t0 = time.perf_counter()
-        G = _load_region(region)
-        log(f"\n=== {region}: n={G.number_of_nodes()} E={G.number_of_edges()} ===")
-        # real graph
-        records.append(_cell(region, "real", 0, G, {}))
-        setup = _family_setup(G, region)
+        try:
+            G = C._sweep_load(kind, arg)
+        except Exception as ex:
+            log(f"  {label}: load failed ({ex}) — skipping"); continue
+        if not (nmin < G.number_of_nodes() < nmax):
+            log(f"  {label}: n={G.number_of_nodes()} out of range — skipping"); continue
+        log(f"\n=== {label}: n={G.number_of_nodes()} E={G.number_of_edges()} ===")
+        records.append(_cell(label, "real", 0, G, {}))   # real graph
+        setup = _family_setup(G, nid)
         for family, (gen_fn, est) in setup.items():
             for rep in range(NREPS):
-                records.append(_cell(region, family, rep, gen_fn, est))
+                records.append(_cell(label, family, rep, gen_fn, est))
             log(f"  {family:4} x{NREPS} done")
         log(f"  ({time.perf_counter()-t0:.1f}s)")
     return records
@@ -363,7 +379,7 @@ def _grid_figure(meta, F, keep):
     except Exception:
         has_umap = False
     methods = ["PCA", "t-SNE"] + (["UMAP"] if has_umap else [])
-    regions = [r for r in REGIONS if r in set(meta["region"])]
+    regions = [r for r in NET_ORDER if r in set(meta["region"])]
     fams = [f for f in FAMILIES if f in set(meta["family"])]
     color = {f: _fam_color(f) for f in fams}
 
@@ -385,10 +401,12 @@ def _grid_figure(meta, F, keep):
         region_embeds[region] = (emb, sub)
         for ci, method in enumerate(methods):
             ax = axes[ri][ci]; e = emb[method]
-            for f in fams:                       # families: density region only (no points)
+            for f in fams:                       # families: density region + the points
                 m = (sub["family"] == f).values
                 _cov_ellipse(ax, e[m, 0], e[m, 1], color[f])
-            m = (sub["family"] == "real").values   # real graph: the only plotted point
+                ax.scatter(e[m, 0], e[m, 1], s=13, alpha=0.75, color=color[f],
+                           marker=_fam_marker(f), edgecolors="white", linewidths=0.2, zorder=3)
+            m = (sub["family"] == "real").values   # real graph: the highlighted star
             ax.scatter(e[m, 0], e[m, 1], s=300, marker="*", color="black",
                        edgecolors="white", linewidths=1.2, zorder=6)
             ax.tick_params(labelbottom=False, labelleft=False, length=0)
@@ -435,9 +453,11 @@ def _main_figure(region_embeds, method):
         ax = axes.flat[idx]
         e, sub = region_embeds[region][0][method], region_embeds[region][1]
         cents = {}
-        for f in fams:                          # families: density region only (no points)
+        for f in fams:                          # families: density region + the points
             m = (sub["family"] == f).values
             _cov_ellipse(ax, e[m, 0], e[m, 1], color[f])
+            ax.scatter(e[m, 0], e[m, 1], s=16, alpha=0.75, color=color[f],
+                       marker=_fam_marker(f), edgecolors="white", linewidths=0.2, zorder=3)
             cents[f] = e[m].mean(0)
         m = (sub["family"] == "real").values
         rp = e[m][0]
@@ -470,7 +490,7 @@ def _distance_figure(meta, F, keep, region_embeds):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from sklearn.preprocessing import StandardScaler
-    regions = [r for r in REGIONS if r in set(meta["region"])]
+    regions = [r for r in NET_ORDER if r in set(meta["region"])]
     fams = [f for f in FAMILIES if f in set(meta["family"])]
     color = {f: _fam_color(f) for f in fams}
     D = np.full((len(regions), len(fams)), np.nan)
@@ -494,13 +514,13 @@ def _distance_figure(meta, F, keep, region_embeds):
 
     focus = FOCUS_REGION if FOCUS_REGION in region_embeds else regions[0]
     emb, sub = region_embeds[focus]
-    methods = list(emb)
+    method = DIST_METHOD if DIST_METHOD in emb else list(emb)[-1]
 
-    fig = plt.figure(figsize=(14, max(7.5, 2.6 * len(methods))))
-    gs = fig.add_gridspec(len(methods), 2, width_ratios=[2.0, 1.35],
-                          wspace=0.16, hspace=0.28)
-    # left: distance heatmap (spans all rows)
-    axh = fig.add_subplot(gs[:, 0])
+    fig = plt.figure(figsize=(14, max(5.5, 0.55 * len(regions) + 2.2)))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.7, 1.25], wspace=0.14)
+    # left: distance heatmap (NOT a dim-red result -- raw Euclidean distance in the
+    # standardized 7-D feature space, real graph -> family centroid)
+    axh = fig.add_subplot(gs[0, 0])
     H = Ddf[order]
     im = axh.imshow(H.values, aspect="auto", cmap="viridis")
     axh.set_xticks(range(len(order))); axh.set_xticklabels(order)
@@ -520,26 +540,29 @@ def _distance_figure(meta, F, keep, region_embeds):
     axh.set_title("Distance from real graph to each family centroid\n"
                   "(standardized feature space; red box = closest; dotted = focus network)")
     fig.colorbar(im, ax=axh, shrink=.85, label="Euclidean distance", pad=0.02)
-    # right: the dim-red embeddings for the focus network (stacked, one per method)
-    for mi, method in enumerate(methods):
-        ax = fig.add_subplot(gs[mi, 1])
-        e = emb[method]; cents = {}
-        for f in fams:
-            m = (sub["family"] == f).values
-            _cov_ellipse(ax, e[m, 0], e[m, 1], color[f]); cents[f] = e[m].mean(0)
-        m = (sub["family"] == "real").values; rp = e[m][0]
-        nearest = min(fams, key=lambda f: np.linalg.norm(rp - cents[f]))
-        ax.plot([rp[0], cents[nearest][0]], [rp[1], cents[nearest][1]], color="black",
-                lw=0.9, ls="--", alpha=0.6, zorder=4)
-        ax.scatter(rp[0], rp[1], s=240, marker="*", color="black", edgecolors="white",
-                   linewidths=1.1, zorder=6)
-        ax.set_title(method, fontsize=11, fontweight="bold")
-        ax.tick_params(labelbottom=False, labelleft=False, length=0); ax.grid(alpha=.18, lw=.5)
+    # right: ONE dim-red embedding for the focus network
+    ax = fig.add_subplot(gs[0, 1])
+    e = emb[method]; cents = {}
+    for f in fams:
+        m = (sub["family"] == f).values
+        _cov_ellipse(ax, e[m, 0], e[m, 1], color[f])
+        ax.scatter(e[m, 0], e[m, 1], s=24, alpha=0.78, color=color[f], marker=_fam_marker(f),
+                   edgecolors="white", linewidths=0.3, zorder=3)
+        cents[f] = e[m].mean(0)
+    m = (sub["family"] == "real").values; rp = e[m][0]
+    nearest = min(fams, key=lambda f: np.linalg.norm(rp - cents[f]))
+    ax.plot([rp[0], cents[nearest][0]], [rp[1], cents[nearest][1]], color="black",
+            lw=1.0, ls="--", alpha=0.6, zorder=4)
+    ax.scatter(rp[0], rp[1], s=320, marker="*", color="black", edgecolors="white",
+               linewidths=1.3, zorder=6)
+    ax.set_title(f"{focus} — {method}  (nearest: {nearest})", fontsize=12, fontweight="bold")
+    ax.tick_params(labelbottom=False, labelleft=False, length=0); ax.grid(alpha=.18, lw=.5)
     fig.legend(handles=_legend_handles(fams), loc="lower center", ncol=len(fams) + 1,
-               frameon=False, bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle(f"Distance-to-real (left) and the dim-red embeddings for the {focus} "
-                 f"network (right; family density regions, ★ = real graph)", fontsize=14, y=1.0)
-    fig.tight_layout(rect=[0, 0.04, 1, 0.97])
+               frameon=False, bbox_to_anchor=(0.5, -0.03))
+    fig.suptitle(f"Distance-to-real (left) and the {method} embedding for the {focus} "
+                 f"network (right; family density regions + points, ★ = real graph)",
+                 fontsize=14, y=1.0)
+    fig.tight_layout(rect=[0, 0.05, 1, 0.97])
     for ext in ("png", "pdf"):
         fig.savefig(OUT / f"dimred_distance.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -597,7 +620,7 @@ def dimred(records):
 
 
 def main():
-    log(f"TLG dim-red [twitch]: regions={REGIONS} families={FAMILIES} nreps={NREPS} "
+    log(f"TLG dim-red [{DATASET}]: networks={len(NET_ORDER)} families={FAMILIES} nreps={NREPS} "
         f"colinear_thresh={THRESH} seed={SEED}")
     records = generate_and_feature()
     dimred(records)
