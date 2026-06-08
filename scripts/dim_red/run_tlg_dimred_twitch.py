@@ -9,22 +9,28 @@ the closed-form / latent-TLG experiments use), we:
      latent degree+community+latent-ASE fit — reused from the cached sweep when available,
      else fit fresh), and GENERATE n=10 graphs per family.
   2. Compute ~20 candidate graph-level structural features per graph (generated + real),
-     then prune to a NON-COLINEAR subset (greedy |Pearson|<thresh) of ~10-20.
+     then prune to a NON-COLINEAR subset: drop one of any pair with |Pearson|>=THRESH,
+     then iteratively drop the highest-VIF feature until every feature has VIF<VIF_THRESH.
   3. Cache every cell (estimated params, features, n, edges, seed) so reruns resume.
-  4. Embed all graphs in 2D with PCA, t-SNE and UMAP and plot the per-family clusters with
-     the real graphs highlighted.
+  4. Embed (PCA/t-SNE/UMAP, fit PER NETWORK on StandardScaler-normalized features) and plot
+     each family as its DENSITY REGION (2-sigma covariance ellipse); only the real graph is
+     drawn as a point (★). The embeddings are fit per network so the strong per-region
+     structure differences don't split a family into separate sub-clusters.
 
 Output under runs/tlg_dimred_twitch/ (gitignored):
   cache/<region>_<family>_<rep>.json   per-graph record (resumable)
   features.csv          all graphs x (raw features + meta)
-  kept_features.txt     the non-colinear feature subset used for the embeddings
-  colinearity.png       feature correlation heatmap (candidates)
+  kept_features.txt     the non-colinear feature subset; colinearity.png (candidates vs kept)
   embeddings.csv        2D coords (region, family, rep, method, x, y) per graph
-  dimred_per_graph.png / .pdf   rows = Twitch network, cols = PCA/t-SNE/UMAP (fit per
-                                network so families don't split by region), ★ = real graph
+  dimred_main.{png,pdf} MAIN figure: one panel per network (LG_DR_MAIN_METHOD), family
+                        density regions + real ★ + dashed line to nearest family centroid
+  dimred_per_graph.{png,pdf}  supplement: rows = network, cols = PCA/t-SNE/UMAP
+  dimred_distance.{png,pdf} + distance_to_real.csv  QUANTITATIVE: distance from the real
+                        graph to each family centroid (heatmap, closest boxed; mean-rank bar)
 
 Env: LG_DR_REGIONS (all 6), LG_DR_NREPS (10), LG_DR_FAMILIES (ER,BA,WS,KR,GRG,SBM,TLG),
-LG_DR_COLINEAR_THRESH (0.9), LG_DR_SEED (12345), LG_DR_TSNE_PERPLEXITY (30).
+LG_DR_COLINEAR_THRESH (0.85), LG_DR_VIF_THRESH (5.0), LG_DR_MAIN_METHOD (t-SNE),
+LG_DR_SEED (12345), LG_DR_TSNE_PERPLEXITY (30).
 """
 from __future__ import annotations
 
@@ -77,9 +83,11 @@ def _float(env, d):
 REGIONS = (os.environ.get("LG_DR_REGIONS") or "PTBR,RU,ES,ENGB,FR,DE").split(",")
 NREPS = _int("LG_DR_NREPS", 10)
 FAMILIES = (os.environ.get("LG_DR_FAMILIES") or "ER,BA,WS,KR,GRG,SBM,TLG").split(",")
-THRESH = _float("LG_DR_COLINEAR_THRESH", 0.9)
+THRESH = _float("LG_DR_COLINEAR_THRESH", 0.85)   # pairwise |Pearson| pre-prune cutoff
+VIF_THRESH = _float("LG_DR_VIF_THRESH", 5.0)      # max variance-inflation factor kept
 SEED = _int("LG_DR_SEED", 12345)
 PERPLEXITY = _float("LG_DR_TSNE_PERPLEXITY", 30.0)
+MAIN_METHOD = os.environ.get("LG_DR_MAIN_METHOD", "t-SNE")  # method for the main figure
 
 
 def log(*a):
@@ -244,26 +252,72 @@ def generate_and_feature():
 
 
 # --------------------------------------------------------------------------- dim-red
+def _vif(Z):
+    """Variance inflation factor per column of a standardized DataFrame Z. VIF_j =
+    1/(1-R_j^2) where R_j^2 is from regressing column j on all the others. Catches
+    multicolinearity (a feature being a linear combination of several others), not just
+    pairwise correlation."""
+    from sklearn.linear_model import LinearRegression
+    cols = list(Z.columns)
+    out = {}
+    for c in cols:
+        others = [o for o in cols if o != c]
+        if not others:
+            out[c] = 1.0; continue
+        r2 = LinearRegression().fit(Z[others].values, Z[c].values).score(
+            Z[others].values, Z[c].values)
+        out[c] = np.inf if r2 >= 1 - 1e-12 else 1.0 / (1.0 - r2)
+    return out
+
+
 def _prune_colinear(F, thresh):
-    """Greedy: keep a feature unless |corr| >= thresh with an already-kept one. Orders by
-    descending variance so the most informative features are kept first."""
+    """Remove colinearity in two passes: (1) drop one of any pair with |Pearson| >= thresh
+    (keep the higher-variance one); (2) iteratively drop the highest-VIF feature until every
+    remaining feature has VIF < VIF_THRESH. Returns the non-colinear feature subset."""
+    from sklearn.preprocessing import StandardScaler
     order = F.var().sort_values(ascending=False).index.tolist()
     corr = F.corr().abs()
     keep = []
     for c in order:
         if all(corr.loc[c, k] < thresh for k in keep):
             keep.append(c)
-    return keep
+    Z = pd.DataFrame(StandardScaler().fit_transform(F[keep].values), columns=keep)
+    cur = list(keep)
+    while len(cur) > 2:
+        vifs = _vif(Z[cur])
+        worst = max(vifs, key=vifs.get)
+        if vifs[worst] < VIF_THRESH:
+            break
+        cur.remove(worst)
+    return cur
 
 
-# Okabe-Ito colorblind-safe palette + distinct markers, one per family.
-_OKABE = ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7", "#56B4E9", "#F0E442"]
-_MARKERS = ["o", "s", "^", "D", "v", "P", "X"]
+# Explicit colorblind-safe (Okabe-Ito) color + marker per family. The two models of
+# interest (TLG, SBM) get strong, high-contrast colors; baselines are muted.
+_FAM_STYLE = {
+    "ER":  ("#999999", "o"),   # gray
+    "BA":  ("#E69F00", "s"),   # orange
+    "WS":  ("#009E73", "^"),   # green
+    "KR":  ("#56B4E9", "D"),   # sky blue
+    "GRG": ("#CC79A7", "v"),   # pink
+    "SBM": ("#0072B2", "P"),   # strong blue
+    "TLG": ("#D55E00", "X"),   # strong vermillion (the model of interest)
+}
+
+
+def _fam_color(f):
+    return _FAM_STYLE.get(f, ("#777777", "o"))[0]
+
+
+def _fam_marker(f):
+    return _FAM_STYLE.get(f, ("#777777", "o"))[1]
 
 
 def _cov_ellipse(ax, x, y, color, nstd=2.0):
-    """2-sigma covariance ellipse of a family's point cloud (cluster footprint)."""
+    """2-sigma covariance ellipse = a family's density region (translucent fill + solid
+    edge). This is the family's representation in the figure (the points are not drawn)."""
     from matplotlib.patches import Ellipse
+    from matplotlib.colors import to_rgba
     if len(x) < 3:
         return
     cov = np.cov(x, y)
@@ -272,8 +326,20 @@ def _cov_ellipse(ax, x, y, color, nstd=2.0):
     vals, vecs = vals[o], vecs[:, o]
     ang = np.degrees(np.arctan2(vecs[1, 0], vecs[0, 0]))
     w, h = 2 * nstd * np.sqrt(np.maximum(vals, 1e-12))
-    ax.add_patch(Ellipse((x.mean(), y.mean()), w, h, angle=ang, facecolor=color,
-                         alpha=0.13, edgecolor=color, lw=1.0, zorder=1))
+    ax.add_patch(Ellipse((x.mean(), y.mean()), w, h, angle=ang,
+                         facecolor=to_rgba(color, 0.22), edgecolor=color, lw=1.8, zorder=1))
+
+
+def _legend_handles(fams):
+    """Legend: a filled patch (density region) per family + a star for the real graph."""
+    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
+    from matplotlib.colors import to_rgba
+    h = [Patch(facecolor=to_rgba(_fam_color(f), 0.30), edgecolor=_fam_color(f), lw=1.6,
+               label=f) for f in fams]
+    h.append(Line2D([], [], marker="*", color="black", markersize=15, ls="none",
+                    markeredgecolor="white", label="real (Twitch)"))
+    return h
 
 
 def _grid_figure(meta, F, keep):
@@ -298,12 +364,12 @@ def _grid_figure(meta, F, keep):
     methods = ["PCA", "t-SNE"] + (["UMAP"] if has_umap else [])
     regions = [r for r in REGIONS if r in set(meta["region"])]
     fams = [f for f in FAMILIES if f in set(meta["family"])]
-    color = {f: _OKABE[i % len(_OKABE)] for i, f in enumerate(fams)}
-    marker = {f: _MARKERS[i % len(_MARKERS)] for i, f in enumerate(fams)}
+    color = {f: _fam_color(f) for f in fams}
 
     fig, axes = plt.subplots(len(regions), len(methods),
                              figsize=(4.8 * len(methods), 4.3 * len(regions)), squeeze=False)
     emb_rows = []
+    region_embeds = {}
     for ri, region in enumerate(regions):
         mask = (meta["region"] == region).values
         sub = meta[mask].reset_index(drop=True)
@@ -315,17 +381,15 @@ def _grid_figure(meta, F, keep):
             emb["UMAP"] = umap.UMAP(n_components=2, random_state=SEED,
                                     n_neighbors=min(15, len(Xr) - 1),
                                     min_dist=0.1).fit_transform(Xr)
+        region_embeds[region] = (emb, sub)
         for ci, method in enumerate(methods):
             ax = axes[ri][ci]; e = emb[method]
-            for f in fams:
+            for f in fams:                       # families: density region only (no points)
                 m = (sub["family"] == f).values
                 _cov_ellipse(ax, e[m, 0], e[m, 1], color[f])
-                ax.scatter(e[m, 0], e[m, 1], s=26, alpha=0.8, color=color[f],
-                           marker=marker[f], edgecolors="white", linewidths=0.3,
-                           zorder=3, label=f)
-            m = (sub["family"] == "real").values
+            m = (sub["family"] == "real").values   # real graph: the only plotted point
             ax.scatter(e[m, 0], e[m, 1], s=300, marker="*", color="black",
-                       edgecolors="white", linewidths=1.2, zorder=6, label="real (Twitch)")
+                       edgecolors="white", linewidths=1.2, zorder=6)
             ax.tick_params(labelbottom=False, labelleft=False, length=0)
             ax.grid(alpha=0.18, lw=0.5)
             if ri == 0:
@@ -336,16 +400,127 @@ def _grid_figure(meta, F, keep):
                 emb_rows.append(dict(region=region, family=sub["family"][j],
                                      rep=int(sub["rep"][j]), method=method,
                                      x=float(e[j, 0]), y=float(e[j, 1])))
-    handles, labels = axes[0][0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=len(fams) + 1, frameon=False,
-               bbox_to_anchor=(0.5, -0.004), handletextpad=0.3, columnspacing=1.1)
-    fig.suptitle("Per-Twitch-network graph-family clusters in structural-feature space "
+    fig.legend(handles=_legend_handles(fams), loc="lower center", ncol=len(fams) + 1,
+               frameon=False, bbox_to_anchor=(0.5, -0.004), handletextpad=0.4,
+               columnspacing=1.1)
+    fig.suptitle("Per-Twitch-network family density regions in structural-feature space "
                  "(rows = network, cols = embedding; ★ = real graph)", y=1.0, fontsize=15)
     fig.tight_layout(rect=[0, 0.022, 1, 0.99])
     for ext in ("png", "pdf"):
         fig.savefig(OUT / f"dimred_per_graph.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
     pd.DataFrame(emb_rows).to_csv(OUT / "embeddings.csv", index=False)
+    return region_embeds
+
+
+def _main_figure(region_embeds, method):
+    """Clean single-method main figure: one panel per Twitch network (2 columns), with
+    per-family covariance ellipses + a thin line from the real graph to its nearest family
+    centroid. 300-dpi PNG + vector PDF."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    plt.rcParams.update({"font.size": 12, "font.family": "DejaVu Sans",
+                         "pdf.fonttype": 42, "ps.fonttype": 42})
+    regions = list(region_embeds)
+    if not regions or method not in region_embeds[regions[0]][0]:
+        return
+    fams = [f for f in FAMILIES if f in set(region_embeds[regions[0]][1]["family"])]
+    color = {f: _fam_color(f) for f in fams}
+    ncol = 2
+    nrow = int(np.ceil(len(regions) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(6.2 * ncol, 5.4 * nrow), squeeze=False)
+    for idx, region in enumerate(regions):
+        ax = axes.flat[idx]
+        e, sub = region_embeds[region][0][method], region_embeds[region][1]
+        cents = {}
+        for f in fams:                          # families: density region only (no points)
+            m = (sub["family"] == f).values
+            _cov_ellipse(ax, e[m, 0], e[m, 1], color[f])
+            cents[f] = e[m].mean(0)
+        m = (sub["family"] == "real").values
+        rp = e[m][0]
+        nearest = min(fams, key=lambda f: np.linalg.norm(rp - cents[f]))
+        ax.plot([rp[0], cents[nearest][0]], [rp[1], cents[nearest][1]], color="black",
+                lw=1.0, ls="--", alpha=0.6, zorder=4)
+        ax.scatter(rp[0], rp[1], s=360, marker="*", color="black", edgecolors="white",
+                   linewidths=1.3, zorder=6)               # real graph: the only point
+        ax.set_title(f"{region}  (nearest: {nearest})", fontweight="bold")
+        ax.tick_params(labelbottom=False, labelleft=False, length=0); ax.grid(alpha=0.18, lw=0.5)
+    for j in range(len(regions), nrow * ncol):
+        axes.flat[j].axis("off")
+    fig.legend(handles=_legend_handles(fams), loc="lower center", ncol=len(fams) + 1,
+               frameon=False, bbox_to_anchor=(0.5, -0.01))
+    fig.suptitle(f"Twitch family density regions per network ({method}; "
+                 f"dashed line: real → nearest family centroid)", fontsize=15, y=1.0)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.99])
+    for ext in ("png", "pdf"):
+        fig.savefig(OUT / f"dimred_main.{ext}", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _distance_figure(meta, F, keep):
+    """Quantitative result: per network, Euclidean distance (standardized feature space)
+    from the real graph to each family centroid -> heatmap (closest boxed) + mean-rank bar.
+    Writes distance_to_real.csv and dimred_distance.{png,pdf}; prints the summary."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from sklearn.preprocessing import StandardScaler
+    regions = [r for r in REGIONS if r in set(meta["region"])]
+    fams = [f for f in FAMILIES if f in set(meta["family"])]
+    D = np.full((len(regions), len(fams)), np.nan)
+    for ri, region in enumerate(regions):
+        mask = (meta["region"] == region).values
+        Z = StandardScaler().fit_transform(F[keep].values[mask])
+        sm = meta[mask].reset_index(drop=True)
+        real = Z[(sm["family"] == "real").values]
+        if not len(real):
+            continue
+        for ci, f in enumerate(fams):
+            pts = Z[(sm["family"] == f).values]
+            if len(pts):
+                D[ri, ci] = float(np.linalg.norm(real[0] - pts.mean(0)))
+    Ddf = pd.DataFrame(D, index=regions, columns=fams)
+    Ddf.to_csv(OUT / "distance_to_real.csv")
+    ranks = Ddf.rank(axis=1, method="min")
+    mean_rank = ranks.mean(0).sort_values()
+    order = mean_rank.index.tolist()
+    n_closest = Ddf.idxmin(axis=1).value_counts()
+
+    fig, ax = plt.subplots(1, 2, figsize=(13.5, 0.62 * len(regions) + 2.5),
+                           gridspec_kw={"width_ratios": [2.3, 1]})
+    H = Ddf[order]
+    im = ax[0].imshow(H.values, aspect="auto", cmap="viridis")
+    ax[0].set_xticks(range(len(order))); ax[0].set_xticklabels(order)
+    ax[0].set_yticks(range(len(regions))); ax[0].set_yticklabels(regions)
+    mean_all = np.nanmean(H.values)
+    for ri in range(len(regions)):
+        best = int(np.nanargmin(H.values[ri]))
+        for ci in range(len(order)):
+            v = H.values[ri, ci]
+            ax[0].text(ci, ri, f"{v:.2f}", ha="center", va="center", fontsize=8,
+                       color="white" if v < mean_all else "black",
+                       fontweight="bold" if ci == best else "normal")
+        ax[0].add_patch(plt.Rectangle((best - .5, ri - .5), 1, 1, fill=False,
+                                      edgecolor="red", lw=2.2))
+    ax[0].set_title("Distance from real graph to each family centroid\n"
+                    "(standardized feature space; red box = closest)")
+    fig.colorbar(im, ax=ax[0], shrink=.85, label="Euclidean distance")
+    ax[1].barh(range(len(order)), mean_rank[order].values,
+               color=[_fam_color(f) for f in order])
+    ax[1].set_yticks(range(len(order))); ax[1].set_yticklabels(order); ax[1].invert_yaxis()
+    ax[1].set_xlabel("mean distance rank  (1 = closest to real)")
+    ax[1].set_title("Mean rank across networks"); ax[1].grid(alpha=.25, axis="x")
+    for i, f in enumerate(order):
+        ax[1].text(mean_rank[f], i, f" {mean_rank[f]:.2f}", va="center", fontsize=9)
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(OUT / f"dimred_distance.{ext}", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    log(f"\ndistance-to-real: closest family by network -> {dict(n_closest)}")
+    log("  mean distance-rank (1=closest): "
+        + ", ".join(f"{f}={mean_rank[f]:.2f}" for f in order))
 
 
 def dimred(records):
@@ -362,20 +537,37 @@ def dimred(records):
 
     keep = _prune_colinear(F, THRESH)
     (OUT / "kept_features.txt").write_text("\n".join(keep))
-    log(f"\nfeatures: {F.shape[1]} candidates -> {len(keep)} non-colinear (|corr|<{THRESH}):")
+    # diagnostics: max pairwise |corr| and max VIF AMONG THE KEPT features
+    from sklearn.preprocessing import StandardScaler
+    Zk = pd.DataFrame(StandardScaler().fit_transform(F[keep].values), columns=keep)
+    kept_corr = Zk.corr().abs()
+    max_pair = (kept_corr.where(~np.eye(len(keep), dtype=bool)).max().max())
+    max_vif = max(_vif(Zk).values())
+    log(f"\nfeatures: {F.shape[1]} candidates -> {len(keep)} non-colinear "
+        f"(|Pearson|<{THRESH} + VIF<{VIF_THRESH}); kept max|corr|={max_pair:.2f} "
+        f"max VIF={max_vif:.2f}:")
     log("  " + ", ".join(keep))
 
-    # colinearity heatmap (candidates)
-    corr = F.corr()
-    fig, ax = plt.subplots(figsize=(11, 9))
-    im = ax.imshow(corr.values, cmap="coolwarm", vmin=-1, vmax=1)
-    ax.set_xticks(range(len(corr))); ax.set_xticklabels(corr.columns, rotation=90, fontsize=7)
-    ax.set_yticks(range(len(corr))); ax.set_yticklabels(corr.columns, fontsize=7)
-    ax.set_title("Candidate feature colinearity (|corr|>%.2f pruned)" % THRESH)
-    fig.colorbar(im, shrink=.8); fig.tight_layout()
-    fig.savefig(OUT / "colinearity.png", dpi=150); plt.close(fig)
+    # colinearity heatmaps: candidates (before) and the kept set (after)
+    fig, axx = plt.subplots(1, 2, figsize=(17, 8))
+    for ax, (C, ttl) in zip(axx, [(F.corr(), f"All {F.shape[1]} candidates"),
+                                  (F[keep].corr(), f"{len(keep)} kept (VIF<{VIF_THRESH})")]):
+        im = ax.imshow(C.values, cmap="coolwarm", vmin=-1, vmax=1)
+        ax.set_xticks(range(len(C))); ax.set_xticklabels(C.columns, rotation=90, fontsize=8)
+        ax.set_yticks(range(len(C))); ax.set_yticklabels(C.columns, fontsize=8)
+        ax.set_title(ttl)
+        for i in range(len(C)):
+            for j in range(len(C)):
+                if i != j and abs(C.values[i, j]) >= 0.5:
+                    ax.text(j, i, f"{C.values[i, j]:.1f}", ha="center", va="center",
+                            fontsize=6, color="black")
+    fig.colorbar(im, ax=axx, shrink=.7, label="Pearson correlation")
+    fig.suptitle("Feature colinearity: candidates vs. pruned set", fontsize=14)
+    fig.savefig(OUT / "colinearity.png", dpi=150, bbox_inches="tight"); plt.close(fig)
 
-    _grid_figure(meta, F, keep)   # one PCA/t-SNE/UMAP per Twitch network (rows), no mixing
+    region_embeds = _grid_figure(meta, F, keep)   # supplementary: all 3 methods x networks
+    _main_figure(region_embeds, MAIN_METHOD)       # main figure: one method, 2 cols, clean
+    _distance_figure(meta, F, keep)                # quantitative: distance-to-real heatmap
     log(f"\nWrote {OUT}/")
 
 
