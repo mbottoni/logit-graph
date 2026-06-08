@@ -323,31 +323,31 @@ tlg-twitch-gic-quick:  ## Smoke run of the TLG Twitch GIC experiment (PTBR, tiny
 	LG_TLGT_QUICK=1 \
 		$(UV) run python scripts/closedform/run_tlg_twitch_gic.py
 
-tlg-twitch-latent-gic:  ## Latent-TLG GIC (degree+community+latent) vs ER/BA/WS/KR/GRG/SBM on Twitch
+tlg-twitch-latent-gic:  ## Latent-TLG GIC sweep over ALL Twitch networks (cached/parallel) vs ER/BA/WS/KR/GRG/SBM
 	$(UV) run python scripts/closedform/run_tlg_twitch_latent_gic.py
 
-tlg-twitter-latent-gic:  ## Latent-TLG GIC on a Twitter ego network
+tlg-twitter-latent-gic:  ## Latent-TLG GIC sweep over all Twitter ego networks (50<n<1000; cached/parallel)
 	$(UV) run python scripts/closedform/run_tlg_twitter_latent_gic.py
 
-tlg-facebook-latent-gic:  ## Latent-TLG GIC on a Facebook ego network
+tlg-facebook-latent-gic:  ## Latent-TLG GIC sweep over all Facebook ego networks (cached/parallel)
 	$(UV) run python scripts/closedform/run_tlg_facebook_latent_gic.py
 
-tlg-arxiv-latent-gic:  ## Latent-TLG GIC on the arXiv HEP-Th citation network (BFS subgraph)
+tlg-arxiv-latent-gic:  ## Latent-TLG GIC on the arXiv HEP-Th citation network (big BFS subgraph)
 	$(UV) run python scripts/closedform/run_tlg_arxiv_latent_gic.py
 
-tlg-gplus-latent-gic:  ## Latent-TLG GIC on a Google+ ego network (BFS subgraph)
+tlg-gplus-latent-gic:  ## Latent-TLG GIC sweep over all Google+ ego networks (50<n<1000; cached/parallel)
 	$(UV) run python scripts/closedform/run_tlg_gplus_latent_gic.py
 
-tlg-connectome-latent-gic:  ## Latent-TLG GIC on an animal connectome (C. elegans)
+tlg-connectome-latent-gic:  ## Latent-TLG GIC sweep over all animal connectomes (cached/parallel)
 	$(UV) run python scripts/closedform/run_tlg_connectome_latent_gic.py
 
-tlg-human-latent-gic:  ## Latent-TLG GIC on a human connectome (OASIS3 brain)
+tlg-human-latent-gic:  ## Latent-TLG GIC sweep over all OASIS3 human connectomes (cached/parallel)
 	$(UV) run python scripts/closedform/run_tlg_human_latent_gic.py
 
-tlg-all-latent-gic:  ## Latent-TLG GIC across all datasets + combined cross-dataset KL-rank summary
+tlg-all-latent-gic:  ## Latent-TLG GIC sweep over ALL datasets in one global pool + overall cross-dataset KL ranking
 	$(UV) run python scripts/closedform/run_tlg_all_latent_gic.py
 
-tlg-all-latent-gic-quick:  ## Smoke run of the latent-TLG GIC across all datasets (tiny)
+tlg-all-latent-gic-quick:  ## Smoke run of the latent-TLG GIC all-datasets sweep (tiny)
 	LG_TLM_QUICK=1 \
 		$(UV) run python scripts/closedform/run_tlg_all_latent_gic.py
 
