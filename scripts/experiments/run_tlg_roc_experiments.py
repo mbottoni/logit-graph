@@ -324,7 +324,7 @@ def _plot(df, sweep, out_path):
                      f"$|\\Delta\\alpha|={abs(ALPHA2_SAMPLE-ALPHA1):g}$")
     title = ("TLG ROC: effect size" if sweep == "effect"
              else "TLG ROC: sample size")
-    fig.suptitle(f"{title} ({METHOD} test; null = chance diagonal){fixed_txt}",
+    fig.suptitle(f"{title} (null = chance diagonal){fixed_txt}",
                  y=1.01)
     fig.tight_layout()
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
