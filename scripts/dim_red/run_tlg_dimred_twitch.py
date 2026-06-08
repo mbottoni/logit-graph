@@ -88,6 +88,7 @@ VIF_THRESH = _float("LG_DR_VIF_THRESH", 5.0)      # max variance-inflation facto
 SEED = _int("LG_DR_SEED", 12345)
 PERPLEXITY = _float("LG_DR_TSNE_PERPLEXITY", 30.0)
 MAIN_METHOD = os.environ.get("LG_DR_MAIN_METHOD", "t-SNE")  # method for the main figure
+FOCUS_REGION = os.environ.get("LG_DR_FOCUS_REGION", "")     # network shown in the distance fig
 
 
 def log(*a):
@@ -459,16 +460,19 @@ def _main_figure(region_embeds, method):
     plt.close(fig)
 
 
-def _distance_figure(meta, F, keep):
-    """Quantitative result: per network, Euclidean distance (standardized feature space)
-    from the real graph to each family centroid -> heatmap (closest boxed) + mean-rank bar.
-    Writes distance_to_real.csv and dimred_distance.{png,pdf}; prints the summary."""
+def _distance_figure(meta, F, keep, region_embeds):
+    """Quantitative result + visual: LEFT = heatmap of the distance (standardized feature
+    space) from the real graph to each family centroid (closest boxed); RIGHT = the dim-red
+    embeddings (PCA/t-SNE/UMAP) for one focus network (family density regions + real ★), so
+    the heatmap's numbers and the embedding picture sit side by side. Writes
+    distance_to_real.csv + dimred_distance.{png,pdf}; prints the summary."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from sklearn.preprocessing import StandardScaler
     regions = [r for r in REGIONS if r in set(meta["region"])]
     fams = [f for f in FAMILIES if f in set(meta["family"])]
+    color = {f: _fam_color(f) for f in fams}
     D = np.full((len(regions), len(fams)), np.nan)
     for ri, region in enumerate(regions):
         mask = (meta["region"] == region).values
@@ -488,37 +492,58 @@ def _distance_figure(meta, F, keep):
     order = mean_rank.index.tolist()
     n_closest = Ddf.idxmin(axis=1).value_counts()
 
-    fig, ax = plt.subplots(1, 2, figsize=(13.5, 0.62 * len(regions) + 2.5),
-                           gridspec_kw={"width_ratios": [2.3, 1]})
+    focus = FOCUS_REGION if FOCUS_REGION in region_embeds else regions[0]
+    emb, sub = region_embeds[focus]
+    methods = list(emb)
+
+    fig = plt.figure(figsize=(14, max(7.5, 2.6 * len(methods))))
+    gs = fig.add_gridspec(len(methods), 2, width_ratios=[2.0, 1.35],
+                          wspace=0.16, hspace=0.28)
+    # left: distance heatmap (spans all rows)
+    axh = fig.add_subplot(gs[:, 0])
     H = Ddf[order]
-    im = ax[0].imshow(H.values, aspect="auto", cmap="viridis")
-    ax[0].set_xticks(range(len(order))); ax[0].set_xticklabels(order)
-    ax[0].set_yticks(range(len(regions))); ax[0].set_yticklabels(regions)
+    im = axh.imshow(H.values, aspect="auto", cmap="viridis")
+    axh.set_xticks(range(len(order))); axh.set_xticklabels(order)
+    axh.set_yticks(range(len(regions))); axh.set_yticklabels(regions)
     mean_all = np.nanmean(H.values)
     for ri in range(len(regions)):
         best = int(np.nanargmin(H.values[ri]))
         for ci in range(len(order)):
             v = H.values[ri, ci]
-            ax[0].text(ci, ri, f"{v:.2f}", ha="center", va="center", fontsize=8,
-                       color="white" if v < mean_all else "black",
-                       fontweight="bold" if ci == best else "normal")
-        ax[0].add_patch(plt.Rectangle((best - .5, ri - .5), 1, 1, fill=False,
-                                      edgecolor="red", lw=2.2))
-    ax[0].set_title("Distance from real graph to each family centroid\n"
-                    "(standardized feature space; red box = closest)")
-    fig.colorbar(im, ax=ax[0], shrink=.85, label="Euclidean distance")
-    ax[1].barh(range(len(order)), mean_rank[order].values,
-               color=[_fam_color(f) for f in order])
-    ax[1].set_yticks(range(len(order))); ax[1].set_yticklabels(order); ax[1].invert_yaxis()
-    ax[1].set_xlabel("mean distance rank  (1 = closest to real)")
-    ax[1].set_title("Mean rank across networks"); ax[1].grid(alpha=.25, axis="x")
-    for i, f in enumerate(order):
-        ax[1].text(mean_rank[f], i, f" {mean_rank[f]:.2f}", va="center", fontsize=9)
-    fig.tight_layout()
+            axh.text(ci, ri, f"{v:.2f}", ha="center", va="center", fontsize=8,
+                     color="white" if v < mean_all else "black",
+                     fontweight="bold" if ci == best else "normal")
+        axh.add_patch(plt.Rectangle((best - .5, ri - .5), 1, 1, fill=False,
+                                    edgecolor="red", lw=2.2))
+    axh.add_patch(plt.Rectangle((-.5, regions.index(focus) - .5), len(order), 1, fill=False,
+                                edgecolor="black", lw=1.6, ls=":"))   # focus-row marker
+    axh.set_title("Distance from real graph to each family centroid\n"
+                  "(standardized feature space; red box = closest; dotted = focus network)")
+    fig.colorbar(im, ax=axh, shrink=.85, label="Euclidean distance", pad=0.02)
+    # right: the dim-red embeddings for the focus network (stacked, one per method)
+    for mi, method in enumerate(methods):
+        ax = fig.add_subplot(gs[mi, 1])
+        e = emb[method]; cents = {}
+        for f in fams:
+            m = (sub["family"] == f).values
+            _cov_ellipse(ax, e[m, 0], e[m, 1], color[f]); cents[f] = e[m].mean(0)
+        m = (sub["family"] == "real").values; rp = e[m][0]
+        nearest = min(fams, key=lambda f: np.linalg.norm(rp - cents[f]))
+        ax.plot([rp[0], cents[nearest][0]], [rp[1], cents[nearest][1]], color="black",
+                lw=0.9, ls="--", alpha=0.6, zorder=4)
+        ax.scatter(rp[0], rp[1], s=240, marker="*", color="black", edgecolors="white",
+                   linewidths=1.1, zorder=6)
+        ax.set_title(method, fontsize=11, fontweight="bold")
+        ax.tick_params(labelbottom=False, labelleft=False, length=0); ax.grid(alpha=.18, lw=.5)
+    fig.legend(handles=_legend_handles(fams), loc="lower center", ncol=len(fams) + 1,
+               frameon=False, bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(f"Distance-to-real (left) and the dim-red embeddings for the {focus} "
+                 f"network (right; family density regions, ★ = real graph)", fontsize=14, y=1.0)
+    fig.tight_layout(rect=[0, 0.04, 1, 0.97])
     for ext in ("png", "pdf"):
         fig.savefig(OUT / f"dimred_distance.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
-    log(f"\ndistance-to-real: closest family by network -> {dict(n_closest)}")
+    log(f"\ndistance-to-real: closest family by network -> {dict(n_closest)}  (focus={focus})")
     log("  mean distance-rank (1=closest): "
         + ", ".join(f"{f}={mean_rank[f]:.2f}" for f in order))
 
@@ -567,7 +592,7 @@ def dimred(records):
 
     region_embeds = _grid_figure(meta, F, keep)   # supplementary: all 3 methods x networks
     _main_figure(region_embeds, MAIN_METHOD)       # main figure: one method, 2 cols, clean
-    _distance_figure(meta, F, keep)                # quantitative: distance-to-real heatmap
+    _distance_figure(meta, F, keep, region_embeds)  # heatmap + the embeddings for one network
     log(f"\nWrote {OUT}/")
 
 
