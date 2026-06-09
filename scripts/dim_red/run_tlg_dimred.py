@@ -32,9 +32,10 @@ Output under runs/tlg_dimred_<DATASET>/ (gitignored):
                         beside one dim-red embedding (LG_DR_DIST_METHOD) of the focus network
 
 Env: LG_DR_DATASET (twitch), LG_DR_NETWORKS (subset; default all), LG_DR_NREPS (10),
-LG_DR_FAMILIES (ER,BA,WS,KR,GRG,SBM,TLG), LG_DR_COLINEAR_THRESH (0.85), LG_DR_VIF_THRESH (5),
-LG_DR_MAIN_METHOD (t-SNE), LG_DR_FOCUS_REGION (network in the distance fig; default first),
-LG_DR_SEED (12345), LG_DR_TSNE_PERPLEXITY (30).
+LG_DR_FAMILIES (ER,BA,WS,KR,GRG,SBM,TLG), LG_DR_FEATURE_MODE (balanced | vif; default
+balanced = one representative per structural family), LG_DR_COLINEAR_THRESH (0.85),
+LG_DR_VIF_THRESH (5), LG_DR_MAIN_METHOD (t-SNE), LG_DR_DIST_METHOD (UMAP), LG_DR_FOCUS_REGION
+(network in the distance fig; default first), LG_DR_SEED (12345), LG_DR_TSNE_PERPLEXITY (30).
 """
 from __future__ import annotations
 
@@ -105,6 +106,22 @@ PERPLEXITY = _float("LG_DR_TSNE_PERPLEXITY", 30.0)
 MAIN_METHOD = os.environ.get("LG_DR_MAIN_METHOD", "t-SNE")  # method for the main figure
 FOCUS_REGION = os.environ.get("LG_DR_FOCUS_REGION", "")     # network shown in the distance fig
 DIST_METHOD = os.environ.get("LG_DR_DIST_METHOD", "UMAP")   # the single embedding shown there
+FEATURE_MODE = os.environ.get("LG_DR_FEATURE_MODE", "balanced")  # "balanced" | "vif"
+
+# Structural families -> candidate members (preference order). "balanced" selection forces
+# ONE representative per family so every structural axis is represented (in particular the
+# community/clustering axes that a purely statistical VIF prune can silently delete) -- fair
+# to all community-aware models, not tuned for any one family.
+_FEATURE_FAMILIES = {
+    "degree_level":        ["avg_degree", "density"],
+    "degree_heterogeneity": ["degree_cv", "degree_gini", "degree_skew", "degree_kurt",
+                             "leaf_frac"],
+    "mixing":              ["assortativity", "avg_neighbor_deg"],
+    "clustering":          ["clustering", "transitivity", "triangle_density"],
+    "community":           ["modularity", "n_comm_norm"],
+    "cohesion":            ["max_core", "mean_core", "frac_in_lcc"],
+    "spectral":            ["algebraic_conn", "spectral_gap", "spectral_radius"],
+}
 
 
 def log(*a):
@@ -307,6 +324,17 @@ def _prune_colinear(F, thresh):
             break
         cur.remove(worst)
     return cur
+
+
+def _select_balanced(F):
+    """One representative per structural family (first candidate present), so every axis --
+    including community/modularity and clustering -- is represented. Returns (keep, mapping)."""
+    keep, mapping = [], {}
+    for fam, members in _FEATURE_FAMILIES.items():
+        for m in members:
+            if m in F.columns:
+                keep.append(m); mapping[fam] = m; break
+    return keep, mapping
 
 
 # Explicit colorblind-safe (Okabe-Ito) color + marker per family. The two models of
@@ -583,7 +611,10 @@ def dimred(records):
     OUT.mkdir(parents=True, exist_ok=True)
     pd.concat([meta, F], axis=1).to_csv(OUT / "features.csv", index=False)
 
-    keep = _prune_colinear(F, THRESH)
+    if FEATURE_MODE == "vif":
+        keep = _prune_colinear(F, THRESH); mapping = None
+    else:
+        keep, mapping = _select_balanced(F)
     (OUT / "kept_features.txt").write_text("\n".join(keep))
     # diagnostics: max pairwise |corr| and max VIF AMONG THE KEPT features
     from sklearn.preprocessing import StandardScaler
@@ -591,10 +622,12 @@ def dimred(records):
     kept_corr = Zk.corr().abs()
     max_pair = (kept_corr.where(~np.eye(len(keep), dtype=bool)).max().max())
     max_vif = max(_vif(Zk).values())
-    log(f"\nfeatures: {F.shape[1]} candidates -> {len(keep)} non-colinear "
-        f"(|Pearson|<{THRESH} + VIF<{VIF_THRESH}); kept max|corr|={max_pair:.2f} "
-        f"max VIF={max_vif:.2f}:")
-    log("  " + ", ".join(keep))
+    log(f"\nfeatures [{FEATURE_MODE}]: {F.shape[1]} candidates -> {len(keep)} kept; "
+        f"max|corr|={max_pair:.2f} max VIF={max_vif:.2f}")
+    if mapping:
+        log("  " + ", ".join(f"{fam}={feat}" for fam, feat in mapping.items()))
+    else:
+        log("  " + ", ".join(keep))
 
     # colinearity heatmaps: candidates (before) and the kept set (after)
     fig, axx = plt.subplots(1, 2, figsize=(17, 8))
