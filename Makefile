@@ -280,6 +280,24 @@ lg-anova-twitch-robust-quick:  ## Smoke of the robust Twitch ANOVA (2 small regi
 	LG_TWA_QUICK=1 \
 		$(UV) run python scripts/experiments/run_lg_twitch_anova_robust.py
 
+tlg-anova-twitch-robust:  ## TLG Twitch ANOVA on BOTH sigma and alpha (2-param dyadic-robust SE; omnibus + Bonferroni)
+	$(UV) run python scripts/experiments/run_tlg_twitch_anova_robust.py
+
+tlg-anova-twitch-robust-quick:  ## Smoke of the TLG Twitch ANOVA (2 small regions)
+	LG_TTA_QUICK=1 \
+		$(UV) run python scripts/experiments/run_tlg_twitch_anova_robust.py
+
+tlg-anova-twitch-robust-validate:  ## Validate the 2-param dyadic-robust SE vs Monte-Carlo
+	LG_TTA_VALIDATE=1 \
+		$(UV) run python scripts/experiments/run_tlg_twitch_anova_robust.py
+
+kpm-sensitivity-citation:  ## KPM (moments/probes) sensitivity on the cit-HepTh citation network vs reference + exact
+	$(UV) run python scripts/experiments/run_kpm_sensitivity_citation.py
+
+kpm-sensitivity-citation-quick:  ## Smoke of the KPM sensitivity study (small grids)
+	LG_KPM_QUICK=1 \
+		$(UV) run python scripts/experiments/run_kpm_sensitivity_citation.py
+
 # ─────────────────────────────────────────────────────────────
 #  Temporal Logit-Graph experiments (tlg- prefix)
 # ─────────────────────────────────────────────────────────────
