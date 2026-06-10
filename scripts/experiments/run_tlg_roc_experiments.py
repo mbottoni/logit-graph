@@ -322,8 +322,8 @@ def _plot(df, sweep, out_path):
     if sweep == "sample":
         fixed_txt = (f" — $|\\Delta\\sigma|={abs(SIGMA2_SAMPLE-SIGMA1):g}$, "
                      f"$|\\Delta\\alpha|={abs(ALPHA2_SAMPLE-ALPHA1):g}$")
-    title = ("TLG ROC: effect size" if sweep == "effect"
-             else "TLG ROC: sample size")
+    title = ("LG ROC: effect size" if sweep == "effect"
+             else "LG ROC: sample size")
     fig.suptitle(f"{title} (null = chance diagonal){fixed_txt}",
                  y=1.01)
     fig.tight_layout()

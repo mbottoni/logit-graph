@@ -298,6 +298,12 @@ tlg-identifiability-quick:  ## Smoke run of the latent-TLG identifiability exper
 	LG_TLI_QUICK=1 \
 		$(UV) run python scripts/experiments/run_tlg_latent_identifiability.py
 
+tlg-dimred-twitch:  ## Dim-red (PCA/t-SNE/UMAP per network) of per-family graph ensembles vs the real Twitch graphs in structural-feature space
+	LG_DR_DATASET=twitch $(UV) run python scripts/dim_red/run_tlg_dimred.py
+
+tlg-dimred-connectome:  ## Same dim-red experiment on the animal connectomes dataset
+	LG_DR_DATASET=connectome $(UV) run python scripts/dim_red/run_tlg_dimred.py
+
 tlg-roc:  ## TLG ROC: group-difference tests on sigma AND alpha (effect-size + sample-size; single-graph Wald SE)
 	$(UV) run python scripts/experiments/run_tlg_roc_experiments.py
 
