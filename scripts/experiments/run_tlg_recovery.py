@@ -188,8 +188,8 @@ def plot_combined_recovery(combined, scenarios, out_path):
     fig.legend(handles=handles, loc="lower center",
                ncol=min(len(scenarios), 5), fontsize=9, frameon=False,
                bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle("TLG parameter recovery — estimates → true value as n grows "
-                 "(colorblind-safe: color+marker = (σ,α) scenario; dashed = truth)")
+    fig.suptitle("LG parameter recovery — estimates → true value as n grows "
+                 "(dashed = truth)")
     fig.tight_layout(rect=[0, 0.03, 1, 1])
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
