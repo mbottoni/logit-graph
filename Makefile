@@ -291,6 +291,13 @@ tlg-anova-twitch-robust-validate:  ## Validate the 2-param dyadic-robust SE vs M
 	LG_TTA_VALIDATE=1 \
 		$(UV) run python scripts/experiments/run_tlg_twitch_anova_robust.py
 
+tlg-anova-connectomes-robust:  ## TLG ANOVA on sigma AND alpha across the 18 animal connectomes (2-param dyadic-robust SE; omnibus + Bonferroni, 153 pairs)
+	$(UV) run python scripts/experiments/run_tlg_connectomes_anova_robust.py
+
+tlg-anova-connectomes-robust-quick:  ## Smoke of the TLG connectomes ANOVA (4 graphs)
+	LG_TCA_QUICK=1 \
+		$(UV) run python scripts/experiments/run_tlg_connectomes_anova_robust.py
+
 kpm-sensitivity-citation:  ## KPM (moments/probes) sensitivity on the cit-HepTh citation network vs reference + exact
 	$(UV) run python scripts/experiments/run_kpm_sensitivity_citation.py
 
