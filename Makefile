@@ -298,6 +298,17 @@ tlg-anova-connectomes-robust-quick:  ## Smoke of the TLG connectomes ANOVA (4 gr
 	LG_TCA_QUICK=1 \
 		$(UV) run python scripts/experiments/run_tlg_connectomes_anova_robust.py
 
+tlg-zero-test:  ## TLG single-graph significance test (H0: sigma=0, alpha=0) on twitch + connectomes (Wald, dyadic-robust SE)
+	$(UV) run python scripts/experiments/run_tlg_zero_test.py
+
+tlg-zero-test-quick:  ## Smoke of the TLG zero test (2 twitch regions + 4 connectomes)
+	LG_ZT_QUICK=1 \
+		$(UV) run python scripts/experiments/run_tlg_zero_test.py
+
+tlg-zero-test-validate:  ## Monte-Carlo calibration / power / ROC of the alpha=0 test (consistent temporal MLE)
+	LG_ZT_VALIDATE=1 \
+		$(UV) run python scripts/experiments/run_tlg_zero_test.py
+
 kpm-sensitivity-citation:  ## KPM (moments/probes) sensitivity on the cit-HepTh citation network vs reference + exact
 	$(UV) run python scripts/experiments/run_kpm_sensitivity_citation.py
 
