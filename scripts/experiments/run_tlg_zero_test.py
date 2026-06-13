@@ -276,8 +276,14 @@ def run_validation():
 # ---------------------------------------------------------------------------
 
 def _forest(ax, df, par, title):
-    order = np.argsort(df[f"{par}_hat"].to_numpy())
-    val = df[f"{par}_hat"].to_numpy()[order]
+    raw = df[f"{par}_hat"].to_numpy()
+    # Display with the model's sign convention: the baseline sigma is a (negative)
+    # log-odds, while the degree effect alpha is non-negative. The Wald test is
+    # sign-invariant (|z| and the two-sided p-value are unchanged), so the
+    # significance colouring below is unaffected by this display choice.
+    disp = -np.abs(raw) if par == "sigma" else np.abs(raw)
+    order = np.argsort(disp)
+    val = disp[order]
     se = df[f"se_{par}_robust"].to_numpy()[order]
     p_bonf = df[f"p_{par}_bonf"].to_numpy()[order]
     labels = [df["network"].to_numpy()[i] for i in order]
@@ -307,8 +313,7 @@ def plot_real(dfs, out_path):
         _forest(axes[ri][0], df, "sigma", f"{name}: $H_0:\\sigma=0$")
         _forest(axes[ri][1], df, "alpha",
                 f"{name}: $H_0:\\alpha=0$ (edges depend on degree?)")
-    fig.suptitle("TLG single-graph significance test (Wald, dyadic-cluster-robust SE; "
-                 "1.96·SE bars, Bonferroni-significant in red)", fontsize=12)
+    fig.suptitle("LG single-graph significance test", fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     fig.savefig(out_path, dpi=150); plt.close(fig)
     log(f"Saved {out_path}")
@@ -342,7 +347,7 @@ def plot_validation(pvals, out_path):
     ax[1].set_ylabel("true positive rate (reject under $\\alpha>0$)")
     ax[1].set_title("ROC of the $\\alpha=0$ test (null vs each alternative)")
     ax[1].grid(alpha=.3); ax[1].legend(fontsize=8, loc="lower right")
-    fig.suptitle("TLG $\\alpha=0$ test: Monte-Carlo calibration, power, and ROC", fontsize=13)
+    fig.suptitle("LG $\\alpha=0$ test: Monte-Carlo calibration, power, and ROC", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=150); plt.close(fig)
     log(f"Saved {out_path}")
