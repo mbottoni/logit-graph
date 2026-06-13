@@ -29,7 +29,7 @@ Env knobs (all optional):
   LG_TLGAIC_SIGMA (-2.0)   LG_TLGAIC_ALPHA (0.05)
   LG_TLGAIC_DTRUE (0,1,2)  true depths to test
   LG_TLGAIC_DGRID (0,1,2)  candidate depths for AIC
-  LG_TLGAIC_NS (50,250,500)
+  LG_TLGAIC_NS (20,50,100,200,250)
   LG_TLGAIC_USE_CACHE (1)
 
   make tlg-aic-d           full run
@@ -83,7 +83,7 @@ SIGMA = _float("LG_TLGAIC_SIGMA", -2.0)
 ALPHA = _float("LG_TLGAIC_ALPHA", 0.05)
 DTRUE = _ints("LG_TLGAIC_DTRUE", [0, 1, 2])
 DGRID = _ints("LG_TLGAIC_DGRID", [0, 1, 2])
-NS = _ints("LG_TLGAIC_NS", [50, 250] if QUICK else [50, 250, 500])
+NS = _ints("LG_TLGAIC_NS", [20, 50] if QUICK else [20, 50, 100, 200, 250])
 JOBS = _int("LG_TLGAIC_JOBS", max(1, (os.cpu_count() or 4) - 2))
 USE_CACHE = os.environ.get("LG_TLGAIC_USE_CACHE", "1") == "1"
 
