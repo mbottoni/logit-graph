@@ -350,6 +350,14 @@ _FAM_STYLE = {
 }
 
 
+_DISPLAY_NAME = {"TLG": "LG"}
+
+
+def _disp(f):
+    """Display label for a family (the model is called LG in the paper, TLG in the code)."""
+    return _DISPLAY_NAME.get(f, f)
+
+
 def _fam_color(f):
     return _FAM_STYLE.get(f, ("#777777", "o"))[0]
 
@@ -381,7 +389,7 @@ def _legend_handles(fams):
     from matplotlib.lines import Line2D
     from matplotlib.colors import to_rgba
     h = [Patch(facecolor=to_rgba(_fam_color(f), 0.30), edgecolor=_fam_color(f), lw=1.6,
-               label=f) for f in fams]
+               label=_disp(f)) for f in fams]
     h.append(Line2D([], [], marker="*", color="black", markersize=15, ls="none",
                     markeredgecolor="white", label="real (Twitch)"))
     return h
@@ -494,7 +502,7 @@ def _main_figure(region_embeds, method):
                 lw=1.0, ls="--", alpha=0.6, zorder=4)
         ax.scatter(rp[0], rp[1], s=360, marker="*", color="black", edgecolors="white",
                    linewidths=1.3, zorder=6)               # real graph: the only point
-        ax.set_title(f"{region}  (nearest: {nearest})", fontweight="bold")
+        ax.set_title(f"{region}  (nearest: {_disp(nearest)})", fontweight="bold")
         ax.tick_params(labelbottom=False, labelleft=False, length=0); ax.grid(alpha=0.18, lw=0.5)
     for j in range(len(regions), nrow * ncol):
         axes.flat[j].axis("off")
@@ -551,7 +559,7 @@ def _distance_figure(meta, F, keep, region_embeds):
     axh = fig.add_subplot(gs[0, 0])
     H = Ddf[order]
     im = axh.imshow(H.values, aspect="auto", cmap="viridis")
-    axh.set_xticks(range(len(order))); axh.set_xticklabels(order)
+    axh.set_xticks(range(len(order))); axh.set_xticklabels([_disp(o) for o in order])
     axh.set_yticks(range(len(regions))); axh.set_yticklabels(regions)
     mean_all = np.nanmean(H.values)
     for ri in range(len(regions)):
@@ -583,7 +591,7 @@ def _distance_figure(meta, F, keep, region_embeds):
             lw=1.0, ls="--", alpha=0.6, zorder=4)
     ax.scatter(rp[0], rp[1], s=320, marker="*", color="black", edgecolors="white",
                linewidths=1.3, zorder=6)
-    ax.set_title(f"{focus} — {method}  (nearest: {nearest})", fontsize=12, fontweight="bold")
+    ax.set_title(f"{focus} — {method}  (nearest: {_disp(nearest)})", fontsize=12, fontweight="bold")
     ax.tick_params(labelbottom=False, labelleft=False, length=0); ax.grid(alpha=.18, lw=.5)
     fig.legend(handles=_legend_handles(fams), loc="lower center", ncol=len(fams) + 1,
                frameon=False, bbox_to_anchor=(0.5, -0.03))
