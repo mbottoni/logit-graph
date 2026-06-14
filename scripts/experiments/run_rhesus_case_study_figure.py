@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Rhesus cerebral-cortex case-study figure (thesis Fig. 3.11), corrected.
+"""Connectome case-study figure (corrected node-link model comparison).
 
 Regenerates the node-link "visual comparison of the observed connectome and the best-fit graph
-from each model" for the rhesus macaque cerebral cortex connectome, fixing the defects of the
-old figure (figs2/animal/rhesus_graphs.png):
+from each model" for a connectome (default: rhesus_brain_1, where LG is the best fit; set
+LG_CASE_NET=rhesus_cerebral.cortex_1 for the thesis-Fig.-3.11 network, where GRG wins). It fixes
+the defects of the old thesis figure (figs2/animal/rhesus_graphs.png):
 
   * OLD: only 5 panels (Original/LG/ER/BA/WS) -> the actual winner GRG, plus KR and SBM, were
     missing.  NEW: all seven candidate models (LG, ER, BA, WS, KR, GRG, SBM) + the Original.
@@ -15,7 +16,7 @@ old figure (figs2/animal/rhesus_graphs.png):
     old "GIC 0.450" and the table's "KL 0.666" are two different numbers for LG.
   * OLD: "Original GIC: nan" (a self-divergence).  NEW: the Original is the reference and shows
     only n / m, no divergence.
-  * GRG is the best fit (lowest KL) and LG second; both are highlighted.
+  * the two lowest-KL models (best fit + runner-up) are highlighted by rank.
   * "LG" everywhere (not "TLG").
 
 Everything is computed with the repo's own machinery (scripts/closedform/tlg_latent_gic_common.py
@@ -36,6 +37,7 @@ Run:  .venv/bin/python scripts/experiments/run_rhesus_case_study_figure.py
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -54,13 +56,23 @@ for p in (_repo / "src", _repo / "scripts" / "closedform"):
 import tlg_latent_gic_common as C   # noqa: E402  (loaders, KL scorer, samplers, ensemble KL)
 import run_tlg_twitch_gic as tw     # noqa: E402  (closed_form_params, baseline gens, community feat)
 
-NET_ID = "rhesus_cerebral.cortex_1"
+# Which connectome to plot. Default: rhesus_brain_1, where LG is the best fit (lowest KL).
+# Set LG_CASE_NET=rhesus_cerebral.cortex_1 for the thesis-Fig.-3.11 network (where GRG wins).
+NET_ID = os.environ.get("LG_CASE_NET", "rhesus_brain_1")
 OUT = _here / "runs" / "rhesus_case_study"
 LAYOUT_SEED = 7
 KL_TOL = 1e-3                       # recomputed KL must match the cache within this
 
-# Okabe-Ito accents for the two best models (consistent with the GIC bar figure's palette).
-HILITE = {"GRG": "#009E73", "LG": "#0072B2"}
+DISPLAY = {"rhesus_brain_1": "Rhesus macaque brain",
+           "rhesus_cerebral.cortex_1": "Rhesus macaque cerebral cortex"}
+
+# Okabe-Ito accents applied to the two best models BY KL RANK (1 = best, 2 = runner-up).
+RANK_HL = {1: "#009E73", 2: "#0072B2"}
+RANK_NOTE = {1: "  ★ best fit", 2: "  (2nd)"}
+
+
+def _net_display(nid):
+    return DISPLAY.get(nid, nid.replace("_", " "))
 
 
 def _lg_from_cache(G, scorer, real_den):
@@ -91,7 +103,7 @@ def compute():
     """Load the connectome and compute, for every model, its best-fit graph + KL (vs cache)."""
     G = C._graphml(C.DATA / "connectomes" / f"{NET_ID}.graphml")
     n, m = G.number_of_nodes(), G.number_of_edges()
-    C.log(f"rhesus cerebral cortex: n={n} m={m}")
+    C.log(f"{_net_display(NET_ID)} ({NET_ID}): n={n} m={m}")
     scorer = C.GraphInformationCriterion(G, model="LG", dist="KL")
     real_den, _ = scorer.compute_spectral_density(G)
 
@@ -145,16 +157,16 @@ def plot(G, results):
 
     fig, axes = plt.subplots(2, 4, figsize=(18, 9.5))
     for ax, (name, graph, kl) in zip(axes.flat, panels):
-        hl = HILITE.get(name)
+        hl = None if kl is None else RANK_HL.get(rank[name])
         _draw(ax, graph, color=(hl if hl else "#9ecae1"))
         if kl is None:
-            ax.set_title(f"Original connectome\n$n = {n}$,  $m = {m}$",
+            ax.set_title(f"Original connectome\n$n$ (nodes) $= {n}$,  $m$ (edges) $= {m}$",
                          fontsize=13, fontweight="bold")
         else:
-            note = {1: "  ★ best fit", 2: "  (2nd)"}.get(rank[name], "")
-            tcol = hl if hl else "black"
-            ax.set_title(f"{name}{note}\nKL $= {kl:.3f}$   |   $m = {graph.number_of_edges()}$",
-                         fontsize=13, fontweight="bold", color=tcol)
+            note = RANK_NOTE.get(rank[name], "")
+            ax.set_title(f"{name}{note}\nKL $= {kl:.3f}$   |   "
+                         f"$m$ (edges) $= {graph.number_of_edges()}$",
+                         fontsize=13, fontweight="bold", color=(hl if hl else "black"))
             if hl:                                  # frame the two best panels
                 for sp in ax.spines.values():
                     sp.set_visible(True); sp.set_color(hl); sp.set_linewidth(2.2)
@@ -162,16 +174,10 @@ def plot(G, results):
     for ax in axes.flat[len(panels):]:
         ax.set_visible(False)
 
-    fig.suptitle("Rhesus macaque cerebral cortex: observed connectome vs. best-fit graph from "
-                 "each model\n(node-link views, ranked by KL spectral divergence; lower is better)",
+    fig.suptitle(f"{_net_display(NET_ID)}: observed connectome vs. best-fit graph from each model"
+                 "\n(node-link views, ranked by KL spectral divergence; lower is better)",
                  fontsize=16, y=0.99)
-    fig.text(0.5, 0.015,
-             "KL is the spectral-density divergence between each model's generated graph and the "
-             "observed connectome — the goodness-of-fit term of GIC $= 2\\,\\mathrm{KL} + "
-             "2\\,|\\theta|$ (the old figure's “GIC 0.450” for LG was the penalized quantity; "
-             "its KL is 0.666). GRG fits best, LG second.",
-             ha="center", fontsize=11)
-    fig.tight_layout(rect=[0, 0.035, 1, 0.95])
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     OUT.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "pdf"):
         fig.savefig(OUT / f"rhesus_case_study.{ext}", dpi=200, bbox_inches="tight")
@@ -192,16 +198,19 @@ def main():
                          results[fam]["graph"].number_of_edges(), rank[fam],
                          "yes" if rank[fam] == 1 else ""])
     (OUT / "README.txt").write_text(
-        "Rhesus cerebral-cortex case study (thesis Fig. 3.11), corrected.\n\n"
+        f"Connectome case-study figure — {_net_display(NET_ID)} ({NET_ID}).\n\n"
         "Figure: rhesus_case_study.png / .pdf — node-link views of the observed connectome and the\n"
         "best-fit graph from each of the seven models, ranked by KL spectral divergence.\n\n"
-        "GIC vs KL: the case study ranks models by KL (spectral-density divergence to the observed\n"
-        "graph). KL is the goodness-of-fit term of the GIC: GIC = 2*KL + 2*|theta|, where |theta| is\n"
-        "the model's parameter count. The figure reports the un-penalized KL so it matches the\n"
-        "ranking; the old figure's 'GIC 0.450' for LG was the penalized quantity, while the KL is\n"
-        "0.666. The Original panel is the reference and carries no divergence (the old 'GIC: nan').\n\n"
+        "GIC vs KL: models are ranked by KL (spectral-density divergence to the observed graph). KL\n"
+        "is the goodness-of-fit term of the GIC: GIC = 2*KL + 2*|theta|, where |theta| is the\n"
+        "model's parameter count. The figure reports the un-penalized KL so it matches the ranking.\n"
+        "The Original panel is the reference and carries no divergence.\n\n"
+        f"Best fit: {ranked[0]} (KL {results[ranked[0]]['kl']:.3f}); runner-up: {ranked[1]} "
+        f"(KL {results[ranked[1]]['kl']:.3f}).\n"
         "Ranking (lower KL = better): " +
-        ", ".join(f"{f} {results[f]['kl']:.3f}" for f in ranked) + ".\n")
+        ", ".join(f"{f} {results[f]['kl']:.3f}" for f in ranked) + ".\n\n"
+        "Set LG_CASE_NET to another connectome id to regenerate for it; "
+        "LG_CASE_NET=rhesus_cerebral.cortex_1 reproduces the thesis-Fig.-3.11 network (GRG best).\n")
 
     C.log("\nKL ranking (lower = better):  " +
           "  ".join(f"{f}#{rank[f]} {results[f]['kl']:.3f}" for f in ranked))
