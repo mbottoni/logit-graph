@@ -351,11 +351,17 @@ _FAM_STYLE = {
 
 
 _DISPLAY_NAME = {"TLG": "LG"}
+_DATASET_DISPLAY = {"twitch": "Twitch", "connectome": "Connectome"}
 
 
 def _disp(f):
     """Display label for a family (the model is called LG in the paper, TLG in the code)."""
     return _DISPLAY_NAME.get(f, f)
+
+
+def _real_label():
+    """Legend label for the observed graphs, named after the active dataset."""
+    return f"real ({_DATASET_DISPLAY.get(DATASET, DATASET)})"
 
 
 def _fam_color(f):
@@ -391,8 +397,67 @@ def _legend_handles(fams):
     h = [Patch(facecolor=to_rgba(_fam_color(f), 0.30), edgecolor=_fam_color(f), lw=1.6,
                label=_disp(f)) for f in fams]
     h.append(Line2D([], [], marker="*", color="black", markersize=15, ls="none",
-                    markeredgecolor="white", label="real (Twitch)"))
+                    markeredgecolor="white", label=_real_label()))
     return h
+
+
+def _combined_figure(meta, F, keep):
+    """Pooled single-embedding view (companion to the per-network grid): ALL networks' graphs
+    in ONE PCA / t-SNE / UMAP each (1x3 panels). Per-family covariance ellipses (density
+    regions) + scatter, the real graphs as black stars. Shows the global family geometry of the
+    whole dataset in one shot. 300-dpi PNG + vector PDF."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+    plt.rcParams.update({"font.size": 12, "axes.titlesize": 14, "legend.fontsize": 11,
+                         "font.family": "DejaVu Sans", "axes.linewidth": 0.9,
+                         "pdf.fonttype": 42, "ps.fonttype": 42})
+    has_umap = True
+    try:
+        import umap
+    except Exception:
+        has_umap = False
+    methods = ["PCA", "t-SNE"] + (["UMAP"] if has_umap else [])
+    fams = [f for f in FAMILIES if f in set(meta["family"])]
+    color = {f: _fam_color(f) for f in fams}
+
+    X = StandardScaler().fit_transform(F[keep].values)        # pool ALL graphs into one space
+    per = min(PERPLEXITY, max(5.0, (len(X) - 1) / 3))
+    pca = PCA(2, random_state=SEED); pca_xy = pca.fit_transform(X)
+    emb = {"PCA": pca_xy,
+           "t-SNE": TSNE(2, random_state=SEED, init="pca", perplexity=per).fit_transform(X)}
+    if has_umap:
+        emb["UMAP"] = umap.UMAP(n_components=2, random_state=SEED,
+                                n_neighbors=min(15, len(X) - 1),
+                                min_dist=0.1).fit_transform(X)
+    axis_lab = {"PCA": (f"PC 1 ({pca.explained_variance_ratio_[0] * 100:.0f}% var.)",
+                        f"PC 2 ({pca.explained_variance_ratio_[1] * 100:.0f}% var.)"),
+                "t-SNE": ("t-SNE 1", "t-SNE 2"), "UMAP": ("UMAP 1", "UMAP 2")}
+    fam_arr = meta["family"].values
+
+    fig, axes = plt.subplots(1, len(methods), figsize=(5.6 * len(methods), 5.2), squeeze=False)
+    for ci, method in enumerate(methods):
+        ax = axes[0][ci]; e = emb[method]
+        for f in fams:                                # families: density region + the points
+            m = (fam_arr == f)
+            _cov_ellipse(ax, e[m, 0], e[m, 1], color[f])
+            ax.scatter(e[m, 0], e[m, 1], s=13, alpha=0.75, color=color[f],
+                       marker=_fam_marker(f), edgecolors="white", linewidths=0.2, zorder=3)
+        m = (fam_arr == "real")                       # real graphs: highlighted stars
+        ax.scatter(e[m, 0], e[m, 1], s=240, marker="*", color="black",
+                   edgecolors="white", linewidths=1.2, zorder=6)
+        ax.set_title(f"({chr(97 + ci)}) {method}", fontweight="bold", loc="left")
+        ax.set_xlabel(axis_lab[method][0]); ax.set_ylabel(axis_lab[method][1])
+        ax.tick_params(labelbottom=False, labelleft=False, length=0); ax.grid(alpha=0.18, lw=0.5)
+    fig.legend(handles=_legend_handles(fams), loc="lower center", ncol=len(fams) + 1,
+               frameon=False, bbox_to_anchor=(0.5, -0.02), handletextpad=0.4, columnspacing=1.1)
+    fig.tight_layout(rect=[0, 0.05, 1, 0.99])
+    for ext in ("png", "pdf"):
+        fig.savefig(OUT / f"dimred_combined.{ext}", dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 
 def _grid_figure(meta, F, keep):
@@ -654,6 +719,7 @@ def dimred(records):
     fig.suptitle("Feature colinearity: candidates vs. pruned set", fontsize=14)
     fig.savefig(OUT / "colinearity.png", dpi=150, bbox_inches="tight"); plt.close(fig)
 
+    _combined_figure(meta, F, keep)                # pooled 1x3 PCA/t-SNE/UMAP across networks
     region_embeds = _grid_figure(meta, F, keep)   # supplementary: all 3 methods x networks
     _main_figure(region_embeds, MAIN_METHOD)       # main figure: one method, 2 cols, clean
     _distance_figure(meta, F, keep, region_embeds)  # heatmap + the embeddings for one network
