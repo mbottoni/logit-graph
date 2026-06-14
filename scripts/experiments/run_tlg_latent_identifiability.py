@@ -287,8 +287,8 @@ def plot_identifiability(combined, scenarios, out_path):
                for s in scenarios]
     fig.legend(handles=handles, loc="lower center", ncol=1, fontsize=9, frameon=False,
                bbox_to_anchor=(0.5, -0.04))
-    fig.suptitle("Unified latent-TLG identifiability — all five coefficients recover by "
-                 "MLE as n grows (dashed = truth; add+remove model)", fontsize=13)
+    fig.suptitle("Unified LG identifiability — all five coefficients recover by "
+                 "MLE as n grows (dashed = truth)", fontsize=13)
     fig.tight_layout(rect=[0, 0.04, 1, 1])
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
