@@ -316,6 +316,9 @@ kpm-sensitivity-citation-quick:  ## Smoke of the KPM sensitivity study (small gr
 	LG_KPM_QUICK=1 \
 		$(UV) run python scripts/experiments/run_kpm_sensitivity_citation.py
 
+rhesus-case-study-figure:  ## Rhesus cerebral-cortex case-study figure (thesis Fig. 3.11): 7 models + Original, ranked by KL
+	$(UV) run python scripts/experiments/run_rhesus_case_study_figure.py
+
 # ─────────────────────────────────────────────────────────────
 #  Temporal Logit-Graph experiments (tlg- prefix)
 # ─────────────────────────────────────────────────────────────
