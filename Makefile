@@ -319,6 +319,12 @@ kpm-sensitivity-citation-quick:  ## Smoke of the KPM sensitivity study (small gr
 rhesus-case-study-figure:  ## Rhesus cerebral-cortex case-study figure (thesis Fig. 3.11): 7 models + Original, ranked by KL
 	$(UV) run python scripts/experiments/run_rhesus_case_study_figure.py
 
+rhesus-convergence-figure:  ## LG spectral-fitting convergence (Edge/Spectrum/GIC vs iteration) for a d>=1 connectome
+	$(UV) run python scripts/experiments/run_rhesus_convergence_figure.py
+
+rhesus-spectrum-figure:  ## Normalized-Laplacian spectral density (hist+KDE) of the connectome vs each model best fit
+	$(UV) run python scripts/experiments/run_rhesus_spectrum_figure.py
+
 # ─────────────────────────────────────────────────────────────
 #  Temporal Logit-Graph experiments (tlg- prefix)
 # ─────────────────────────────────────────────────────────────
