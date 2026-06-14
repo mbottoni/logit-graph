@@ -220,7 +220,7 @@ def _plot(mdf, pdf, edf, ref, exact_den, centers, n_sub, out_path, L):
     ax[2].plot(centers, ref, "-", color="#000000", lw=2, label=f"KPM ref")
     ax[2].plot(centers, d_def, "--", color="#D55E00", lw=1.6, label="KPM default (60,20)")
     ax[2].plot(centers, exact_den, ":", color="#56B4E9", lw=1.6,
-               label=f"exact (subgraph n={n_sub})")
+               label="exact")
     ax[2].set_xlabel("normalized-Laplacian eigenvalue"); ax[2].set_ylabel("density")
     ax[2].set_title("Spectral density: KPM vs exact"); ax[2].grid(alpha=.3); ax[2].legend()
     fig.suptitle("KPM parameter sensitivity on the arXiv cit-HepTh citation network",
