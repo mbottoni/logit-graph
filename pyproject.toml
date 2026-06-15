@@ -72,8 +72,13 @@ progress = [
 torch = [
     "torch>=2.0"
 ]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26"
+]
 
 [project.urls]
-Homepage = "https://github.com/maruanottoni/logit-graph"
-Repository = "https://github.com/maruanottoni/logit-graph"
-Issues = "https://github.com/maruanottoni/logit-graph/issues"
+Homepage = "https://github.com/mbottoni/logit-graph"
+Repository = "https://github.com/mbottoni/logit-graph"
+Documentation = "https://logit-graph.readthedocs.io/"
+Issues = "https://github.com/mbottoni/logit-graph/issues"
