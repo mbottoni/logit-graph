@@ -23,15 +23,15 @@ max_val = np.nan
 eps = 1e-5
 
 class NegativeLogLikelihoodLoss(torch.nn.Module if torch is not None else object):
-    """DEPRECATED: paper-raw (alpha*S_i + beta*S_j + sigma) loss without Layer-2
+    """DEPRECATED: paper-raw (alpha*S_i + beta*S_j + sigma) loss without leave-one-out
     conditioning, kept only to reproduce the original notebooks. New code should use
-    :class:`LogitRegEstimator` (Layer-2 aware, with compute_aic / select_d)."""
+    :class:`LogitRegEstimator` (leave-one-out aware, with compute_aic / select_d)."""
 
     def __init__(self, graph: np.ndarray, d: int) -> None:
         super(NegativeLogLikelihoodLoss, self).__init__()
         warnings.warn(
             "NegativeLogLikelihoodLoss is deprecated; use LogitRegEstimator "
-            "(Layer-2 offset logit) for consistent results.",
+            "(leave-one-out offset logit) for consistent results.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -70,14 +70,14 @@ class NegativeLogLikelihoodLoss(torch.nn.Module if torch is not None else object
         return -likelihood  # Return negative likelihood
 
 class MLEGraphModelEstimator:
-    """DEPRECATED: paper-raw MLE without Layer-2 conditioning — the original
+    """DEPRECATED: paper-raw MLE without leave-one-out conditioning — the original
     ``alpha*S_i + beta*S_j + sigma`` form with no edge-removal correction (biased on
-    Layer-2 Gibbs graphs). New code should use :class:`LogitRegEstimator` instead."""
+    leave-one-out Gibbs graphs). New code should use :class:`LogitRegEstimator` instead."""
 
     def __init__(self, graph: np.ndarray, d: int) -> None:
         warnings.warn(
             "MLEGraphModelEstimator is deprecated; use LogitRegEstimator "
-            "(Layer-2 offset logit) for consistent results.",
+            "(leave-one-out offset logit) for consistent results.",
             DeprecationWarning,
             stacklevel=2,
         )
