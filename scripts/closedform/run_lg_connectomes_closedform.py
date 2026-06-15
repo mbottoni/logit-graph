@@ -1,45 +1,7 @@
 #!/usr/bin/env python3
-"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on the 18 animal connectomes, alongside a fairly-scored Logit-Graph (LG).
-
-Connectome version of run_gplus_closedform.py. Each connectome is one graph per
-organism/region (mouse, macaque, rat, C. elegans, drosophila, ...), loaded from
-GraphML as the undirected, unweighted (binary) largest connected component.
-
-For each connectome in the size window we score, by spectral GIC
-(2*KL + 2*n_params, KL on the normalized-Laplacian density, lower=better):
-
-  * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
-                     of the spectral density over N_RUNS post-burn-in snapshots
-                     (same averaging convention the baselines get).
-  * ER/BA/WS      -- two ways each:
-       grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
-       cf   : closed-form moment estimate (no search)
-  * KR/GRG        -- closed-form only (bonus families)
-
-Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
-  ER  p = 2E/(n(n-1))                      (exact MLE)
-  BA  m = round(E/n)            in [1, n)   (edge count E = m(n-m))
-  WS  k = 2*round(E/n) (even)   in [2, n)   (E = nk/2, rewiring conserves edges)
-  WS  p = 1 - (C_obs/C0)^(1/3), C0 = 3(k-2)/(4(k-1))   (clustering moment)
-  KR  d = round(kbar)          (nd even)   (E = nd/2)
-  GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
-
-The normalized-Laplacian spectral density uses dense eigvalsh for n <= 500 and
-the deterministic KPM estimator for larger n (logit_graph.gic, seeded), so the
-big connectomes (n up to ~1800) stay tractable. Reproducible: fixed seed
-(LG_CCF_SEED), BLAS threads pinned to 1. Read-only w.r.t. the library; writes
-only under runs/connectomes_closedform/. Findings:
-FINDINGS_connectomes_closedform.md.
-
-Env knobs (all optional):
-  LG_CCF_SEED (12345)     LG_CCF_QUICK (0 -> full; 1 -> smoke on small connectomes)
-  LG_CCF_MIN_NODES (20)   LG_CCF_MAX_NODES (2000)   LG_CCF_MAX_NETS (all)
-  LG_CCF_N_RUNS (5)       LG_CCF_GRID_POINTS (5)
-
-  make lg-gic-connectomes-closedform        full run
-  make lg-gic-connectomes-closedform-quick  smoke on the small connectomes
-"""
+"""Closed-form / grid-search baselines (ER/BA/WS/KR/GRG) vs a fairly-scored LG on the 18 animal
+connectomes (binary largest connected component), by spectral GIC (2*KL + 2*n_params,
+lower=better). Seeded/reproducible; `make lg-gic-connectomes-closedform`."""
 from __future__ import annotations
 
 import math
@@ -208,8 +170,7 @@ def grid_best_ws(real_nx, n, n_runs, seed):
 
 
 # ---------------------------------------------------------------------------
-# LG scored FAIRLY: burn-in + ensemble-mean spectral density (same convention
-# as the baselines, which average n_runs sample densities).
+# LG scored FAIRLY: burn-in + ensemble-mean spectral density (baseline convention).
 # ---------------------------------------------------------------------------
 
 def _lg_burn(n):
