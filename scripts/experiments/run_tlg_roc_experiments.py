@@ -1,52 +1,7 @@
 #!/usr/bin/env python3
-"""Temporal Logit-Graph (TLG) ROC experiments — group-difference tests on (sigma, alpha).
-
-The TLG analog of the equilibrium ROC sweeps (run_lg_roc_experiments.py). There the
-test detects whether two groups of graphs differ in sigma; here we test BOTH temporal
-parameters — the intercept sigma AND the degree coefficient alpha — under the growth
-model.
-
-Test (one Monte-Carlo experiment). Two methods (env LG_TLGROC_METHOD):
-  * "wald" (default): ONE growth graph per group; fit by logistic regression ->
-    (theta_hat, se) for the tested parameter; two-sample Wald z-test using the MLE's
-    own standard errors, z = (th1 - th2)/sqrt(se1^2 + se2^2), p = 2(1 - Phi(|z|)).
-    No replicates needed — the logistic regression already gives the SE. (Verified
-    well-calibrated: the null rejection rate tracks the significance level even with
-    the design pooled across growth steps.)
-  * "anova": ``n_reps`` graphs per group; one-way ANOVA (scipy f_oneway) on the
-    tested parameter's estimates -> p-value (the empirical-variance analog, kept for
-    comparison).
-Repeating over ``n_experiments`` gives a p-value distribution; the "ROC" plots the
-rejection rate P(p < level) vs the significance level (the p-value CDF), with the
-null (no difference) sitting on the chance diagonal — the same presentation as the LG
-figures.
-
-Two variants per parameter (each paneled by d):
-  * effect-size: fixed n = ``n_effect``, one curve per group-2 value (effect size),
-    including the null;
-  * sample-size: fixed effect, one curve per n.
-
-Output under runs/tlg_roc/ (gitignored):
-  - pvals_*.npy            cached per-cell p-value arrays (resumable, cheap re-plots)
-  - roc_long.csv           tidy rejection-rate-vs-level rows
-  - roc_effect.png         rows = {sigma-test, alpha-test}, cols = d
-  - roc_sample.png         rows = {sigma-test, alpha-test}, cols = d
-
-Env knobs (all optional):
-  LG_TLGROC_QUICK (0)        1 -> d={0}, tiny grids/experiments
-  LG_TLGROC_METHOD (wald)    "wald" (single-graph SE) or "anova" (n_reps replicates)
-  LG_TLGROC_SEED (4000)      LG_TLGROC_JOBS (cpu-2)   process pool over experiments
-  LG_TLGROC_NREPS (10)       graphs per group (anova method only)
-  LG_TLGROC_NEXP (200)       experiments per cell
-  LG_TLGROC_NSTEPS (5)       growth steps per generated graph
-  LG_TLGROC_DS (0,1,2)       degree-feature hops (panel columns)
-  LG_TLGROC_NEFFECT (60)     fixed n for the effect-size variant
-  LG_TLGROC_NS (20,40,60,100,160)  n grid for the sample-size variant
-  LG_TLGROC_USE_CACHE (1)    1 -> reload cached cells + replot
-
-  make tlg-roc              full run
-  make tlg-roc-quick        smoke
-"""
+"""Temporal Logit-Graph (TLG) ROC experiments -- group-difference tests on (sigma, alpha): per
+experiment fit growth graphs per group and test each parameter (Wald z on the MLE SE, or ANOVA),
+plotting rejection rate vs significance level (effect-size and sample-size variants). `make tlg-roc`."""
 from __future__ import annotations
 
 import os
