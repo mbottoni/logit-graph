@@ -1,19 +1,7 @@
 #!/usr/bin/env python3
-"""Replot the Connectomes LG ANOVA figure from the saved data (no refit / no simulation rerun).
-
-Reads runs/connectomes_tlg_anova_robust/{summary,pairwise_sigma,pairwise_alpha}.csv and
-regenerates connectomes_tlg_anova_robust.png with the presentation changes requested for the
-paper:
-  * LG instead of TLG, "16 networks" (the count of non-degenerate connectomes actually fit;
-    derived from the data), and no "dyadic-cluster-robust SE" qualifier in the title;
-  * the per-connectome forest subplot titles drop the "(robust SE)" note;
-  * the display sign convention sigma <= 0 and alpha >= 0, keeping the raw magnitude
-    (sigma -> -|sigma|, alpha -> +|alpha|): the connectome cross-sectional fits put much of the
-    degree signal on a large positive intercept and a negative slope, so this normalizes the
-    presentation while preserving every estimate's magnitude.
-The pairwise Bonferroni heatmaps are taken verbatim from the saved CSVs (the equality test is
-invariant to the display sign convention).
-"""
+"""Replot the Connectomes LG ANOVA figure from saved data (no rerun): reads
+runs/connectomes_tlg_anova_robust/{summary,pairwise_sigma,pairwise_alpha}.csv with LG labels,
+"16 networks", and sign convention sigma<=0 / alpha>=0; Bonferroni heatmaps verbatim from CSV."""
 from pathlib import Path
 
 import numpy as np
