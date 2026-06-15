@@ -1,38 +1,7 @@
 #!/usr/bin/env python3
-"""Convergence diagnostics for the Temporal Logit-Graph (TLG) with edge removal.
-
-The TLG analog of notebooks/base/22-3-convergence-diagnostics.ipynb (the LG MCMC
-version). With ``allow_removal=True`` each step resamples EVERY dyad from the lagged
-probability expit(sigma + alpha*D(t-1)), so edges form AND dissolve — the process is
-a genuine ergodic Markov chain with a stationary distribution at moderate density
-(no saturation). This experiment shows the chains **mix** to that stationary
-distribution independently of where they start.
-
-  1. Build a long-run reference graph: one draw from the stationary distribution
-     (grown with removal well past mixing).
-  2. Grow ``len(ER_PS)`` chains from ER seeds at varied densities p_0; at every
-     checkpoint record three diagnostics vs the reference:
-       (a) Laplacian spectral distance        -> noise floor
-       (b) KS statistic of the degree dist.    -> noise floor
-       (c) adjacency-ESD KL divergence         -> noise floor
-     Diagnostics plateau at the (small, non-zero) distance between two independent
-     draws from the stationary distribution, not at exactly 0 — the correct MCMC
-     interpretation of convergence to a *distribution*.
-  3. Plot the three panels.
-
-Model: logit(P[edge i-j at step t]) = sigma + alpha * D_ij(t-1), with D the
-"bounded" degree feature (see logit_graph.temporal). x-axis = growth STEP (each
-step is one full sweep / resample over all dyads), not single edge flips.
-
-Env knobs (all optional):
-  LG_TLGC_N (750)      LG_TLGC_D (0)       LG_TLGC_SIGMA (-2.0)   LG_TLGC_ALPHA (0.05)
-  LG_TLGC_STEPS (20)   growth steps per chain
-  LG_TLGC_CHECK (1)    checkpoint every k steps
-  LG_TLGC_SEED (42)    LG_TLGC_QUICK (1 -> n=200, fewer steps)
-
-  make tlg-convergence-diagnostics         full run
-  make tlg-convergence-diagnostics-quick   smoke
-"""
+"""Convergence diagnostics for the Temporal Logit-Graph (TLG) with edge removal: with
+allow_removal=True every dyad is resampled from expit(sigma+alpha*D(t-1)), an ergodic chain;
+shows chains mix to the stationary distribution from any ER seed. `make tlg-convergence-diagnostics`."""
 from __future__ import annotations
 
 import os
