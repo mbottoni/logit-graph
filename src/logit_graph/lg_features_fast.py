@@ -636,11 +636,9 @@ def _intersect_both_d(
     j: int,
     d: int,
 ) -> tuple:
-    """O(ball) intersection: count |B_d(i) ∩ B_d(j) \\ {i,j}| and same for d-1.
-
-    Iterates the smaller of the two BFS frontiers instead of all n nodes.
-    Returns (c_d, c_dm1).
-    """
+    """O(ball) intersection: count |B_d(i) ∩ B_d(j) \\ {i,j}| and same for d-1,
+    iterating the smaller of the two BFS frontiers instead of all n nodes.
+    Returns (c_d, c_dm1)."""
     c_d = 0
     c_dm1 = 0
     dm1 = d - 1
@@ -815,12 +813,9 @@ def run_gibbs_numba_buf(
     alpha_gwesp: float,
     n: int,
 ) -> None:
-    """Run Gibbs steps with in-place CSR row buffers (no per-flip allocations).
-
-    BFS scratch buffers (dist + frontier for each of i,j) are allocated once
-    here and reused across all n_iter steps — avoids ~4 * n_iter Numba
-    allocations which dominate at large n with sparse density.
-    """
+    """Run Gibbs steps with in-place CSR row buffers (no per-flip allocations). BFS
+    scratch (dist + frontier for i,j) is allocated once here and reused across all
+    n_iter steps, avoiding ~4*n_iter Numba allocations that dominate at large sparse n."""
     n_iter = draws.shape[0]
     # Pre-allocate BFS scratch space once per chain.
     dist_i = np.empty(n, dtype=np.int16)
