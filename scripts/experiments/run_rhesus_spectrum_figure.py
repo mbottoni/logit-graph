@@ -1,24 +1,7 @@
 #!/usr/bin/env python3
-"""Spectral-density figure for the connectome case study (thesis rhesus_spectrum.png).
-
-Companion to run_rhesus_case_study_figure.py. Reproduces the normalized-Laplacian eigenvalue
-spectral density (histogram + KDE) of the observed connectome and the best-fit graph from each
-model — the spectra whose KL divergence the case-study ranking is built on.
-
-It reuses the case-study script's graph generation (run_rhesus_case_study_figure.compute), so the
-panels show exactly the same best-fit instances the KL ranking uses, with the same network default
-(LG_CASE_NET, default rhesus_brain_1 where LG is the best fit). The eigenvalue spectrum and the
-seaborn histogram+KDE plot match the thesis notebook
-(notebooks/connectomes_datasets/17-1-connectomes-analysis.ipynb); the only correction is that all
-seven models are shown (the old figure showed only Original/LG/ER/BA/WS, omitting GRG/KR/SBM), and
-panels are ordered by KL rank so the closest-matching spectra come first.
-
-Output under scripts/experiments/runs/rhesus_case_study/ (gitignored):
-  rhesus_spectrum.png / .pdf
-
-Run:  .venv/bin/python scripts/experiments/run_rhesus_spectrum_figure.py
-Env:  LG_CASE_NET (rhesus_brain_1)
-"""
+"""Spectral-density figure for the connectome case study (thesis rhesus_spectrum.png): the
+normalized-Laplacian eigenvalue density (histogram + KDE) of the observed connectome and each
+model's best fit, reusing run_rhesus_case_study_figure.compute, all seven models ordered by KL rank."""
 from __future__ import annotations
 
 import sys
