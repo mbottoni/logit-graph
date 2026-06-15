@@ -1,27 +1,7 @@
 #!/usr/bin/env python3
-"""Run AIC d-selection experiments.
-
-Default mode: EFFICIENT — completes in ~1 min single-core on M1 (~15 s with 4 jobs).
-
-Mode guide:
-  EFFICIENT  n=[50,100], iter_cap=None, m=5, runs=10  — fast, good mixing
-  INSIGHT    n=[80],     iter_cap=30k,  m=5, runs=3   — quick sanity check
-  SCALED     n=[100,250,500], iter_cap=30k             — WARNING: chains unmixed at n>=250
-  TWO_HOUR   n=[100,500,1000], iter_cap=10M            — slow; d=2/3 take hours at n>=500
-  PAPER      n=[100,500,1000], iter_cap=None           — production; expect hours
-
-d=2 note: the d=2 GWESP model at sigma=-3 has a phase transition to 71% density
-(no moderate-density equilibrium exists). AIC correctly picks d=0 for those graphs.
-d=0, d=1, d=3 all achieve >90% accuracy with EFFICIENT settings.
-
-Environment overrides:
-  LG_EXPERIMENT_MODE=EFFICIENT   select preset
-  LG_AIC_JOBS=4                  parallel workers
-  LG_AIC_USE_CACHE=0             force re-run ignoring cache
-  LG_AIC_ITER_CAP=50000          override iter_cap (integer or 'none')
-  LG_AIC_N_RUNS=10               override n_runs
-  LG_AIC_ENSEMBLE_JOBS=3        inner ensemble parallelism
-"""
+"""Run AIC d-selection experiments. Default mode EFFICIENT (~1 min single-core); presets
+EFFICIENT/INSIGHT/SCALED/TWO_HOUR/PAPER trade speed for n-grid and mixing (LG_EXPERIMENT_MODE).
+d=2 GWESP at sigma=-3 has a phase transition to 71% density, so AIC correctly picks d=0 there."""
 from __future__ import annotations
 
 import os
