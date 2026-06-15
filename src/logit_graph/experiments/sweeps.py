@@ -449,7 +449,7 @@ def simulate_graph(
     adaptive_min_iter: int = 20_000,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, float]]:
     """Generate a graph at fixed sigma. d=0 uses a direct ER sample at p=expit(sigma)
-    (exact equilibrium, no degree feedback); d>=1 runs Layer-2 Gibbs with the feature
+    (exact equilibrium, no degree feedback); d>=1 runs leave-one-out Gibbs with the feature
     coefficient fixed at beta=1 (matching the paper offset estimator)."""
     if d == 0:
         if sigma is None:
