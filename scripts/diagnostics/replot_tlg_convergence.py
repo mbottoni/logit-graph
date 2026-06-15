@@ -1,8 +1,6 @@
-"""Re-plot the TLG convergence diagnostics from the cached CSV (no experiment rerun).
-
-Reads runs/tlg_convergence/convergence.csv and regenerates the 3-panel figure with an
-updated, cleaner title, writing straight to the paper's image folder.
-"""
+"""Re-plot the TLG convergence diagnostics from the cached CSV (no rerun): reads
+runs/tlg_convergence/convergence.csv and regenerates the 3-panel figure with a cleaner
+title, writing straight to the paper image folder."""
 import sys
 from pathlib import Path
 

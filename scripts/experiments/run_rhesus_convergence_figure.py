@@ -1,29 +1,7 @@
 #!/usr/bin/env python3
-"""Convergence-dynamics figure for the connectome case study (thesis rhesus_iteration.png),
-using the SAME latent LG model as the case-study / spectrum figures.
-
-Companion to run_rhesus_case_study_figure.py. Reproduces the three-panel convergence plot —
-Edge Differences, Spectrum Differences, and GIC Values vs. iteration, each raw + a 10-point
-moving average — but for the LATENT multi-feature LG growth process (degree + coarse/fine
-community + latent ASE), the model the KL ranking and the spectrum figure use, rather than the
-original single-feature equilibrium fitter.
-
-The latent LG generates a graph by budgeted add-only growth toward the observed edge count
-E_real (logit_graph_gic_common._grow_one): each step forms a small batch of the at-risk non-edges,
-each chosen with probability proportional to exp(alpha*D + gc*Bc + gf*Bf + lam*L). We mirror that
-exact selection here but in finer increments, and after each increment record:
-  * Edge Differences  = E_real - |E(current)|                (-> 0 as the graph grows in)
-  * Spectrum Differences = ||sorted eig(L_cur) - sorted eig(L_real)||, L = D - A (unnormalized)
-  * GIC Values        = KL(observed spectral density || current), the case study's fit metric
-The coefficients and the selected (d, kernel, rank) are read from the cached fit for the network,
-so the trace is the actual best-fit latent LG configuration. This works for any d (0 or 1).
-
-Output under scripts/experiments/runs/rhesus_case_study/ (gitignored):
-  rhesus_convergence.png / .pdf
-
-Run:  .venv/bin/python scripts/experiments/run_rhesus_convergence_figure.py
-Env:  LG_CASE_NET (rhesus_brain_1), LG_CONV_POINTS (300 record steps), LG_CONV_SEED (100).
-"""
+"""Convergence-dynamics figure for the connectome case study (thesis rhesus_iteration.png) using
+the latent multi-feature LG: traces budgeted add-only growth to E_real, recording Edge / Spectrum /
+GIC differences per step (coefficients + selected d/kernel/rank read from the cached fit)."""
 from __future__ import annotations
 
 import json
@@ -62,11 +40,9 @@ def _net_display(nid):
 
 
 def _latent_growth_trace(G, scorer, real_den):
-    """Budgeted add-only latent-LG growth to E_real (mirrors C._grow_one's softmax selection),
-    recording edge / spectrum / GIC differences in ~N_POINTS increments. The GIC uses the SAME
-    ensemble-mean-density KL estimator as the case study (C.EVAL_SEEDS draws grown in lockstep),
-    so the final point reconciles exactly with the reported LG KL. Coefficients and the selected
-    (d, kernel, rank) come from the cached fit for this network."""
+    """Budgeted add-only latent-LG growth to E_real (mirrors C._grow_one's softmax), recording
+    edge / spectrum / GIC differences in ~N_POINTS increments. GIC uses the same ensemble-mean-density
+    KL as the case study; coefficients + selected (d, kernel, rank) come from the cached fit."""
     cache = json.loads((C._out_dir("connectome") / "cache" / f"{NET_ID}.json").read_text())
     sel = cache["tlg_selected"]
     tr = next(t for t in cache["tlg_trace"]

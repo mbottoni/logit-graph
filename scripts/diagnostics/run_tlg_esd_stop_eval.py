@@ -1,34 +1,7 @@
 #!/usr/bin/env python3
-"""Evaluate ESD-KL convergence stopping for the temporal Logit-Graph.
-
-``grow_graph(until_convergence=True)`` stops once the adjacency-ESD KL divergence
-between consecutive snapshots stays below ``esd_tol`` for ``patience`` steps. This
-script asks: **is that a good idea?** — i.e. does it stop at the right place (the
-stopped graph already looks like the stationary distribution, no bias), how does the
-stop-step scale with n, and how sensitive is it to the tolerance.
-
-For each n we run REPS chains with ``until_convergence=True`` (cap = STEPS) and:
-  1. record the stop step and whether it converged before the cap;
-  2. validate against a long fixed-run reference (one stationary draw): compare the
-     stopped graph's degree distribution (KS) and adjacency ESD (KL) to the
-     reference, and to a second independent reference (the noise floor). If
-     stopped-vs-ref ~ ref-vs-ref, early stopping added no bias -> good idea.
-
-Also prints an esd_tol sensitivity table at one n.
-
-Plots three panels:
-  (a) stop step vs n (mean, min-max);
-  (b) degree-KS(stopped vs reference) vs n, with the ref-vs-ref noise-floor band;
-  (c) example consecutive ESD-KL traces with the stop step marked.
-
-Env knobs (all optional):
-  LG_ESS_NS (100,200,400,750)   LG_ESS_D (0)   LG_ESS_SIGMA (-2.0)  LG_ESS_ALPHA (0.05)
-  LG_ESS_STEPS (60) cap         LG_ESS_TOL (0.01)   LG_ESS_PATIENCE (3)
-  LG_ESS_REPS (8)               LG_ESS_SEED (0)     LG_ESS_QUICK (1 -> small grid)
-
-  make tlg-esd-stop-eval         full run
-  make tlg-esd-stop-eval-quick   smoke
-"""
+"""Evaluate ESD-KL convergence stopping for the temporal Logit-Graph: grow_graph(until_convergence)
+stops when consecutive-snapshot ESD-KL stays below esd_tol for patience steps — this asks whether
+that stops without bias, how it scales with n, and tol sensitivity. `make tlg-esd-stop-eval`."""
 from __future__ import annotations
 
 import os

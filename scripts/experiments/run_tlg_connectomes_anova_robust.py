@@ -1,26 +1,7 @@
 #!/usr/bin/env python3
-"""Connectomes ANOVA for the Temporal Logit-Graph (TLG) on BOTH parameters (sigma, alpha),
-the TLG analogue of run_lg_connectomes_anova_robust.py (which compares sigma only).
-
-For each of the 18 animal connectomes we fit logit P[edge_ij] = sigma + alpha*D_ij by
-logistic regression on the upper-triangle dyads (D = the bounded degree feature at depth d),
-compute a 2-parameter dyadic-cluster-robust SE, and compare each parameter across the 18
-networks: omnibus Cochran-Q equality test + Bonferroni (and BH-FDR) pairwise Wald for sigma
-and for alpha, plus a joint 2-df Wald on (sigma, alpha). With 18 networks there are
-C(18,2)=153 pairwise tests, so Bonferroni is strict.
-
-The fit, the 2x2 dyadic-robust sandwich SE, and the tests are reused verbatim from
-run_tlg_twitch_anova_robust.py (they are dataset-agnostic); only the loader (graphml,
-binarized) and the network set differ. Run that script with LG_TTA_VALIDATE=1 to validate
-the robust SE against Monte-Carlo.
-
-Output under runs/connectomes_tlg_anova_robust/ (gitignored):
-  summary.csv  pairwise_sigma.csv  pairwise_alpha.csv  pairwise_joint.csv
-  connectomes_tlg_anova_robust.png   forest plots + Bonferroni heatmaps for sigma and alpha
-  results.json
-
-Env: LG_TCA_D (1 degree-feature depth), LG_TCA_NMIN (10 min nodes), LG_TCA_QUICK (0).
-"""
+"""Connectomes ANOVA for the Temporal Logit-Graph (TLG) on BOTH parameters (sigma, alpha): fit
+logit P[edge] = sigma + alpha*D per connectome with a 2x2 dyadic-cluster-robust SE, then compare
+each parameter across the 18 networks (omnibus Cochran-Q + pairwise Wald). Fit/SE reused from twitch."""
 from __future__ import annotations
 
 import glob

@@ -1,40 +1,7 @@
 #!/usr/bin/env python3
-"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on Twitter SNAP ego networks, alongside a fairly-scored Logit-Graph (LG).
-
-Twitter twin of run_gplus_closedform.py. The SNAP twitter collection has 973
-ego networks (n up to ~247); we sample MAX_NETS of them (seeded) from the size
-window and score, by spectral GIC (2*KL + 2*n_params, KL on the normalized-
-Laplacian density, lower=better):
-
-  * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
-                     of the spectral density over N_RUNS post-burn-in snapshots.
-  * ER/BA/WS      -- two ways each:
-       grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
-       cf   : closed-form moment estimate (no search)
-  * KR/GRG        -- closed-form only (bonus families)
-
-Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
-  ER  p = 2E/(n(n-1))                      (exact MLE)
-  BA  m = round(E/n)            in [1, n)   (edge count E = m(n-m))
-  WS  k = 2*round(E/n) (even)   in [2, n)   (E = nk/2, rewiring conserves edges)
-  WS  p = 1 - (C_obs/C0)^(1/3), C0 = 3(k-2)/(4(k-1))   (clustering moment)
-  KR  d = round(kbar)          (nd even)   (E = nd/2)
-  GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
-
-Reproducible: fixed seed (LG_TCF_SEED) drives the ego-net sampling and all
-generators; BLAS threads pinned to 1; the twitter tarball is auto-extracted if
-the .edges files are missing. Read-only w.r.t. the library; writes only under
-runs/twitter_closedform/. Findings: FINDINGS_twitter_closedform.md.
-
-Env knobs (all optional):
-  LG_TCF_SEED (12345)    LG_TCF_QUICK (0 -> full; 1 -> smoke on a few ego nets)
-  LG_TCF_MIN_NODES (50)  LG_TCF_MAX_NODES (300)  LG_TCF_MAX_NETS (30)
-  LG_TCF_N_RUNS (5)      LG_TCF_GRID_POINTS (5)
-
-  make lg-gic-twitter-closedform        full run (~1-2 min, 30 ego nets)
-  make lg-gic-twitter-closedform-quick  smoke (~10s, a few ego nets)
-"""
+"""Closed-form / grid-search baselines (ER/BA/WS/KR/GRG) vs a fairly-scored LG on sampled SNAP
+Twitter ego networks (size window), by spectral GIC (2*KL + 2*n_params on the normalized-
+Laplacian density, lower=better). Seeded/reproducible; `make lg-gic-twitter-closedform`."""
 from __future__ import annotations
 
 import math

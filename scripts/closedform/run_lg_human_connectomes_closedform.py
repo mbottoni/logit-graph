@@ -1,44 +1,7 @@
 #!/usr/bin/env python3
-"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on OASIS-3 human brain connectomes, alongside a fairly-scored LG.
-
-Human-connectome twin of run_connectomes_closedform.py. The OASIS-3 dataset has
-several parcellation scales (different node counts) with hundreds of subjects
-each; all subjects in a scale share a node count. We sample PER_SCALE subjects
-from each of a few scales (seeded) and score, by spectral GIC
-(2*KL + 2*n_params, KL on the normalized-Laplacian density, lower=better):
-
-  * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
-                     of the spectral density over N_RUNS post-burn-in snapshots.
-  * ER/BA/WS      -- two ways each:
-       grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
-       cf   : closed-form moment estimate (no search)
-  * KR/GRG        -- closed-form only (bonus families)
-
-Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
-  ER  p = 2E/(n(n-1))                      (exact MLE)
-  BA  m = round(E/n)            in [1, n)   (edge count E = m(n-m))
-  WS  k = 2*round(E/n) (even)   in [2, n)   (E = nk/2, rewiring conserves edges)
-  WS  p = 1 - (C_obs/C0)^(1/3), C0 = 3(k-2)/(4(k-1))   (clustering moment)
-  KR  d = round(kbar)          (nd even)   (E = nd/2)
-  GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
-
-Brain graphs are weighted (fiber density); we binarize to the undirected,
-unweighted largest connected component. Dense eigvalsh for n<=500, deterministic
-KPM above. Reproducible: fixed seed (LG_HCF_SEED) drives the subject sampling
-and all generators; BLAS threads pinned to 1. Read-only w.r.t. the library;
-writes only under runs/human_connectomes_closedform/. Findings:
-FINDINGS_human_connectomes_closedform.md.
-
-Env knobs (all optional):
-  LG_HCF_SEED (12345)   LG_HCF_QUICK (0 -> full; 1 -> smoke, one small scale)
-  LG_HCF_SCALES (oasis3 scale1,scale2,scale3 + repeated_10_scale_250)
-  LG_HCF_PER_SCALE (8)  LG_HCF_N_RUNS (5)  LG_HCF_GRID_POINTS (5)
-  LG_HCF_MIN_NODES (20) LG_HCF_MAX_NODES (500)
-
-  make lg-gic-human-connectomes-closedform        full run
-  make lg-gic-human-connectomes-closedform-quick  smoke
-"""
+"""Closed-form / grid-search baselines (ER/BA/WS/KR/GRG) vs a fairly-scored LG on sampled OASIS-3
+human brain connectomes (binarized largest connected component, per parcellation scale), by
+spectral GIC (2*KL + 2*n_params, lower=better); `make lg-gic-human-connectomes-closedform`."""
 from __future__ import annotations
 
 import math

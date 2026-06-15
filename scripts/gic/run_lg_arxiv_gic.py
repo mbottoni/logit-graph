@@ -1,32 +1,7 @@
 #!/usr/bin/env python3
-"""Fit LG + ER/WS/BA on the FULL cit-HepTh arxiv citation network and rank by GIC.
-
-Reproduces `notebooks/citation/0-citation.ipynb` as a CLI script — single
-large network (n≈27,400, m≈350k), no subsampling. Memory + time are
-managed by:
-  - KPM spectral density on the sparse normalised Laplacian (no O(n³)
-    eigendecomposition — uses logit_graph.gic.kpm_spectral_density)
-  - LG σ/β estimation from a random ~50k edge / 50k non-edge sample
-    (statsmodels logistic regression — avoids dense pair iteration)
-  - LG MCMC stores ONE dense adjacency (~6 GB at n=27k) and a best-graph
-    copy; baselines are generated and scored sparsely with NetworkX + KPM
-
-Env-var overrides:
-  LG_ARXIV_DATA          path to cit-HepTh.txt (default data/citation_networks/cit-HepTh.txt)
-  LG_ARXIV_MAX_ITER      LG MCMC iterations          (default 50_000)
-  LG_ARXIV_CHECK         spectral-density check interval (default 5_000)
-  LG_ARXIV_WARM_UP       iterations before patience kicks in (default 10_000)
-  LG_ARXIV_PATIENCE      stop after this many no-improvement checks (default 100)
-  LG_ARXIV_SAMPLE_EDGES  σ/β estimation sample size  (default 50_000)
-  LG_ARXIV_KPM_MOMENTS   Chebyshev moments           (default 150)
-  LG_ARXIV_KPM_PROBES    random probes               (default 40)
-  LG_ARXIV_USE_CACHE     reuse cached fit results    (default 1)
-  LG_ARXIV_SEED          RNG seed                    (default 42)
-  LG_ARXIV_QUICK         smoke (MAX_ITER=10k, fewer KPM moments)
-
-  make lg-gic-arxiv         full preset (~3-5 min on 4 cores)
-  make lg-gic-arxiv-quick   smoke (~30-60s)
-"""
+"""Fit LG + ER/WS/BA on the FULL cit-HepTh arxiv citation network (n~27.4k, m~350k, no
+subsampling) and rank by GIC, using KPM spectral density on the sparse Laplacian and sampled
+logistic regression for sigma/beta. `make lg-gic-arxiv`."""
 from __future__ import annotations
 
 import gc

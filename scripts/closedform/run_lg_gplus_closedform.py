@@ -1,41 +1,7 @@
 #!/usr/bin/env python3
-"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on Google+ ego networks, alongside a fairly-scored Logit-Graph (LG).
-
-For each gplus ego network in the size window we score, by spectral GIC
-(2*KL + 2*n_params, KL on the 50-bin normalized-Laplacian density, lower=better):
-
-  * LG            -- best of d in {0,1,2}, each scored by burn-in + ensemble mean
-                     of the spectral density over N_RUNS post-burn-in snapshots
-                     (same averaging convention the baselines get; avoids the
-                     pipeline's best-of-trajectory cherry-pick — see
-                     diag_lg_convergence.py).
-  * ER/BA/WS      -- two ways each:
-       grid : fixed interval, GRID_POINTS points, parameter picked by min GIC
-       cf   : closed-form moment estimate (no search)
-  * KR/GRG        -- closed-form only (bonus families)
-
-Closed-form estimators (n nodes, E edges, kbar = 2E/n avg degree):
-  ER  p = 2E/(n(n-1))                      (exact MLE)
-  BA  m = round(E/n)            in [1, n)   (edge count E = m(n-m))
-  WS  k = 2*round(E/n) (even)   in [2, n)   (E = nk/2, rewiring conserves edges)
-  WS  p = 1 - (C_obs/C0)^(1/3), C0 = 3(k-2)/(4(k-1))   (clustering moment)
-  KR  d = round(kbar)          (nd even)   (E = nd/2)
-  GRG r = sqrt(kbar / (pi*(n-1)))          (E[deg] ~ (n-1) pi r^2, 2-D)
-
-Reproducible: single fixed seed (LG_CF_SEED), BLAS threads pinned to 1, and the
-gplus tarball is auto-extracted if the .edges files are missing. Read-only w.r.t.
-the library; writes only under runs/gplus_closedform/. Findings:
-FINDINGS_gplus_closedform.md.
-
-Env knobs (all optional):
-  LG_CF_SEED (12345)    LG_CF_QUICK (0 -> full; 1 -> smoke on a few small nets)
-  LG_CF_MIN_NODES (50)  LG_CF_MAX_NODES (300)  LG_CF_MAX_NETS (all)
-  LG_CF_N_RUNS (5)      LG_CF_GRID_POINTS (5)
-
-  make lg-gic-gplus-closedform        full run (~30s, 17 nets)
-  make lg-gic-gplus-closedform-quick  smoke (~5s, a few small nets)
-"""
+"""Closed-form / grid-search baselines (ER/BA/WS/KR/GRG) vs a fairly-scored LG on Google+ ego
+networks in the size window, by spectral GIC (2*KL + 2*n_params on the normalized-Laplacian
+density, lower=better). Seeded/reproducible; `make lg-gic-gplus-closedform`."""
 from __future__ import annotations
 
 import math
@@ -206,10 +172,7 @@ def grid_best_ws(real_nx, n, n_runs, seed):
 
 
 # ---------------------------------------------------------------------------
-# LG scored FAIRLY: burn-in + ensemble-mean spectral density (same convention
-# as the baselines, which average n_runs sample densities). This avoids the
-# pipeline's "best graph over a noisy trajectory" cherry-pick, which is
-# downward-biased and budget-dependent (see diag_lg_convergence.py).
+# LG scored FAIRLY: burn-in + ensemble-mean spectral density (baseline convention).
 # ---------------------------------------------------------------------------
 
 def _lg_burn(n):

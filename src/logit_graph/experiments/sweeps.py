@@ -295,11 +295,8 @@ def _sigma_iter_count(
     sigma_true: Optional[float] = None,
     d: Optional[int] = None,
 ) -> int:
-    """Resolve the iter cap for a single (n, d) cell.
-
-    Precedence: ``cfg.iter_cap_by_d[d]`` (int or {n: int}) overrides the
-    global ``cfg.iter_cap`` when ``d`` is supplied and present in the dict.
-    """
+    """Resolve the iter cap for a single (n, d) cell: ``cfg.iter_cap_by_d[d]`` (int or
+    {n: int}) overrides the global ``cfg.iter_cap`` when ``d`` is supplied and in the dict."""
     cap = cfg.iter_cap
     if d is not None and cfg.iter_cap_by_d and d in cfg.iter_cap_by_d:
         spec = cfg.iter_cap_by_d[d]
@@ -373,11 +370,9 @@ def _calibrate_beta_given_sigma(
     *,
     pilot_iters: int = 0,
 ) -> float:
-    """Return beta when sigma is fixed on the paper grid.
-
-    The estimator fixes the feature coefficient at 1 (offset regression), so
-    generation must use the same weight for sigma_hat to be consistent.
-    """
+    """Return beta when sigma is fixed on the paper grid. The estimator fixes the feature
+    coefficient at 1 (offset regression), so generation must use the same weight for
+    sigma_hat to be consistent."""
     del n, d, sigma, target_density, signal, feature_mode, seed, pilot_iters
     return 1.0
 
@@ -408,11 +403,8 @@ def _run_adaptive_gibbs(
     cv_tol: float,
     min_iter: int,
 ) -> tuple[list, int]:
-    """Run Gibbs in blocks; stop when edge-count CV stabilizes.
-
-    Uses ``fg.edge_count`` (cheap) instead of refitting :math:`\\hat\\sigma`
-    on every checkpoint.
-    """
+    """Run Gibbs in blocks; stop when edge-count CV stabilizes. Uses ``fg.edge_count``
+    (cheap) instead of refitting :math:`\\hat\\sigma` on every checkpoint."""
     edge_history: list[int] = []
     done = 0
     while done < max_iter:
@@ -456,12 +448,9 @@ def simulate_graph(
     adaptive_cv_tol: float = 0.02,
     adaptive_min_iter: int = 20_000,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, float]]:
-    """Generate a graph at fixed sigma.
-
-    d=0 uses a direct ER sample at p = expit(sigma) (exact equilibrium with no
-    degree feedback). d>=1 runs Layer-2 Gibbs with feature coefficient fixed
-    at beta=1 (matching the paper offset estimator).
-    """
+    """Generate a graph at fixed sigma. d=0 uses a direct ER sample at p=expit(sigma)
+    (exact equilibrium, no degree feedback); d>=1 runs Layer-2 Gibbs with the feature
+    coefficient fixed at beta=1 (matching the paper offset estimator)."""
     if d == 0:
         if sigma is None:
             sigma = math.log(target_density / (1.0 - target_density))
@@ -670,13 +659,9 @@ def estimate_sigma_from_graph_subsample(
     rng: np.random.Generator,
     feature_mode: FeatureMode = "incremental",
 ) -> float:
-    """σ̂ from m randomly subsampled (i, j) pairs.
-
-    ``m`` can be int (absolute pair count) or float in (0, 1) (fraction of
-    the n·(n−1)/2 upper-triangle pairs). The fractional form makes σ̂'s SE
-    scale with n: SE ∝ 1/n, so larger n yields proportionally more power —
-    needed for the paper's sample-size ROC monotonicity.
-    """
+    """σ̂ from m randomly subsampled (i, j) pairs: ``m`` is int (absolute count) or float
+    in (0, 1) (fraction of the n·(n−1)/2 upper-triangle pairs). The fractional form makes
+    SE ∝ 1/n, so larger n yields more power — needed for the sample-size ROC monotonicity."""
     upper_pairs = n * (n - 1) // 2
     if isinstance(m, float) and 0 < m < 1:
         # Floor at 5 pairs so very small n still produces a usable σ̂ (m=1
@@ -1880,10 +1865,9 @@ def run_aic_d_sweep(
             else cfg.sigma_gen
         )
         for d_true in cfg.d_true_values:
-            # Per-d iter cap: allows d=2/d=3 to use smaller absolute caps for
-            # speed or to avoid metastable phase transitions. Each value is
-            # either an int (flat cap for all n) or a dict {n: cap} for per-n
-            # caps — useful when one d needs more sweeps at larger n.
+            # Per-d iter cap: lets d=2/d=3 use smaller absolute caps for speed or to avoid
+            # metastable phase transitions. Each value is an int (flat cap for all n) or a
+            # dict {n: cap} for per-n caps — useful when one d needs more sweeps at larger n.
             if cfg.iter_cap_by_d and d_true in cfg.iter_cap_by_d:
                 cap_val = cfg.iter_cap_by_d[d_true]
                 if isinstance(cap_val, dict):
@@ -1893,10 +1877,9 @@ def run_aic_d_sweep(
                     nit = _iter_count(n, cap_val)
             else:
                 nit = nit_default
-            # Per-(n, d_true) sigma cell override: takes precedence over the
-            # per-n sigma. Used when one cell needs a different sigma to stay
-            # identifiable (e.g., n=500 d=3 needs sigma=-4.8 instead of -4.3
-            # to avoid 3-hop ball saturation).
+            # Per-(n, d_true) sigma cell override, taking precedence over the per-n sigma —
+            # for when one cell needs a different sigma to stay identifiable (e.g. n=500 d=3
+            # needs sigma=-4.8 instead of -4.3 to avoid 3-hop ball saturation).
             sigma_for_cell = sigma_for_n
             if cfg.sigma_gen_per_n_d and d_true in cfg.sigma_gen_per_n_d:
                 cell_sigmas = cfg.sigma_gen_per_n_d[d_true]
@@ -2066,11 +2049,9 @@ def plot_convergence_sigma(
     min_edges: float = 0.0,
     y_pad: float = 1.5,
 ) -> None:
-    """Paper-quality σ̂ convergence figure.
-
-    All cells are plotted by default (``min_edges=0``); y-axis auto-fits
-    to the data range so small-n cells where σ̂ diverges are visible.
-    """
+    """Paper-quality σ̂ convergence figure. All cells are plotted by default
+    (``min_edges=0``); the y-axis auto-fits the data range so small-n cells where σ̂
+    diverges stay visible."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib as mpl

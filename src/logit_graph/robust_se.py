@@ -1,17 +1,6 @@
-"""Dyadic-cluster-robust standard error for the offset-logit sigma estimate.
-
-A single observed graph gives one sigma_hat; its uncertainty cannot come from
-re-subsampling that one graph (pseudo-replication). For the intercept-only offset
-logistic regression ``logit(y_ij) = sigma + offset_ij`` the pairs share nodes and
-are not independent, so the model-based (independence) SE ``1/sqrt(A)`` is wrong.
-
-This module provides the dyadic-cluster-robust (sandwich) SE of Aronow, Samii &
-Assenova (2015): with score residuals ``s_ij = y_ij - p_ij``, bread
-``A = sum p_ij(1-p_ij)`` and node sums ``T_m = sum_{j!=m} s_mj``,
-``B = sum_m T_m^2 - sum_ij s_ij^2`` and ``Var(sigma_hat) = B / A^2``. Distinct
-dyads share at most one node, which collapses the O(n^4) double sum to O(n^2).
-At d=0 (ER, independent dyads) it reduces to the independence SE.
-"""
+"""Dyadic-cluster-robust (sandwich) standard error for the offset-logit sigma_hat
+(Aronow, Samii & Assenova 2015): a single graph's pairs share nodes, so the independence
+SE 1/sqrt(A) is wrong; Var = B/A^2 (O(n^2) double sum). At d=0 it reduces to independence."""
 from __future__ import annotations
 
 import math
@@ -31,12 +20,8 @@ def dyadic_robust_sigma_se(
     n: int,
 ) -> tuple[float, float]:
     """Return ``(se_robust, se_naive)`` for the offset-logit intercept sigma_hat.
-
-    ``offsets`` and ``labels`` are the per-pair feature offsets and 0/1 edge
-    indicators for all upper-triangle pairs, enumerated in row-major order
-    ``(0,1),(0,2),...,(1,2),...`` (the order produced by
-    :func:`logit_graph.lg_features.build_pair_dataset`).
-    """
+    ``offsets``/``labels`` are the per-pair offsets and 0/1 edge indicators for all
+    upper-triangle pairs in row-major order (as build_pair_dataset produces)."""
     p = expit(sigma_hat + np.asarray(offsets, dtype=np.float64))
     s = np.asarray(labels, dtype=np.float64) - p
     A = float(np.sum(p * (1.0 - p)))
@@ -67,9 +52,7 @@ def fit_sigma(
     feature_mode: FeatureMode = "incremental",
 ) -> tuple[float, float, np.ndarray, np.ndarray]:
     """Offset-logit MLE sigma_hat at radius ``d`` on all upper-triangle pairs.
-
-    Returns ``(sigma_hat, log_likelihood, offsets, labels)``.
-    """
+    Returns ``(sigma_hat, log_likelihood, offsets, labels)``."""
     offsets, labels = build_pair_dataset(adj, d=d, mode=feature_mode, layer2=True)
     sigma, ll = fit_offset_logit_fast(offsets, labels)
     return float(sigma), float(ll), offsets, labels
@@ -91,12 +74,9 @@ def select_d_aic(
     d_candidates: list[int],
     feature_mode: FeatureMode = "incremental",
 ) -> tuple[int, float, np.ndarray, np.ndarray, dict[int, float]]:
-    """AIC d-selection on the full graph (AIC = -2*ll + 2, one parameter sigma).
-
-    Returns ``(d_hat, sigma_hat, offsets, labels, aic_by_d)`` where the offsets /
-    labels / sigma_hat correspond to the selected ``d_hat`` (so the caller can
-    feed them straight to :func:`dyadic_robust_sigma_se` without recomputing).
-    """
+    """AIC d-selection on the full graph (AIC = -2*ll + 2, one parameter sigma). Returns
+    ``(d_hat, sigma_hat, offsets, labels, aic_by_d)`` with offsets/labels/sigma_hat for the
+    selected ``d_hat`` (ready to feed to dyadic_robust_sigma_se without recomputing)."""
     best: Optional[tuple[float, int, float, np.ndarray, np.ndarray]] = None
     aic_by_d: dict[int, float] = {}
     for d in d_candidates:

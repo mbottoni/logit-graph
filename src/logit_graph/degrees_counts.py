@@ -4,13 +4,9 @@ import numpy as np
 
 
 def degree_vertex(graph: np.ndarray, vertex: int, d: int) -> list[float]:
-    """Return degrees of the vertex and all nodes within distance d.
-
-    Returns a list ``[deg(vertex)] + [deg(u) for u within distance 1..d]``.
-    For d=0, returns only ``[deg(vertex)]``.
-
-    Uses vectorised numpy operations internally for speed.
-    """
+    """Degrees of the vertex and all nodes within distance d:
+    ``[deg(vertex)] + [deg(u) for u within distance 1..d]`` (d=0 -> just
+    ``[deg(vertex)]``); vectorised numpy internally."""
     degrees = graph.sum(axis=1)  # cached row sums
 
     if d == 0:

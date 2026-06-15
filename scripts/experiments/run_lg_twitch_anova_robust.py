@@ -92,12 +92,9 @@ def _select_d(adj, d_candidates):
 
 
 def _dyadic_robust_se(n, sigma_hat, offsets, labels):
-    """Sandwich SE for sigma_hat with dyadic (shared-node) clustering.
-
-    Bread A = sum p(1-p); meat B = sum_m T_m^2 - sum s^2 with T_m the sum of
-    score residuals s=y-p over dyads incident to node m (row-slicing keeps it
-    O(n^2) time / O(n) extra memory). Var = B / A^2.
-    """
+    """Sandwich SE for sigma_hat with dyadic (shared-node) clustering: bread A = sum p(1-p), meat
+    B = sum_m T_m^2 - sum s^2 with T_m the sum of score residuals s=y-p over dyads incident to node
+    m (row-slicing keeps it O(n^2) time / O(n) memory); Var = B / A^2."""
     p = expit(sigma_hat + offsets)
     s = labels.astype(np.float64) - p
     A = float(np.sum(p * (1.0 - p)))

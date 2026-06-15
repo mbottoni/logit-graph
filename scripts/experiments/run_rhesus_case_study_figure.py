@@ -1,39 +1,7 @@
 #!/usr/bin/env python3
-"""Connectome case-study figure (corrected node-link model comparison).
-
-Regenerates the node-link "visual comparison of the observed connectome and the best-fit graph
-from each model" for a connectome (default: rhesus_brain_1, where LG is the best fit; set
-LG_CASE_NET=rhesus_cerebral.cortex_1 for the thesis-Fig.-3.11 network, where GRG wins). It fixes
-the defects of the old thesis figure (figs2/animal/rhesus_graphs.png):
-
-  * OLD: only 5 panels (Original/LG/ER/BA/WS) -> the actual winner GRG, plus KR and SBM, were
-    missing.  NEW: all seven candidate models (LG, ER, BA, WS, KR, GRG, SBM) + the Original.
-  * OLD: panels were labelled by GIC (LG 0.450), which does not match the case-study ranking
-    (by KL) and disagrees with the KL table (LG 0.666).  NEW: every model panel is labelled by
-    the **KL spectral divergence** (KL between the model's generated-graph adjacency spectral
-    density and the observed one) -- the same metric the narrative ranks by.  GIC = 2*KL +
-    2*|theta| is the *penalized* quantity; the un-penalized KL is what the ranking uses, so the
-    old "GIC 0.450" and the table's "KL 0.666" are two different numbers for LG.
-  * OLD: "Original GIC: nan" (a self-divergence).  NEW: the Original is the reference and shows
-    only n / m, no divergence.
-  * the two lowest-KL models (best fit + runner-up) are highlighted by rank.
-  * "LG" everywhere (not "TLG").
-
-Everything is computed with the repo's own machinery (scripts/closedform/tlg_latent_gic_common.py
-as C, run_tlg_twitch_gic as tw): the same loader, the same GraphInformationCriterion KL scorer,
-the same baseline samplers, and the same ensemble-mean-density KL estimator used by the GIC sweep.
-The LG fit is reconstructed from the cached parameters for this exact network
-(runs/tlg_latent_connectome_gic/cache/rhesus_cerebral.cortex_1.json: d=1, dist kernel, k=2) so we
-do not re-run the (slow) hyperparameter search; it falls back to a full fit_tlg if the cache is
-absent.  The recomputed KL values are asserted to reconcile with that cache.
-
-Output under scripts/experiments/runs/rhesus_case_study/ (gitignored):
-  rhesus_case_study.png / .pdf   the 8-panel figure
-  rhesus_case_study_kl.csv       per-model KL, edge count, KL rank
-  README.txt                     the GIC<->KL note for whoever copies the figure into the thesis
-
-Run:  .venv/bin/python scripts/experiments/run_rhesus_case_study_figure.py
-"""
+"""Connectome case-study figure: node-link comparison of the observed connectome and each model's
+best fit (default rhesus_brain_1, where LG wins), all seven models + Original labelled by KL spectral
+divergence. Computed via tlg_latent_gic_common (reconstructs the cached LG fit; KL reconciled)."""
 from __future__ import annotations
 
 import json

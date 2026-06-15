@@ -1,33 +1,7 @@
 #!/usr/bin/env python3
-"""Run the MCMC convergence-diagnostics experiment as a standalone script.
-
-Reproduces Figure ``convergence_diagnostics.png/pdf`` from
-``notebooks/base/22-3-convergence-diagnostics.ipynb``:
-
-  1. Generate a long-run reference graph (``MAX_ITER`` MCMC steps).
-  2. Launch ``len(ER_PS)`` independent chains from ER initial graphs at
-     varied densities ``p_0`` and record three diagnostics every
-     ``CHECK_INTERVAL`` iterations:
-       - Spectral distance of the chain's Laplacian to the reference
-       - Edge count (raw density tracker)
-       - KS statistic between chain and reference degree distributions
-       - KL divergence of the chain's ADJACENCY ESD to the reference
-         (the object Algorithm 1's stopping criterion monitors)
-  3. Plot the four panels and save to images/correction_paper/.
-
-Defaults match the notebook (n=750, d=0, sigma=-2.0, 1M iter/chain). Override
-with env vars:
-
-  LG_CONV_N           graph size                  default 750
-  LG_CONV_D           neighborhood radius          default 0
-  LG_CONV_SIGMA       generation sigma             default -2.0
-  LG_CONV_MAX_ITER    MCMC steps per chain         default 1_000_000
-  LG_CONV_CHECK       checkpoint interval (steps)  default 500
-  LG_CONV_SEED_BASE   seed for reference chain     default 42
-  LG_CONV_QUICK       set to 1 for smoke run (n=200, MAX_ITER=50_000)
-
-A `make lg-convergence-diagnostics` target wraps this script.
-"""
+"""Run the MCMC convergence-diagnostics experiment (Figure convergence_diagnostics): grow a
+long-run reference graph, launch chains from ER seeds at varied p_0, and record spectral
+distance / edge count / degree-KS / adjacency-ESD-KL vs iteration. `make lg-convergence-diagnostics`."""
 from __future__ import annotations
 
 import os
@@ -70,12 +44,9 @@ def _build_chain(
 
 
 def _adjacency_esd(adj: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
-    """Empirical spectral density (ESD) of the ADJACENCY matrix.
-
-    Density histogram of A's eigenvalues over a fixed bin grid — the same
-    object Algorithm 1's stopping criterion monitors. Eigenvalues are clipped
-    into the grid so transiently-denser chains keep all their spectral mass.
-    """
+    """Empirical spectral density (ESD) of the ADJACENCY matrix: a density histogram of A's
+    eigenvalues over a fixed bin grid (the object Algorithm 1's stopping criterion monitors);
+    eigenvalues are clipped into the grid so transiently-denser chains keep their spectral mass."""
     eig = np.linalg.eigvalsh(adj)
     eig = np.clip(eig, bin_edges[0], bin_edges[-1])
     hist, _ = np.histogram(eig, bins=bin_edges, density=True)
@@ -83,11 +54,9 @@ def _adjacency_esd(adj: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
 
 
 def _esd_kl(cur_den: np.ndarray, ref_den: np.ndarray) -> float:
-    """KL divergence D_KL(rho_t || rho_ref) between adjacency ESDs.
-
-    Mirrors ``GraphInformationCriterion.calculate_spectral_distance`` (gic.py)
-    with ``dist='KL'``: ``scipy.stats.entropy`` with a 1e-10 smoothing floor.
-    """
+    """KL divergence D_KL(rho_t || rho_ref) between adjacency ESDs. Mirrors
+    ``GraphInformationCriterion.calculate_spectral_distance`` (gic.py) with ``dist='KL'``:
+    ``scipy.stats.entropy`` with a 1e-10 smoothing floor."""
     return float(entropy(cur_den + 1e-10, ref_den + 1e-10))
 
 

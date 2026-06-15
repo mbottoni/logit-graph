@@ -1,30 +1,7 @@
 #!/usr/bin/env python3
-"""Fit LG + ER/WS/BA on the FULL MUSAE Facebook page-page network and rank by GIC.
-
-Mirrors ``run_arxiv_gic.py`` but on the page-page Facebook graph shipped
-in ``data/facebook_large/musae_facebook_edges.csv`` (n≈22,470, m≈171k).
-No node subsampling — whole graph fitted via:
-  - KPM spectral density on the sparse normalised Laplacian
-  - sampled logistic regression for σ, β (~50k edges + 50k non-edges)
-  - dense LG MCMC at d=0 (one adjacency in RAM, ~4 GB)
-  - sparse baseline generation + KPM scoring
-
-Env-var overrides:
-  LG_FB_DATA          path to musae_facebook_edges.csv
-  LG_FB_MAX_ITER      LG MCMC iterations         (default 50_000)
-  LG_FB_CHECK         spectral check interval    (default 5_000)
-  LG_FB_WARM_UP       iters before patience      (default 10_000)
-  LG_FB_PATIENCE      no-improvement checks      (default 100)
-  LG_FB_SAMPLE_EDGES  σ/β estimation sample      (default 50_000)
-  LG_FB_KPM_MOMENTS   Chebyshev moments          (default 150)
-  LG_FB_KPM_PROBES    random probes              (default 40)
-  LG_FB_USE_CACHE     reuse cached results       (default 1)
-  LG_FB_SEED          RNG seed                   (default 42)
-  LG_FB_QUICK         smoke (MAX_ITER=10k, fewer KPM moments)
-
-  make lg-gic-facebook        full preset (~2-3 min)
-  make lg-gic-facebook-quick  smoke (~30-60s)
-"""
+"""Fit LG + ER/WS/BA on the FULL MUSAE Facebook page-page network (n~22.5k, m~171k, no
+subsampling) and rank by GIC, using KPM spectral density on the sparse Laplacian and sampled
+logistic regression for sigma/beta. `make lg-gic-facebook`."""
 from __future__ import annotations
 
 import gc

@@ -1,57 +1,7 @@
 #!/usr/bin/env python3
-"""Single-graph significance test for the Temporal Logit-Graph (TLG): is a parameter zero?
-
-The companion experiments (run_tlg_twitch_anova_robust.py / run_tlg_connectomes_anova_robust.py)
-answer a BETWEEN-graph question: do k networks share the same sigma / alpha (H0: theta_1=...=theta_k)?
-That needs many graphs. This script answers the complementary SINGLE-graph question raised in the
-paper (Section 3.5 review note):
-
-    Given ONE observed network, are its edges actually shaped by the model's effects?
-    H0: theta = 0   vs   H1: theta != 0   for theta in {sigma, alpha}.
-
-The substantively interesting one is **alpha = 0**: "do this network's edges depend on node degree?"
-Reject => the bounded degree feature D carries real signal; fail to reject => the graph is consistent
-with degree-independent (intercept-only) edge formation. We also report **sigma = 0** (baseline
-log-odds = 0, i.e. baseline density 1/2).
-
-For each network we fit logit P[edge_ij] = sigma + alpha*D_ij (cross-sectional logistic MLE on the
-upper-triangle dyads, D = bounded degree feature at depth d), form a 2-parameter dyadic-cluster-robust
-SE, and report the per-parameter Wald test
-
-    z_theta = theta_hat / SE_robust(theta_hat),   p = 2 * Phi(-|z_theta|),
-
-Bonferroni-corrected across the networks in each dataset. The dyadic-robust SE matters: under dyadic
-(shared-node) dependence the naive logistic SE is anticonservative, so an alpha=0 test on the naive SE
-would over-reject. The fit and the 2x2 sandwich SE are reused verbatim from
-run_tlg_twitch_anova_robust.py (dataset-agnostic).
-
-Run with LG_ZT_VALIDATE=1 for a Monte-Carlo calibration/power study. NOTE on the estimator: the
-cross-sectional fit above is biased for alpha (the equilibrium degree-endogeneity / row-sum problem
-documented in FINDINGS -- on a static snapshot D_ij for an existing edge is computed on a graph that
-already contains that edge), so it cannot be validated by simulating from a known alpha. The
-simulation therefore uses the *consistent* temporal-snapshot MLE (logit_graph.temporal): we grow a
-TLG at a known alpha (storing snapshots), build the at-risk design from G(t-1)->G(t), and fit by
-ordinary logistic regression -- here formations are conditionally independent given the predetermined
-snapshot, so the model is the exact MLE and the ordinary logistic SE is valid (no dyadic clustering
-needed). We report the rejection rate of the alpha=0 Wald test vs the true alpha (Type I error at
-alpha=0; power for alpha>0) plus a ROC curve (null vs the largest alpha). This validates the *test*
-(calibration + power) under the generative model; the real-data section applies the analogous test to
-the single observed snapshot with the cross-sectional fit, matching the paper's ANOVA experiments.
-
-Output under runs/tlg_zero_test/ (gitignored):
-  twitch_zero_test.csv  connectomes_zero_test.csv   per-network theta_hat, robust SE, z, p, p_bonf
-  tlg_zero_test_real.png      forest plots (theta_hat +/- 1.96 SE, 0-line) per dataset
-  tlg_zero_test_validation.png   rejection-rate vs alpha + ROC   (LG_ZT_VALIDATE=1)
-  results.json
-
-Env: LG_ZT_DATASETS (twitch,connectomes), LG_ZT_D (1), LG_ZT_NMIN (10), LG_ZT_QUICK (0),
-LG_ZT_VALIDATE (0); sim knobs LG_ZT_SIM_N (50), LG_ZT_SIM_STEPS (2), LG_ZT_SIM_REPS (200),
-LG_ZT_SIM_SIGMA (-2.0), LG_ZT_SIM_ALPHAS (0,0.02,0.05,0.1,0.2), LG_ZT_SEED (12345).
-
-  make tlg-zero-test            real-data tests on twitch + connectomes
-  make tlg-zero-test-quick      smoke
-  make tlg-zero-test-validate   Monte-Carlo calibration / power / ROC
-"""
+"""Single-graph significance test for the Temporal Logit-Graph (TLG): for one network, test
+H0: theta=0 vs theta!=0 for theta in {sigma, alpha} (notably "do edges depend on degree?") via a
+dyadic-cluster-robust Wald z, Bonferroni-corrected. `make tlg-zero-test`."""
 from __future__ import annotations
 
 import glob
@@ -133,10 +83,9 @@ def log(*a):
 # ---------------------------------------------------------------------------
 
 def _zero_test(adj, d):
-    """Fit (sigma, alpha) cross-sectionally, return the per-parameter Wald z, p vs H0: theta=0.
-
-    Returns dict with theta_hat, se_robust, se_naive, z, p_raw for each parameter, plus the
-    2x2 robust covariance. None if the fit is degenerate (quasi-perfect separation)."""
+    """Fit (sigma, alpha) cross-sectionally; return per-parameter Wald z, p vs H0: theta=0 (dict of
+    theta_hat, se_robust, se_naive, z, p_raw per parameter + the 2x2 robust covariance). None if the
+    fit is degenerate (quasi-perfect separation)."""
     n = adj.shape[0]
     sigma, alpha, Dv, lab = TW._fit_tlg(adj, d)
     se, se_n, V = TW._dyadic_robust_se2(n, sigma, alpha, Dv, lab)
@@ -277,10 +226,9 @@ def run_validation():
 
 def _forest(ax, df, par, title):
     raw = df[f"{par}_hat"].to_numpy()
-    # Display with the model's sign convention: the baseline sigma is a (negative)
-    # log-odds, while the degree effect alpha is non-negative. The Wald test is
-    # sign-invariant (|z| and the two-sided p-value are unchanged), so the
-    # significance colouring below is unaffected by this display choice.
+    # Display with the model's sign convention: sigma (a negative baseline log-odds) shown negative,
+    # alpha (the degree effect) non-negative. The Wald test is sign-invariant (|z| and the two-sided
+    # p unchanged), so the significance colouring below is unaffected.
     disp = -np.abs(raw) if par == "sigma" else np.abs(raw)
     order = np.argsort(disp)
     val = disp[order]

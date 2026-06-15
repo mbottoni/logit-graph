@@ -32,11 +32,9 @@ class GraphModel:
         feature_mode: FeatureMode = "incremental",
         seed: Optional[int] = None,
     ) -> None:
-        # NOTE: ``feature_mode`` defaults to ``"incremental"`` so the d=0
-        # case has zero pair feature (pure Erdős–Rényi at ``p = expit(sigma)``)
-        # and d>=1 uses a bounded, identifying feature. The legacy
-        # ``"bounded"`` mode adds ``log(1+deg_i) + log(1+deg_j)`` even at d=0
-        # which introduces degree feedback and saturates the graph.
+        # NOTE: feature_mode defaults to "incremental" so d=0 has zero pair feature
+        # (pure Erdős–Rényi at p=expit(sigma)) and d>=1 uses a bounded, identifying
+        # feature; the legacy "bounded" mode adds degree feedback even at d=0 and saturates.
         self.n = n
         self.d = d
         self.sigma = sigma
@@ -99,11 +97,8 @@ class GraphModel:
         return expit(sum_degrees)
 
     def get_edge_logit(self, sum_degrees: float) -> int:
-        """Bernoulli draw with probability = logistic(sum_degrees).
-
-        Kept for backward compatibility; the hot-path in add_remove_edge
-        inlines an equivalent but faster version.
-        """
+        """Bernoulli draw with probability = logistic(sum_degrees). Kept for backward
+        compatibility; the add_remove_edge hot-path inlines a faster equivalent."""
         p = expit(sum_degrees)
         return int(self._rng.random() < p)
 
@@ -112,11 +107,8 @@ class GraphModel:
     # ------------------------------------------------------------------
 
     def _get_sum_degrees_fast(self, vertex: int) -> float:
-        """Sum of degrees of *vertex* and its d-hop neighbourhood.
-
-        Uses the cached ``self._degrees`` vector and ``np.nonzero``
-        for neighbour look-up, avoiding Python-level row scans.
-        """
+        """Sum of degrees of *vertex* and its d-hop neighbourhood, via the cached
+        ``self._degrees`` vector and ``np.nonzero`` neighbour look-up (no Python row scans)."""
         if self.d == 0:
             return float(self._degrees[vertex])
 
@@ -337,15 +329,9 @@ class GraphModel:
         spectrum_cv_tol: float = 0.02,
         fast_mode: bool = False,
     ) -> tuple[list[np.ndarray], np.ndarray]:
-        """Generate a graph without a ground-truth reference.
-
-        Convergence is based on the *coefficient of variation* (CV = std/mean)
-        of edge counts and spectrum norms measured every ``check_interval``
-        steps over the last ``patience`` measurements.
-
-        When ``fast_mode=True``, skip convergence checks and run exactly
-        ``max_iterations`` Gibbs steps (for experiment sweeps).
-        """
+        """Generate a graph without a ground-truth reference. Convergence uses the
+        coefficient of variation (std/mean) of edge counts and spectrum norms over the last
+        ``patience`` checks; ``fast_mode=True`` skips checks and runs ``max_iterations`` steps."""
         if fast_mode:
             fg = FastGibbsGraph(
                 self.n,
@@ -489,16 +475,9 @@ class GraphModel:
         verbose: bool = True,
         er_p: float = 0.05,
     ) -> tuple[list[np.ndarray], np.ndarray, list[float], int, np.ndarray, list[float]]:
-        """Populate edges targeting a real graph, using a two-phase criterion.
-
-        Phase 1 — *GIC gate*:  Every ``check_interval`` iterations compute
-        the GIC between the current graph and the real graph.  Keep
-        iterating until GIC drops below ``min_gic_threshold``.
-
-        Phase 2 — *spectrum patience*:  Track the best Laplacian-spectrum
-        distance.  Stop after ``patience`` consecutive *checks* without
-        improvement.
-        """
+        """Populate edges targeting a real graph via a two-phase criterion: Phase 1 (GIC
+        gate) iterates until GIC vs the real graph drops below ``min_gic_threshold``; Phase 2
+        tracks the best Laplacian-spectrum distance and stops after ``patience`` checks w/o gain."""
         best_iteration = 0
 
         # GIC state

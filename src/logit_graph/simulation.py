@@ -21,20 +21,14 @@ from . import model_selection as ms
 
 
 def _warm_start_er_p(sigma: float, lo: float = 0.02, hi: float = 0.5) -> float:
-    """ER seed density clipped near the d>=1 equilibrium expit(sigma).
-
-    Starting the Gibbs chain at this density dramatically reduces burn-in
-    for sparse regimes (very negative sigma).
-    """
+    """ER seed density clipped near the d>=1 equilibrium expit(sigma); starting the Gibbs
+    chain here dramatically reduces burn-in for sparse regimes (very negative sigma)."""
     return float(np.clip(expit(sigma), lo, hi))
 
 
 def _direct_er_at_sigma(n: int, sigma: float, seed: Optional[int]) -> np.ndarray:
-    """Sample Erdős–Rényi adjacency at p = expit(sigma).
-
-    This is the exact equilibrium of d=0 Gibbs with no degree feedback —
-    used to short-circuit Gibbs sampling whenever d=0.
-    """
+    """Sample Erdős–Rényi adjacency at p = expit(sigma) — the exact equilibrium of d=0
+    Gibbs with no degree feedback, used to short-circuit Gibbs sampling whenever d=0."""
     p = float(expit(sigma))
     rng = np.random.default_rng(seed)
     upper = rng.random((n, n)) < p
@@ -63,26 +57,9 @@ def estimate_sigma_only(
     l1_wt: float = 1,
     alpha: float = 0,
 ) -> tuple[float, Any]:
-    """Estimate sigma via Layer-2 offset logit (paper formulation).
-
-    Uses :func:`build_pair_dataset` with ``layer2=True`` and a bounded
-    feature mode so the estimator is consistent with how graphs are
-    generated. The legacy `max_edges`/`max_non_edges`/`l1_wt`/`alpha`
-    parameters are accepted for backwards compatibility but only
-    `max_pairs` (= ``max_edges + max_non_edges``) is used.
-
-    Args:
-        graph_input: numpy adjacency array or ``networkx.Graph``.
-        d: Neighborhood depth used in pair features.
-        max_pairs: Optional cap on total (edge + non-edge) pairs to sample
-            for the offset logit. If ``None`` all pairs are used.
-        feature_mode: Pair feature mode (default ``"incremental"``).
-        random_state: RNG seed for pair sampling.
-        verbose: Print progress.
-
-    Returns:
-        Tuple of ``(sigma_hat, fit_result)``.
-    """
+    """Estimate sigma via Layer-2 offset logit (paper formulation), using
+    :func:`build_pair_dataset` (layer2=True) so it stays consistent with generation.
+    Returns ``(sigma_hat, fit_result)``; legacy max_edges/max_non_edges/l1_wt/alpha unused."""
     del l1_wt, alpha  # accepted for backwards compatibility, unused
 
     if max_pairs is None and (max_edges is not None or max_non_edges is not None):
@@ -116,13 +93,9 @@ def estimate_sigma_many(
     l1_wt: float = 1,
     alpha: float = 0,
 ) -> list[float]:
-    """Repeat Layer-2 sigma estimation ``n_repeats`` times with different seeds.
-
-    Returns a list of ``sigma_hat`` values. Variability comes from the random
-    sampling of pairs in :func:`build_pair_dataset` when ``max_pairs`` is set;
-    if ``max_pairs`` is ``None`` and the graph is small enough to enumerate all
-    pairs, every repetition yields the same estimate.
-    """
+    """Repeat Layer-2 sigma estimation ``n_repeats`` times with different seeds, returning
+    a list of ``sigma_hat``. Variability comes from random pair sampling when ``max_pairs``
+    is set; with ``max_pairs=None`` on a small graph every repetition is identical."""
     del l1_wt, alpha
     if max_pairs is None and (max_edges is not None or max_non_edges is not None):
         max_pairs = (max_edges or 0) + (max_non_edges or 0) or None
@@ -206,21 +179,9 @@ class LogitGraphFitter:
         er_p: float = 0.05,
         init_graph: Optional[nx.Graph] = None,
     ) -> None:
-        """
-        Initializes the LogitGraphFitter with model parameters.
-
-        Args:
-            d (int): The dimension of the latent space.
-            n_iteration (int): The maximum number of iterations for edge generation.
-            warm_up (int): The number of warm-up iterations.
-            patience (int): The number of consecutive checks without improvement before stopping.
-            dist_type (str): The distance type for GIC calculation ('KL', etc.).
-            edge_delta (float, optional): Edge convergence threshold. Defaults to None.
-            min_gic_threshold (float, optional): GIC convergence threshold. Defaults to 5.
-            check_interval (int): How often (in iterations) to compute the
-                expensive spectrum/GIC during graph generation.  Defaults to 50.
-            verbose (bool): Whether to print progress information.
-        """
+        """Initialize the LogitGraphFitter: d (latent depth), n_iteration cap, warm_up,
+        patience (checks without improvement before stopping), dist_type for GIC,
+        edge_delta / min_gic_threshold convergence thresholds, check_interval, verbose."""
         self.d = d
         self.n_iteration = n_iteration
         self.warm_up = warm_up
@@ -237,15 +198,8 @@ class LogitGraphFitter:
         self.metadata = {}
 
     def fit(self, original_graph: nx.Graph) -> LogitGraphFitter:
-        """
-        Fits the Logit Graph model to the provided graph.
-
-        Args:
-            original_graph (nx.Graph): The original graph to fit.
-
-        Returns:
-            self: The instance with fitted_graph and metadata attributes populated.
-        """
+        """Fit the Logit Graph model to ``original_graph``; returns self with the
+        ``fitted_graph`` and ``metadata`` attributes populated."""
         # Ensure we work with an undirected view for consistent edge counting and spectra
         # Many datasets load as directed; our fitter/populator assumes undirected adjacency.
         undirected_graph = original_graph.to_undirected()
@@ -365,15 +319,9 @@ class LogitGraphFitter:
 
 
 class LogitGraphSimulation:
-    """
-    Simulates a Logit Graph directly from provided parameters, following a scikit-learn-like API.
-    
-    Usage:
-        sim = LogitGraphSimulation(n=100, d=2, sigma=1.0, alpha=1.0, beta=1.0)
-        sim.simulate()
-        G = sim.simulated_graph
-        info = sim.metadata
-    """
+    """Simulate a Logit Graph directly from provided parameters (scikit-learn-like API):
+    ``sim = LogitGraphSimulation(n=100, d=2, sigma=1.0, alpha=1.0, beta=1.0); sim.simulate()``,
+    then read ``sim.simulated_graph`` and ``sim.metadata``."""
     def __init__(
         self,
         n: int,
@@ -394,29 +342,9 @@ class LogitGraphSimulation:
         feature_mode: FeatureMode = "bounded",
         fast_mode: bool = False,
     ) -> None:
-        """
-        Initializes the LogitGraphSimulation with model and run parameters.
-
-        Args:
-            n (int): Number of nodes.
-            d (int): Neighborhood depth used in degree features.
-            sigma (float): Intercept parameter of the logit model.
-            alpha (float): Weight for node i contribution.
-            beta (float): Weight for node j contribution.
-            er_p (float): Probability for ER seed graph if no init_graph is provided.
-            n_iteration (int): Maximum number of iterations.
-            warm_up (int): Warm-up iterations before checking convergence.
-            patience (int): Number of measurements in the rolling convergence
-                window.
-            check_interval (int): How often (in iterations) to record a
-                measurement and test for convergence.
-            edge_cv_tol (float): Coefficient-of-variation threshold for
-                edge-count stability.
-            spectrum_cv_tol (float): Coefficient-of-variation threshold for
-                spectrum-norm stability.
-            verbose (bool): Whether to print progress.
-            init_graph (nx.Graph|None): Optional initial graph to start from.
-        """
+        """Initialize the LogitGraphSimulation: model params (n, d, sigma, alpha, beta,
+        er_p) and run params (n_iteration, warm_up, patience window, check_interval,
+        edge/spectrum CV tolerances, verbose, init_graph)."""
         self.n = n
         self.d = d
         self.sigma = sigma
@@ -439,19 +367,9 @@ class LogitGraphSimulation:
         self.metadata = {}
 
     def simulate(self) -> LogitGraphSimulation:
-        """Run the simulation and store the resulting graph and metadata.
-
-        For ``d=0`` this short-circuits Gibbs and samples directly from
-        ER(``p = expit(sigma)``) — the exact equilibrium of the d=0 model.
-        For ``d>=1`` the Gibbs chain is warm-started near ``expit(sigma)``
-        (clipped to [0.02, 0.5]) which dramatically reduces burn-in for
-        sparse regimes. If the caller passes a custom ``init_graph`` or a
-        non-default ``er_p`` (i.e. ``er_p != 0.05``), that override is
-        honoured.
-
-        Returns:
-            self
-        """
+        """Run the simulation, storing the graph and metadata. d=0 samples directly from
+        ER(p=expit(sigma)) (exact equilibrium); d>=1 warm-starts the Gibbs chain near
+        expit(sigma) clipped to [0.02, 0.5], unless init_graph or a non-default er_p overrides."""
         if self.verbose:
             print(f"\n{'='*20} Simulating Logit Graph {'='*20}")
             print(f"Parameters - n: {self.n}, d: {self.d}, sigma: {self.sigma:.4f}, alpha: {self.alpha:.4f}, beta: {self.beta:.4f}, er_p: {self.er_p}")
@@ -545,31 +463,16 @@ class GraphModelComparator:
         other_model_grid_points: int = 5,
         random_state: Optional[int] = 42,
     ) -> None:
-        """
-        Initializes the GraphModelComparator.
-
-        Args:
-            d_list (list): A list of `d` values to test for the Logit Graph model.
-            lg_params (dict): Parameters for the Logit Graph fitting process (e.g., n_iteration, patience).
-            other_model_n_runs (int): Number of runs for other random graph models.
-            other_model_params (list, optional): Parameters for other models. Defaults to [].
-            dist_type (str): Distance type for GIC calculation.
-            verbose (bool): Whether to print progress information.
-            random_state (int, optional): Seed for all stochastic steps (LG Gibbs, baselines).
-                Set to ``None`` for non-reproducible runs.
-        """
+        """Initialize the GraphModelComparator: d_list to test, lg_params (LG fitting),
+        other_model_n_runs / other_model_params for the baselines, dist_type for GIC,
+        verbose, and random_state (None for non-reproducible runs)."""
         self.d_list = d_list
         self.lg_params = lg_params
         self.other_model_n_runs = other_model_n_runs
         self.random_state = random_state
-        # ``other_model_params`` may be:
-        #   - ``None``: per-model defaults are looked up by name in
-        #     ``_fit_other_models`` (recommended; robust to any subset of
-        #     ``other_models``).
-        #   - ``list``: positional pairing with ``other_models`` (legacy;
-        #     the list must be in the same order as ``other_models``).
-        #   - ``dict``: keyed by model name (recommended for explicit
-        #     overrides).
+        # ``other_model_params`` may be None (per-model defaults looked up by name in
+        # ``_fit_other_models``; recommended), a list (positional pairing with
+        # ``other_models``; legacy), or a dict keyed by model name (explicit overrides).
         self.other_model_params = other_model_params
         self.dist_type = dist_type
         self.verbose = verbose
@@ -582,16 +485,9 @@ class GraphModelComparator:
         self.fitted_graphs_data = {}
 
     def compare(self, original_graph: nx.Graph, graph_filepath: str) -> GraphModelComparator:
-        """
-        Fits LG and other models to the graph and compares them.
-
-        Args:
-            original_graph (nx.Graph): The original graph to analyze.
-            graph_filepath (str): The path to the original graph file for logging.
-
-        Returns:
-            self: The instance with summary_df and fitted_graphs_data attributes populated.
-        """
+        """Fit LG and the other models to ``original_graph`` (``graph_filepath`` used only
+        for logging) and compare them; returns self with ``summary_df`` and
+        ``fitted_graphs_data`` populated."""
         if self.verbose:
             print(f"\n{'='*30} Processing Graph: {os.path.basename(graph_filepath)} {'='*30}")
 
@@ -672,12 +568,9 @@ class GraphModelComparator:
     def _get_logit_graph_for_d(
         self, real_graph: Union[np.ndarray, nx.Graph], d: int
     ) -> tuple[np.ndarray, float, float, int, list[float], list[float], list[float]]:
-        """Estimates parameters and generates a graph for a specific `d`.
-
-        d=0 short-circuits to a direct ER sample at p=expit(sigma_hat); d>=1
-        warm-starts Gibbs at clip(expit(sigma_hat), 0.02, 0.5) unless the
-        caller supplied an explicit ``init_graph``.
-        """
+        """Estimate parameters and generate a graph for a specific `d`. d=0 short-circuits
+        to a direct ER sample at p=expit(sigma_hat); d>=1 warm-starts Gibbs at
+        clip(expit(sigma_hat), 0.02, 0.5) unless the caller supplied an ``init_graph``."""
         if isinstance(real_graph, nx.Graph):
             real_graph = nx.to_numpy_array(real_graph)
 

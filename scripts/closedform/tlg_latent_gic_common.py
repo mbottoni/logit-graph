@@ -1,53 +1,7 @@
 #!/usr/bin/env python3
-"""Shared machinery for the per-dataset latent-TLG GIC experiments.
-
-This module holds the unified Temporal Logit-Graph (TLG) fit + the baseline families +
-the (lossless) performance optimizations; the per-dataset entry points
-(run_tlg_<dataset>_latent_gic.py) only supply a loader and call :func:`run_one`. Run all
-datasets + a combined ranking with run_tlg_all_latent_gic.py.
-
-Fit a representative network from a dataset with the unified Temporal Logit-Graph (TLG)
-and rank families by the spectral GIC / raw KL.
-
-The TLG here is the IDENTIFIABLE, SBM-beating model with three exogenous feature groups
-(all recoverable by MLE in the add+remove Bernoulli model — validated on synthetic data;
-none reads a dyad's own state, so the comparison is as honest as SBM, which uses a fixed
-Louvain partition of the same graph):
-
-  * D  — degree feature (depth d), RECOMPUTED on the GENERATED graph each growth batch
-         (the forward/honest part). Captures hubs (regime A: twitch, arxiv, connectomes).
-  * Bc, Bf — same-coarse-community and same-fine-community indicators from two FIXED
-         Louvain partitions of G (coarse = community like SBM; fine = local-density proxy).
-         Captures modularity (regime A).
-  * L  — latent-space proximity from a FIXED adjacency spectral embedding (ASE) of G:
-         top-k eigenvectors of A scaled by sqrt(|eigenvalue|); L_ij = z_i . z_j
-         (standardized). Captures triangles/clustering SMOOTHLY where discrete blocks
-         cannot (regime B: facebook/twitter/gplus/human-connectomes). The ADJACENCY
-         embedding is used (not the normalized Laplacian) so we never peek at the operator
-         whose spectral density the GIC scores. n_params counts only the coefficients
-         (alpha, gc, gf, lam) = 4 — the embedding/partition DOF are not counted, exactly
-         as SBM counts k(k+1)/2 block probabilities but not its n node assignments.
-
-Generation: budgeted add-only growth to the real edge count E_real (per-batch budget ->
-intercept irrelevant, edges matched by construction). Each non-edge is added with prob
-proportional to exp(alpha*D + gc*Bc + gf*Bf + lam*L).
-
-Estimator (FAIR — identical for TLG and every baseline): the KL is computed on the
-ENSEMBLE-MEAN normalized-Laplacian spectral density over NRUNS independent draws (this is
-what the closed-form baselines and SBM already use; the older twitch script used an
-optimistic best-of-draws for the TLG only). Parameters are tuned by minimizing the
-ensemble KL on TUNE seeds and the reported KL/GIC are scored on disjoint HELD-OUT seeds.
-
-Datasets (representative graph each; largest connected component, undirected, size-capped
-by BFS ball for the big ones): twitch, twitter, facebook, arxiv-cit, gplus, connectome
-(animal), human-connectome (brain). Output under runs/tlg_multidataset_gic/ (gitignored).
-
-Env knobs: LG_TLM_DATASETS (comma list; default all), LG_TLM_NRUNS (6),
-LG_TLM_CAP (1500 BFS cap), LG_TLM_K (30 growth batches), LG_TLM_SEARCH (30 NM iters),
-LG_TLM_KLIST (2,4,8 latent ranks to try), LG_TLM_DGRID (0,1 degree depths to select over),
-LG_TLM_FINE_RES (8), LG_TLM_SEED (12345),
-LG_TLM_QUICK (0 -> tiny smoke).
-"""
+"""Shared machinery for the per-dataset latent-TLG GIC experiments: the unified, identifiable
+TLG (degree D + coarse/fine community Bc/Bf + latent ASE feature L, n_params=4) grown add-only
+to E_real, ranked vs ER/BA/WS/KR/GRG/SBM by ensemble-mean normalized-Laplacian KL (fair)."""
 from __future__ import annotations
 
 import contextlib
@@ -118,10 +72,8 @@ TLG_K = _int("LG_TLM_K", 15 if QUICK else 30)            # growth batches to rea
 SEARCH = _int("LG_TLM_SEARCH", 12 if QUICK else 30)      # Nelder-Mead iterations
 KLIST = [int(x) for x in os.environ.get("LG_TLM_KLIST", "2,4,8").split(",")]
 KERNELS = os.environ.get("LG_TLM_KERNELS", "dot,dist").split(",")  # latent kernels to try
-# Opt-in fast spectral density (direct sparse Laplacian, KPM path). It differs from the
-# networkx Laplacian only at fp level (~1e-15), but the tuning search is chaotic, so that
-# can perturb the final tuned KL by ~1e-3 (conclusions unchanged). Default OFF keeps runs
-# bit-reproducible; enable for ~2-3x faster scoring on large/dense graphs (e.g. big sweeps).
+# Opt-in fast spectral density (direct sparse Laplacian / KPM): differs from the networkx
+# Laplacian only at fp level. Default OFF for bit-reproducibility; ON is ~2-3x faster.
 FAST_SPECTRAL = os.environ.get("LG_TLM_FAST_SPECTRAL", "0") == "1"
 FINE_RES = _float("LG_TLM_FINE_RES", 8.0)
 SEED = _int("LG_TLM_SEED", 12345)
@@ -194,11 +146,9 @@ DATASETS = {
 
 # --------------------------------------------------------------------------- features
 def _latent_from_eig(w, U, k, rows, cols, kind):
-    """Latent feature from a rank-k adjacency spectral embedding z (eigvecs scaled by
-    sqrt|eigval|), reusing a precomputed eigendecomposition (w, U) of A. kind="dot":
-    L_ij = z_i . z_j (RDPG inner product — low-rank / community structure). kind="dist":
-    L_ij = -||z_i - z_j|| (Hoff latent-space distance — geometric / spatial structure,
-    e.g. brain connectomes). Standardized."""
+    """Latent feature from a rank-k adjacency spectral embedding z (eigvecs scaled by sqrt|eigval|),
+    reusing a precomputed eig (w, U) of A. kind="dot": L_ij = z_i·z_j (RDPG inner product);
+    kind="dist": L_ij = -||z_i - z_j|| (Hoff latent-space distance). Standardized."""
     idx = np.argsort(-np.abs(w))[:k]
     z = U[:, idx] * np.sqrt(np.abs(w[idx]))
     if kind == "dist":
@@ -222,10 +172,9 @@ def _norm_laplacian(A):
 
 
 def _spectral_density_fast(A, scorer):
-    """Same spectral density as scorer.compute_spectral_density, but for the KPM path
-    (n > threshold) builds the Laplacian straight from the adjacency (validated identical
-    to the nx path, ~2-3x faster on large/dense graphs). Small graphs use the exact nx
-    path unchanged."""
+    """Same spectral density as scorer.compute_spectral_density, but on the KPM path (n >
+    threshold) builds the Laplacian straight from the adjacency (validated identical, ~2-3x
+    faster on large/dense graphs); small graphs use the exact nx path unchanged."""
     n = A.shape[0]
     if FAST_SPECTRAL and n > KPM_THRESHOLD:
         return kpm_spectral_density(_norm_laplacian(A), n_bins=50)
@@ -234,9 +183,8 @@ def _spectral_density_fast(A, scorer):
 
 def _deg_feature_nonedges(A, rows, cols, ne, d):
     """Degree feature D_ij = log(1+S_i)+log(1+S_j) over the non-edge set. d=0: S_v=deg(v);
-    d=1: S_v=deg(v)+sum_{u~v}deg(u)=(deg+A@deg)_v. For non-edges adj[i,j]=0 -> no layer-2
-    subtraction -> identical to build_pair_dataset(d, "bounded", layer2=True) on those pairs
-    (validated, maxdiff 0), but vectorized (no n^2 loop). Only d in {0,1} (both separable)."""
+    d=1: S_v=(deg+A@deg)_v. Identical to build_pair_dataset(d,"bounded",layer2=True) on those
+    pairs (validated) but vectorized; only d in {0,1}."""
     deg = A.sum(1)
     S = deg if d == 0 else deg + A @ deg
     f = np.log1p(S)
@@ -308,11 +256,9 @@ def _ensemble_kl(x, n, rows, cols, Bc, Bf, L, e_real, scorer, real_den, seeds, d
 
 
 def fit_tlg(G, scorer, real_den):
-    """Tune (alpha, gc, gf, lam) and SELECT the degree depth d in {0,1}, latent kernel, and
-    latent rank k by min ensemble-KL on TUNE seeds; the reported KL is scored on disjoint
-    HELD-OUT seeds. alpha warm-started from the per-d degree MLE. All features exogenous /
-    identifiable; n_params = 4 (coefficients only — d/kernel/rank are selected
-    hyperparameters, not counted, like SBM's block count)."""
+    """Tune (alpha, gc, gf, lam) and select degree depth d∈{0,1}, latent kernel, and rank k by
+    min ensemble-KL on TUNE seeds; reported KL is scored on disjoint HELD-OUT seeds. n_params = 4
+    (coefficients only — d/kernel/rank are selected hyperparameters, not counted, like SBM)."""
     n = G.number_of_nodes()
     adj = nx.to_numpy_array(G)
     e_real = G.number_of_edges()
@@ -530,8 +476,6 @@ def run_all(names=None):
 
 # ===========================================================================
 # Per-dataset SWEEP: fit EVERY network of a dataset, cached/resumable/parallel.
-# Each per-dataset entry script (run_tlg_<dataset>_latent_gic.py) calls run_sweep(name);
-# run_tlg_all_latent_gic.py invokes those individual scripts in turn.
 # ===========================================================================
 
 SWEEP_NMIN = _int("LG_SWEEP_NMIN", 50)        # per-ego BAND filter (twitter/gplus ONLY)
@@ -733,10 +677,9 @@ def _report_overall(datasets):
 
 
 def _run_pool(tasks, workers, label):
-    """Drive a single spawn Pool over the given (dataset, ...) tasks, streaming the full
-    family KL ranking per network. This is the shared engine for both the single-dataset
-    sweep and the all-datasets run (one global pool -> parallel across datasets AND across
-    networks, with load balancing)."""
+    """Drive a single spawn Pool over the given (dataset, ...) tasks, streaming the full family
+    KL ranking per network — the shared engine for both the single-dataset sweep and the
+    all-datasets run (one global pool, parallel across datasets and networks)."""
     # Seeded shuffle: spread the few large graphs (twitch/arxiv/big connectomes) through the
     # queue so small graphs stream in steadily (visible progress) and no big graph piles up
     # at the end as a straggler. Deterministic -> still reproducible.
@@ -778,10 +721,9 @@ def run_sweep(dataset, workers=None):
 
 
 def run_sweep_multi(datasets, workers=None):
-    """Sweep MANY datasets in ONE global pool -> parallel across datasets AND across
-    networks within each dataset (better load balancing than per-dataset pools). Streams
-    per-network rankings, writes each dataset under its own runs/tlg_latent_<dataset>_gic/,
-    and prints the overall cross-dataset KL ranking."""
+    """Sweep MANY datasets in ONE global pool — parallel across datasets and networks (better
+    load balancing than per-dataset pools). Streams per-network rankings, writes each dataset
+    under runs/tlg_latent_<dataset>_gic/, and prints the overall cross-dataset KL ranking."""
     tasks = [(ds, *t) for ds in datasets for t in _sweep_enumerate(ds)]
     _run_pool(tasks, workers or SWEEP_WORKERS, "+".join(datasets))
     _report_overall(datasets)

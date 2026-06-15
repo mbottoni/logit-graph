@@ -1,8 +1,6 @@
-"""Re-render the parameter-recovery figure from the cached CSV (no experiment rerun).
-
-Loads runs/tlg_recovery/recovery_all.csv and calls the existing plotting function with
-the updated suptitle. Output path is the first CLI argument.
-"""
+"""Re-render the parameter-recovery figure from the cached CSV (no rerun): loads
+runs/tlg_recovery/recovery_all.csv and calls the existing plot fn with the updated suptitle.
+Output path is the first CLI argument."""
 import os
 import sys
 from pathlib import Path

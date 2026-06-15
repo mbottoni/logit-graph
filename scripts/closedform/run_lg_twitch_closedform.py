@@ -1,38 +1,7 @@
 #!/usr/bin/env python3
-"""Closed-form (moment-matched) baseline estimators vs fixed-interval grid
-search, on Twitch country networks, alongside a fairly-scored Logit-Graph (LG).
-
-The 6 Twitch country graphs are large (n 1912-9498) — far above the size at
-which the LG Gibbs chain mixes in reasonable time. So instead of the whole
-country graph we sample, per country, PER_COUNTRY **BFS-connected subgraphs**
-capped at CAP nodes (seeded random BFS roots), and score each subgraph. This
-measures the families' fit to real *local* Twitch sub-networks, not the global
-graph. Spectral GIC (2*KL + 2*n_params, KL on the normalized-Laplacian density,
-lower=better):
-
-  * LG            -- best of d in {0,1,2}, scored by burn-in + ensemble mean of
-                     the spectral density over N_RUNS post-burn-in snapshots.
-  * ER/BA/WS      -- grid (fixed interval, pick min GIC) and cf (closed-form).
-  * KR/GRG        -- closed-form only.
-
-Closed-form estimators (n nodes, E edges, kbar = 2E/n):
-  ER p=2E/(n(n-1)) [MLE]; BA m=round(E/n); WS k=2*round(E/n)+clustering p;
-  KR d=round(kbar); GRG r=sqrt(kbar/(pi*(n-1))).
-
-Reproducible: fixed seed (LG_TWCF_SEED) drives BFS roots + generators; BLAS
-pinned. Dense eigvalsh for n<=500, deterministic KPM above. Read-only w.r.t. the
-library; writes only under runs/twitch_closedform/. Findings:
-FINDINGS_twitch_closedform.md.
-
-Env knobs (all optional):
-  LG_TWCF_SEED (12345)     LG_TWCF_QUICK (0 -> all 6 countries; 1 -> 2 countries)
-  LG_TWCF_COUNTRIES (PTBR,RU,ES,FR,ENGB,DE)
-  LG_TWCF_CAP (700)        LG_TWCF_PER_COUNTRY (3)
-  LG_TWCF_N_RUNS (5)       LG_TWCF_GRID_POINTS (5)
-
-  make lg-gic-twitch-closedform        full run (BFS subgraphs from all 6 countries)
-  make lg-gic-twitch-closedform-quick  smoke (2 countries, 1 subgraph each)
-"""
+"""Closed-form / grid-search baselines (ER/BA/WS/KR/GRG) vs a fairly-scored LG on BFS-connected
+subgraphs (cap CAP) of the 6 Twitch country networks, by spectral GIC (2*KL + 2*n_params,
+lower=better). Seeded/reproducible; `make lg-gic-twitch-closedform`."""
 from __future__ import annotations
 
 import math

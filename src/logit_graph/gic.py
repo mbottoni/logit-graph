@@ -22,10 +22,9 @@ _MODEL_N_PARAMS: dict[str, int] = {
     "SBM": 1,
 }
 
-# Switch to KPM (Kernel Polynomial Method) approximation of the normalized
-# Laplacian spectral density once n > KPM_THRESHOLD. Exact dense eigvalsh
-# is O(n³) / O(n²) memory; KPM is O(M·P·nnz) with M moments and P probes,
-# so it stays cheap for sparse social networks at n in the thousands.
+# Above KPM_THRESHOLD nodes, approximate the normalized-Laplacian spectral density by
+# KPM (Kernel Polynomial Method): exact dense eigvalsh is O(n^3), while KPM is O(M*P*nnz)
+# with M moments and P probes, so it stays cheap for sparse graphs at n in the thousands.
 KPM_THRESHOLD = int(os.environ.get("LG_GIC_KPM_THRESHOLD", "500"))
 KPM_N_MOMENTS = int(os.environ.get("LG_GIC_KPM_MOMENTS", "60"))
 KPM_N_PROBES = int(os.environ.get("LG_GIC_KPM_PROBES", "20"))
@@ -49,13 +48,9 @@ def kpm_spectral_density(
     n_probes: int = KPM_N_PROBES,
     seed: int = KPM_SEED,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Stochastic Chebyshev estimator of the normalized-Laplacian density.
-
-    Returns ``(hist, bin_edges)`` matching the signature of
-    ``np.histogram(eigvals, bins=n_bins, range=(0, 2), density=True)`` so it
-    is a drop-in replacement. Eigenvalues of the normalized Laplacian lie in
-    [0, 2]; we rescale to [-1, 1] before invoking Chebyshev recurrences.
-    """
+    """Stochastic Chebyshev (KPM) estimator of the normalized-Laplacian density.
+    Returns ``(hist, bin_edges)`` like ``np.histogram(eigvals, bins=n_bins,
+    range=(0, 2), density=True)`` — a drop-in replacement (eigenvalues in [0, 2])."""
     n = laplacian.shape[0]
     # Rescale to [-1, 1]: x = λ − 1
     H = (laplacian - sp.eye(n, format="csr")).astype(np.float64).tocsr()

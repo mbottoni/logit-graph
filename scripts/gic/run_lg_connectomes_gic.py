@@ -1,25 +1,7 @@
 #!/usr/bin/env python3
-"""Fit LG + ER/WS/BA on every animal connectome and rank them by GIC.
-
-For each ``data/connectomes/*.graphml`` file, fits the Logit-Graph model
-(AIC d̂ + σ̂) and three baselines (Erdős–Rényi, Watts–Strogatz,
-Barabási–Albert), scores each by spectral GIC against the real graph,
-and ranks them. Outputs per-graph reports under
-``scripts/gic/runs/connectomes/{graph}/`` and aggregate tables/plots.
-
-Env-var overrides:
-  LG_CONN_MAX_NODES     cap on |V|     (default 2000)
-  LG_CONN_MIN_NODES     floor on |V|   (default 20)
-  LG_CONN_LG_ITER       LG MCMC cap    (default 1500)
-  LG_CONN_GRID_POINTS   baseline grid  (default 3)
-  LG_CONN_N_RUNS        baseline reps  (default 1)
-  LG_CONN_USE_CACHE     reload finished (0/1, default 1)
-  LG_CONN_WORKERS       parallel proc count (default cpu-1)
-  LG_CONN_QUICK         set to 1 for smoke (MAX_NODES=300, fewer iter)
-
-  make lg-gic-connectomes        full preset (~3-5 min on 4 cores)
-  make lg-gic-connectomes-quick  smoke (~30s)
-"""
+"""Fit LG + ER/WS/BA on every animal connectome (data/connectomes/*.graphml) and rank by
+spectral GIC: LG via AIC d-hat + sigma-hat, three baselines, per-graph reports under
+scripts/gic/runs/connectomes/ plus aggregate tables. `make lg-gic-connectomes`."""
 from __future__ import annotations
 
 import os
@@ -326,12 +308,8 @@ def _fit_worker(args):
 
 
 def _discover(cfg):
-    """Load each .graphml once and filter by node-count bounds.
-
-    Connectome files are graphml so we can't byte-prefilter as we did for
-    gplus's plain edge lists; but there are only ~20 of them and they load
-    in <2s total.
-    """
+    """Load each .graphml once and filter by node-count bounds (no byte-prefilter as for gplus's
+    plain edge lists, but there are only ~20 files and they load in <2s total)."""
     paths = sorted(cfg.data_root.glob(cfg.glob_pattern))
     paths = [p for p in paths if p.suffix == ".graphml" and p.is_file()]
     sizes: dict[str, int] = {}

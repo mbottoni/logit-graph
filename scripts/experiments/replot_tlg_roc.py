@@ -1,8 +1,5 @@
-"""Re-render the ROC figures from the cached roc_long.csv (no experiment rerun).
-
-Usage: replot_tlg_roc.py <out_dir>
-Writes <out_dir>/tlg_roc_effect.png and <out_dir>/tlg_roc_sample.png.
-"""
+"""Re-render the ROC figures from the cached roc_long.csv (no rerun). Usage:
+replot_tlg_roc.py <out_dir> -- writes <out_dir>/tlg_roc_effect.png and tlg_roc_sample.png."""
 import sys
 from pathlib import Path
 

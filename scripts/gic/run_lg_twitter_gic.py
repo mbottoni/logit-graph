@@ -1,24 +1,7 @@
 #!/usr/bin/env python3
-"""Fit LG + ER/WS/BA on every Twitter SNAP ego network and rank them by GIC.
-
-For each ``data/misc/twitter/*.edges`` file with ``MIN_NODES ≤ n ≤ MAX_NODES``,
-fits the Logit-Graph model (AIC d̂ + σ̂) and three baselines (Erdős–Rényi,
-Watts–Strogatz, Barabási–Albert), scores each by spectral GIC against the
-real graph, and ranks them. Outputs per-graph reports under
-``scripts/gic/runs/twitter/{graph}/`` and aggregate tables/plots.
-
-Env-var overrides (all optional):
-  LG_TWITTER_MAX_NODES     cap on |V| (default 300, set to "none" for no cap)
-  LG_TWITTER_MIN_NODES     floor on |V| (default 50)
-  LG_TWITTER_LG_ITER       LG max_iterations override (default 2000)
-  LG_TWITTER_GRID_POINTS   baseline grid resolution (default 3)
-  LG_TWITTER_N_RUNS        baseline ensemble size (default 1)
-  LG_TWITTER_USE_CACHE     reload finished networks (0/1, default 1)
-  LG_TWITTER_QUICK         set to 1 for smoke (MAX_NODES=150, LG_ITER=1000)
-
-  make lg-gic-twitter         full preset, ~3-5 min on 4 cores
-  make lg-gic-twitter-quick   smoke run (~30s on 4 cores)
-"""
+"""Fit LG + ER/WS/BA on every Twitter SNAP ego network (MIN_NODES <= n <= MAX_NODES) and rank by
+spectral GIC: LG via AIC d-hat + sigma-hat, three baselines, per-graph reports under
+scripts/gic/runs/twitter/ plus aggregate tables. `make lg-gic-twitter`."""
 from __future__ import annotations
 
 import os
@@ -274,11 +257,8 @@ def _cfg_to_dict(cfg) -> dict:
 
 
 def _fit_worker(args):
-    """Run in a child process. Returns (status, name, payload).
-
-    Worker writes all per-graph artifacts to disk (via fit_one_network);
-    only the small meta dict + summary DataFrame are shipped back over IPC.
-    """
+    """Run in a child process; returns (status, name, payload). The worker writes all per-graph
+    artifacts to disk (fit_one_network); only the small meta dict + summary DataFrame return over IPC."""
     edge_path_str, cfg_dict, lg_iter_cap, i, total = args
     import sys as _sys
     import os as _os
@@ -332,15 +312,9 @@ def _peek_size(edge_path: Path) -> int:
 
 
 def _fast_discover(cfg):
-    """File-size pre-filter + cheap node-count peek, skipping networkx parsing.
-
-    The reference ``platform_fit_utils.discover_graph_files`` loads every
-    candidate via ``nx.read_edgelist`` to count nodes — for the twitter
-    collection this scans ~130 files (incl. multi-MB ones above MAX_NODES)
-    and takes minutes. Here we (1) drop files whose byte size implies
-    n > 2·max_nodes (lots of slack) and (2) count unique node tokens
-    in a single linear pass for the survivors.
-    """
+    """File-size pre-filter + cheap node-count peek, skipping networkx parsing. The reference
+    platform_fit_utils.discover_graph_files loads every candidate via nx.read_edgelist (minutes for
+    ~130 twitter files); here we drop oversize-by-bytes files and count node tokens in one linear pass."""
     paths = sorted(cfg.data_root.glob(cfg.glob_pattern))
     paths = [p for p in paths if p.suffix == ".edges" and p.is_file()]
     sizes: dict[str, int] = {}

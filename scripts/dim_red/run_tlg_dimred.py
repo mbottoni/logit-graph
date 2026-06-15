@@ -1,42 +1,7 @@
 #!/usr/bin/env python3
-"""Family-fingerprint dimensionality-reduction experiment (LG_DR_DATASET: twitch, connectome,
-...; any dataset tlg_latent_gic_common knows).
-
-For each network of the dataset (largest CC, BFS-capped to ~1500 nodes — the same subgraph
-the closed-form / latent-TLG experiments use), we:
-
-  1. Estimate each family's parameters with the SAME closed-form estimation as
-     scripts/closedform (ER/BA/WS/KR/GRG via moment matching, SBM via Louvain, TLG via the
-     latent degree+community+latent-ASE fit — reused from the cached sweep when available,
-     else fit fresh), and GENERATE n=10 graphs per family.
-  2. Compute ~20 candidate graph-level structural features per graph (generated + real),
-     then prune to a NON-COLINEAR subset: drop one of any pair with |Pearson|>=THRESH,
-     then iteratively drop the highest-VIF feature until every feature has VIF<VIF_THRESH.
-  3. Cache every cell (estimated params, features, n, edges, seed) so reruns resume.
-  4. Embed (PCA/t-SNE/UMAP, fit PER NETWORK on StandardScaler-normalized features) and plot
-     each family as its DENSITY REGION (2-sigma covariance ellipse) + its points; the real
-     graph is the highlighted ★. The embeddings are fit per network so the strong per-network
-     structure differences don't split a family into separate sub-clusters.
-
-Output under runs/tlg_dimred_<DATASET>/ (gitignored):
-  cache/<region>_<family>_<rep>.json   per-graph record (resumable)
-  features.csv          all graphs x (raw features + meta)
-  kept_features.txt     the non-colinear feature subset; colinearity.png (candidates vs kept)
-  embeddings.csv        2D coords (region, family, rep, method, x, y) per graph
-  dimred_main.{png,pdf} MAIN figure: one panel per network (LG_DR_MAIN_METHOD), family
-                        density regions + real ★ + dashed line to nearest family centroid
-  dimred_per_graph.{png,pdf}  supplement: rows = network, cols = PCA/t-SNE/UMAP
-  dimred_distance.{png,pdf} + distance_to_real.csv  QUANTITATIVE: heatmap of the distance
-                        from the real graph to each family centroid (raw Euclidean in the
-                        standardized feature space, NOT a dim-red result; closest boxed),
-                        beside one dim-red embedding (LG_DR_DIST_METHOD) of the focus network
-
-Env: LG_DR_DATASET (twitch), LG_DR_NETWORKS (subset; default all), LG_DR_NREPS (10),
-LG_DR_FAMILIES (ER,BA,WS,KR,GRG,SBM,TLG), LG_DR_FEATURE_MODE (balanced | vif; default
-balanced = one representative per structural family), LG_DR_COLINEAR_THRESH (0.85),
-LG_DR_VIF_THRESH (5), LG_DR_MAIN_METHOD (t-SNE), LG_DR_DIST_METHOD (UMAP), LG_DR_FOCUS_REGION
-(network in the distance fig; default first), LG_DR_SEED (12345), LG_DR_TSNE_PERPLEXITY (30).
-"""
+"""Family-fingerprint dimensionality-reduction experiment (LG_DR_DATASET: twitch, connectome, ...):
+for each network, generate graphs per family (ER/BA/WS/KR/GRG/SBM/TLG, same closed-form fits),
+compute non-colinear structural features, and embed (PCA/t-SNE/UMAP) into per-family density regions."""
 from __future__ import annotations
 
 import json
@@ -108,10 +73,9 @@ FOCUS_REGION = os.environ.get("LG_DR_FOCUS_REGION", "")     # network shown in t
 DIST_METHOD = os.environ.get("LG_DR_DIST_METHOD", "UMAP")   # the single embedding shown there
 FEATURE_MODE = os.environ.get("LG_DR_FEATURE_MODE", "balanced")  # "balanced" | "vif"
 
-# Structural families -> candidate members (preference order). "balanced" selection forces
-# ONE representative per family so every structural axis is represented (in particular the
-# community/clustering axes that a purely statistical VIF prune can silently delete) -- fair
-# to all community-aware models, not tuned for any one family.
+# Structural families -> candidate members (preference order). "balanced" selection forces ONE
+# representative per family so every structural axis is represented (notably the community/clustering
+# axes a purely statistical VIF prune can silently delete), fair to all models.
 _FEATURE_FAMILIES = {
     "degree_level":        ["avg_degree", "density"],
     "degree_heterogeneity": ["degree_cv", "degree_gini", "degree_skew", "degree_kurt",
@@ -287,10 +251,9 @@ def generate_and_feature():
 
 # --------------------------------------------------------------------------- dim-red
 def _vif(Z):
-    """Variance inflation factor per column of a standardized DataFrame Z. VIF_j =
-    1/(1-R_j^2) where R_j^2 is from regressing column j on all the others. Catches
-    multicolinearity (a feature being a linear combination of several others), not just
-    pairwise correlation."""
+    """Variance inflation factor per column of a standardized DataFrame Z: VIF_j = 1/(1-R_j^2),
+    R_j^2 from regressing column j on all the others. Catches multicolinearity (a feature being a
+    linear combination of several others), not just pairwise correlation."""
     from sklearn.linear_model import LinearRegression
     cols = list(Z.columns)
     out = {}
@@ -402,10 +365,9 @@ def _legend_handles(fams):
 
 
 def _combined_figure(meta, F, keep):
-    """Pooled single-embedding view (companion to the per-network grid): ALL networks' graphs
-    in ONE PCA / t-SNE / UMAP each (1x3 panels). Per-family covariance ellipses (density
-    regions) + scatter, the real graphs as black stars. Shows the global family geometry of the
-    whole dataset in one shot. 300-dpi PNG + vector PDF."""
+    """Pooled single-embedding view (companion to the per-network grid): all networks' graphs in
+    ONE PCA/t-SNE/UMAP each (1x3 panels), per-family covariance ellipses + scatter, real graphs as
+    black stars. Shows the dataset's global family geometry. 300-dpi PNG + vector PDF."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -461,10 +423,9 @@ def _combined_figure(meta, F, keep):
 
 
 def _grid_figure(meta, F, keep):
-    """Publication figure: rows = Twitch networks, columns = PCA / t-SNE / UMAP, each
-    embedding fit ON THAT NETWORK'S GRAPHS ONLY (so the per-region structure differences
-    don't split each family into separate sub-clusters). Per-family covariance ellipses +
-    distinct color/marker, real graph as a star. 300-dpi PNG + vector PDF."""
+    """Publication figure: rows = networks, columns = PCA/t-SNE/UMAP, each embedding fit ON THAT
+    NETWORK'S GRAPHS ONLY (so per-region structure differences don't split a family). Per-family
+    covariance ellipses + distinct color/marker, real graph as a star. 300-dpi PNG + vector PDF."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -582,11 +543,9 @@ def _main_figure(region_embeds, method):
 
 
 def _distance_figure(meta, F, keep, region_embeds):
-    """Quantitative result + visual: LEFT = heatmap of the distance (standardized feature
-    space) from the real graph to each family centroid (closest boxed); RIGHT = the dim-red
-    embeddings (PCA/t-SNE/UMAP) for one focus network (family density regions + real ★), so
-    the heatmap's numbers and the embedding picture sit side by side. Writes
-    distance_to_real.csv + dimred_distance.{png,pdf}; prints the summary."""
+    """Quantitative result + visual: LEFT heatmap of the distance (standardized feature space) from
+    the real graph to each family centroid (closest boxed); RIGHT the PCA/t-SNE/UMAP embeddings for
+    one focus network. Writes distance_to_real.csv + dimred_distance.{png,pdf}; prints the summary."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt

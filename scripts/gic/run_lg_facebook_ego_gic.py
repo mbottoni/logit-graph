@@ -1,29 +1,7 @@
 #!/usr/bin/env python3
-"""Fit LG + ER/WS/BA on every SNAP Facebook ego network and rank them by GIC.
-
-For each ``data/misc/facebook/*.edges`` ego graph (10 networks, n from 52
-to 1034) fits the Logit-Graph model (AIC d̂ + offset-logit σ̂) and the
-three classical baselines, scores each by spectral GIC against the real
-graph, and ranks them.
-
-Same pipeline as ``run_gplus_gic.py`` (PR #24) — KPM spectral density +
-parallel worker processes via platform_fit_utils. Outputs per-graph
-reports under ``scripts/gic/runs/facebook_ego/{graph}/`` and an
-aggregate leaderboard plot.
-
-Env-var overrides:
-  LG_FBEGO_MAX_NODES   cap on |V|        (default None — keep all 10)
-  LG_FBEGO_MIN_NODES   floor on |V|      (default 30)
-  LG_FBEGO_LG_ITER     LG MCMC cap       (default 2000)
-  LG_FBEGO_GRID_POINTS baseline grid     (default 3)
-  LG_FBEGO_N_RUNS      baseline reps     (default 1)
-  LG_FBEGO_USE_CACHE   reload finished networks (default 1)
-  LG_FBEGO_WORKERS     parallel processes (default cpu-1)
-  LG_FBEGO_QUICK       smoke (MAX_NODES=500, fewer iter)
-
-  make lg-gic-facebook-ego        full (~30-60s on the 10 ego networks)
-  make lg-gic-facebook-ego-quick  smoke (~15s)
-"""
+"""Fit LG + ER/WS/BA on every SNAP Facebook ego network (10 graphs, n 52-1034) and rank by
+spectral GIC: LG via AIC d-hat + offset-logit sigma-hat, KPM spectral density, parallel workers;
+reports under scripts/gic/runs/facebook_ego/. `make lg-gic-facebook-ego`."""
 from __future__ import annotations
 
 import os
@@ -68,12 +46,8 @@ def _peek_size(edge_path: Path) -> int:
 
 
 def _fast_discover(cfg):
-    """Same file-size pre-filter + token-count peek used by the gplus driver.
-
-    The SNAP facebook directory only has ~10 .edges files (plus .circles /
-    .feat etc. that we ignore), so byte filtering is barely needed — but
-    keeping the same shape as run_gplus_gic.py for consistency.
-    """
+    """Same file-size pre-filter + token-count peek as the gplus driver — barely needed for the
+    ~10 SNAP facebook .edges files, but kept the same shape as run_gplus_gic.py for consistency."""
     paths = sorted(cfg.data_root.glob(cfg.glob_pattern))
     paths = [p for p in paths if p.suffix == ".edges" and p.is_file()]
     if cfg.max_nodes is not None:

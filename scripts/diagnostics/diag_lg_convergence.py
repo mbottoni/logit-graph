@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
-"""Diagnose LG Gibbs convergence by tracking GIC vs iteration on gplus nets.
-
-For a few representative ego networks (small / mid / large n) we run the LG
-Gibbs chain (warm-started, layer-2, incremental) and recompute the *full* GIC
-( 2*KL(real, current) + 2 ) every `CHECK` steps. This shows whether the chain
-has converged by iteration 2000 (the value used in the comparison run) or is
-still improving, and what a GIC-plateau stopping rule would pick.
-
-Read-only w.r.t. the library. Writes plots/CSV under runs/lg_convergence/.
-
-Env: LG_DIAG_BUDGET (12000)  LG_DIAG_CHECK (200)  LG_DIAG_D (1)
-"""
+"""Diagnose LG Gibbs convergence by tracking the full GIC (2*KL + 2) vs iteration on a few
+representative gplus ego networks — shows whether the chain has converged by iter 2000 and
+what a GIC-plateau stopping rule would pick. Writes under runs/lg_convergence/."""
 from __future__ import annotations
 
 import os

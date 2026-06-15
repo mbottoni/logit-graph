@@ -1,36 +1,7 @@
 #!/usr/bin/env python3
-"""Connectomes ANOVA on sigma-hat with a dyadic-cluster-robust SE.
-
-Honest replacement for the ``extract_sigma_estimation`` "Table 2" of
-``notebooks/connectomes_datasets/16-1-analysis.ipynb``, which bootstrapped 80%
-of the edges *with replacement* from each fixed graph and ran ``f_oneway``. For a
-single observed connectome there is no genuine replication, so that within-graph
-variance has no sampling interpretation (its p-value is an artifact of the
-bootstrap design, dial-able by subsample size).
-
-Instead, per connectome we fit the offset-logit sigma-hat on the full graph at
-its AIC-optimal d in {0,1} and attach the dyadic-cluster-robust (sandwich) SE
-(Aronow-Samii-Assenova 2015, via logit_graph.robust_se). We then test equality
-of sigma across connectomes with an omnibus Wald chi^2(k-1) and all C(k,2)
-pairwise Wald z-tests (Bonferroni + BH-FDR). The SE has a real sampling
-interpretation and is not dial-able by subsample size.
-
-Caveat: connectomes are fit at per-graph optimal d, so sigma is not strictly
-like-for-like across d=0 vs d=1 graphs (reported in the output note).
-
-Mirrors scripts/experiments/run_twitch_anova_robust.py; reuses the GraphML
-largest-CC loader convention from scripts/closedform/run_connectomes_closedform.py.
-Reproducible: fixed seed (LG_CAR_SEED), BLAS threads pinned to 1. Writes only
-under runs/connectomes_anova_robust/.
-
-Env knobs (all optional):
-  LG_CAR_SEED (12345)      LG_CAR_QUICK (0 -> full; 1 -> smoke on small graphs)
-  LG_CAR_D_MAX (1)         LG_CAR_MIN_NODES (20)   LG_CAR_MAX_NODES (2000)
-  LG_CAR_MAX_NETS (all)
-
-  make lg-anova-connectomes-robust         full run
-  make lg-anova-connectomes-robust-quick   smoke on the small connectomes
-"""
+"""Connectomes ANOVA on sigma-hat with a dyadic-cluster-robust SE: per connectome fit the
+offset-logit sigma-hat at its AIC-optimal d in {0,1} with the Aronow-Samii-Assenova sandwich SE,
+then test equality across connectomes by omnibus Wald chi^2 + pairwise z. `make lg-anova-connectomes-robust`."""
 from __future__ import annotations
 
 import json

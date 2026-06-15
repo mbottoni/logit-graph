@@ -1,31 +1,7 @@
 #!/usr/bin/env python3
-"""KPM parameter-sensitivity study on the arXiv HEP-Th citation network.
-
-The spectral GIC uses the Kernel Polynomial Method (logit_graph.gic.kpm_spectral_density)
-to approximate the normalized-Laplacian spectral density once n > KPM_THRESHOLD, with two
-knobs: the number of Chebyshev moments M (LG_GIC_KPM_MOMENTS, default 60) and the number of
-random probe vectors P (LG_GIC_KPM_PROBES, default 20). This script checks that those
-defaults are converged on a real large graph -- the cit-HepTh citation network (~27k nodes)
--- so the downstream KL/GIC numbers are not artefacts of the approximation:
-
-  1. Convergence in M: fix P, sweep M, measure the spectral-density distance (KL + total
-     variation) to a high-accuracy reference (M_ref, P_ref).
-  2. Convergence in P: fix M, sweep P, measure distance to the reference AND the probe-to-
-     probe variability (std of the density over independent probe seeds).
-  3. Absolute accuracy: on a BFS subgraph small enough for an EXACT dense eigendecomposition
-     (the ground-truth density), compare KPM(default) and KPM(high) to the exact density.
-  4. Report whether the default (M=60, P=20) is within tolerance of the reference / exact.
-  5. Adjacency-matrix spectral density: the same KPM(ref/default) vs exact overlay for the raw
-     binary adjacency (over its own wide spectral range, rescaled by Lanczos-estimated bounds).
-
-Output under runs/kpm_sensitivity_citation/ (gitignored):
-  moments.csv probes.csv exact.csv   the swept errors
-  kpm_sensitivity_citation.png       convergence curves + normalized-Laplacian & adjacency overlays
-  results.json + console summary
-
-Env: LG_KPM_REFM (256), LG_KPM_REFP (64), LG_KPM_MGRID, LG_KPM_PGRID, LG_KPM_EXACT_CAP
-(1500 BFS subgraph for the exact comparison), LG_KPM_SEED (0), LG_KPM_QUICK (0).
-"""
+"""KPM parameter-sensitivity study on the arXiv HEP-Th citation network (~27k nodes): checks the
+default Chebyshev moments M=60 / probes P=20 of the normalized-Laplacian KPM spectral density are
+converged vs a high-accuracy reference and an exact small-subgraph eigendecomposition."""
 from __future__ import annotations
 
 import json
@@ -128,21 +104,18 @@ def _adj_matrix(G):
 
 
 def _adj_bounds(A, margin=1.02):
-    """Symmetric spectral bounds [lo, hi] of the (binary) adjacency, estimated by Lanczos.
-    The margin keeps the rescaled spectrum strictly inside (-1, 1) for the Chebyshev recurrence.
-    Unlike the normalized Laplacian (eigenvalues in [0, 2]), the raw adjacency spectrum is graph-
-    dependent and, for a heavy-tailed graph, spans a wide range driven by hub eigenvalues."""
+    """Symmetric spectral bounds [lo, hi] of the (binary) adjacency, estimated by Lanczos; the
+    margin keeps the rescaled spectrum strictly inside (-1, 1) for the Chebyshev recurrence (the
+    raw adjacency spectrum is graph-dependent, unlike the normalized Laplacian's [0, 2])."""
     hi = float(eigsh(A, k=1, which="LA", return_eigenvectors=False)[0])
     lo = float(eigsh(A, k=1, which="SA", return_eigenvectors=False)[0])
     return margin * lo, margin * hi
 
 
 def _adj_kpm_density(A, lo, hi, n_bins=50, n_moments=60, n_probes=20, seed=0):
-    """KPM spectral density of a symmetric matrix over a general range [lo, hi].
-
-    Identical Chebyshev machinery to gic.kpm_spectral_density, but instead of the fixed
-    normalized-Laplacian rescaling lambda-1 it rescales by the supplied bounds, x=(lambda-c)/d
-    with c=(hi+lo)/2, d=(hi-lo)/2, so it applies to the raw adjacency. Returns (density, edges)."""
+    """KPM spectral density of a symmetric matrix over a general range [lo, hi]: same Chebyshev
+    machinery as gic.kpm_spectral_density but rescaling by the supplied bounds (x=(lambda-c)/d,
+    c=(hi+lo)/2, d=(hi-lo)/2) so it applies to the raw adjacency. Returns (density, edges)."""
     n = A.shape[0]
     c = 0.5 * (hi + lo); d = 0.5 * (hi - lo)
     H = ((A - c * sp.eye(n, format="csr")) / d).tocsr()

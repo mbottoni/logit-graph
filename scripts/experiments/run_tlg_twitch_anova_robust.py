@@ -1,31 +1,7 @@
 #!/usr/bin/env python3
-"""Twitch ANOVA for the Temporal Logit-Graph (TLG) on BOTH parameters: the intercept sigma
-and the degree slope alpha, with a 2-parameter dyadic-cluster-robust SE.
-
-This adapts run_lg_twitch_anova_robust.py (which compares sigma-hat only, beta fixed at 1)
-to the TLG, where logit P[edge_ij] = sigma + alpha * D_ij is fit by logistic regression on
-the upper-triangle dyads (D = the bounded degree feature log(1+S_i)+log(1+S_j) at depth d).
-Both sigma and alpha are free, so we generalise the dyadic sandwich SE to the 2x2 case and
-compare each parameter across the six Twitch language communities:
-
-  * sigma_hat, alpha_hat per region (cross-sectional MLE) with dyadic-cluster-robust SEs.
-  * Omnibus equality test (Cochran's Q ~ chi2(k-1)) for sigma and for alpha separately.
-  * Pairwise Wald with Bonferroni (and BH-FDR) correction for sigma and for alpha.
-  * A JOINT pairwise 2-df Wald on the (sigma, alpha) vector (Bonferroni) using the 2x2
-    robust covariance -- "do the two communities differ on the parameter pair at all?".
-
-The dyadic-cluster-robust SE has a real sampling interpretation (dyads sharing a node are
-correlated), so it is NOT dial-able by subsample size the way an edge-bootstrap is.
-
-Output under runs/twitch_tlg_anova_robust/ (gitignored):
-  summary.csv          per-region sigma_hat, alpha_hat, robust + naive SEs, n, edges
-  pairwise_sigma.csv pairwise_alpha.csv pairwise_joint.csv
-  twitch_tlg_anova_robust.png   forest plots + Bonferroni heatmaps for sigma and alpha
-  results.json
-
-Env: LG_TTA_REGIONS (DE,ENGB,ES,FR,PTBR,RU), LG_TTA_D (1 degree-feature depth),
-LG_TTA_SEED (12345), LG_TTA_QUICK (0), LG_TTA_VALIDATE (0 -> robust-SE vs Monte-Carlo check).
-"""
+"""Twitch ANOVA for the Temporal Logit-Graph (TLG) on BOTH parameters (sigma, alpha) with a 2x2
+dyadic-cluster-robust SE: fit logit P[edge] = sigma + alpha*D per region, then compare each parameter
+across the six Twitch communities (omnibus Cochran-Q + pairwise Wald; joint 2-df Wald on the pair)."""
 from __future__ import annotations
 
 import json
@@ -101,11 +77,9 @@ def _fit_tlg(adj, d):
 
 
 def _dyadic_robust_se2(n, sigma, alpha, Dvec, labels):
-    """2x2 sandwich Var = A^{-1} B A^{-1} for (sigma, alpha), with dyadic (shared-node)
-    clustering. X = [1, D]. Bread A = X' diag(p(1-p)) X (the logistic Fisher info; its
-    inverse is the NAIVE covariance). Meat B = sum_m T_m T_m' - sum_i s_i s_i', where
-    s_i = (y_i - p_i)*[1, D_i] is the dyad score and T_m = sum of s_i over dyads incident to
-    node m (row-slicing keeps it O(n^2) time / O(n) memory, as in the sigma-only version)."""
+    """2x2 sandwich Var = A^{-1} B A^{-1} for (sigma, alpha) with dyadic (shared-node) clustering,
+    X = [1, D]. Bread A = X' diag(p(1-p)) X (logistic Fisher info); meat B = sum_m T_m T_m' -
+    sum_i s_i s_i', s_i = (y_i - p_i)[1, D_i], T_m = sum of s_i over dyads incident to node m."""
     p = expit(sigma + alpha * Dvec)
     w = p * (1.0 - p)
     r = labels - p
@@ -180,11 +154,9 @@ def _pairwise_joint(regions, sig, alp, covs):
 # ---------------------------------------------------------------------------
 
 def _validate():
-    """Canonical dyadic-cluster-robust validation. Generate y_ij ~ Bernoulli(expit(sigma +
-    alpha*x_ij + u_i + u_j)) on a FIXED node covariate x_ij = z_i + z_j (so alpha is
-    well-identified) with OMITTED node random effects u (the source of shared-node
-    dependence), fit logit P = sigma + alpha*x WITHOUT u (misspecified), and compare the
-    robust/naive SE to the Monte-Carlo sampling SD. Expectation: robust ~= MC SD > naive."""
+    """Canonical dyadic-cluster-robust validation: generate y_ij ~ Bernoulli(expit(sigma + alpha*x_ij
+    + u_i + u_j)) on a fixed covariate x_ij=z_i+z_j with OMITTED node random effects u, fit without u
+    (misspecified), and compare robust/naive SE to the Monte-Carlo SD (expect robust ~= MC SD > naive)."""
     print("=== 2-param dyadic-robust SE validation vs Monte-Carlo (node random effects) ===")
     rng = np.random.default_rng(SEED)
     n, sigma, alpha, tau, M = 400, -2.0, 0.6, 0.4, 200
