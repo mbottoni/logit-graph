@@ -1,5 +1,5 @@
-"""Logit Graph: paper-consistent random-graph model with Layer-2 estimation.
-Default exports are paper-consistent (Layer-2, incremental feature, beta=1 offset logit,
+"""Logit Graph: the Logistic Random Graph (LG) model with leave-one-out (full conditional) estimation.
+Default exports are paper-consistent (leave-one-out features, incremental feature, beta=1 offset logit,
 d=0 direct-ER, warm-started Gibbs); legacy estimator classes stay importable for repro."""
 
 from .graph import GraphModel
@@ -83,7 +83,7 @@ __all__ = [
     "growth_design_from_snapshots",
     "fit_growth_params",
     "fit_growth_from_result",
-    # Multi-feature (unified) temporal Logit-Graph
+    # Unified (multi-feature) LG: general pairwise features (paper Sec 3.7)
     "grow_graph_multi",
     "MultiGrowthResult",
     "multi_design_from_snapshots",
