@@ -1,14 +1,6 @@
-"""Shared helpers for AIC-based d selection in the single-graph GIC drivers.
-
-Used by run_lg_arxiv_gic.py / run_lg_facebook_gic.py / run_lg_twitch_gic.py so that
-LG's neighbourhood radius d is chosen by the data (Akaike Information
-Criterion on a logistic regression fit) instead of being hard-coded.
-
-The flow per dataset:
-    pairs, labels = sample_pairs(G, sample_edges, seed)
-    best, aic_table = aic_select_d(G, pairs, labels, d_candidates)
-    # Then run LG MCMC at best['d'] with best['sigma'], best['beta']
-"""
+"""Shared helpers for AIC-based d selection in the single-graph GIC drivers (run_lg_arxiv/
+facebook/twitch_gic.py), so LG's neighbourhood radius d is chosen by the data (AIC on a
+logistic-regression fit): sample_pairs -> aic_select_d -> run LG MCMC at best d/sigma/beta."""
 from __future__ import annotations
 
 import time
@@ -18,12 +10,8 @@ import numpy as np
 
 
 def compute_d_features(G_gcc, pairs, d: int) -> np.ndarray:
-    """For each pair (i, j) return |N^d(i) ∩ N^d(j)|.
-
-    d=0 → returns zeros (only σ in the model).
-    d=1 → shared 1-neighbours.
-    d≥2 → shared d-balls (BFS to depth d, exclusive of the centre).
-    """
+    """For each pair (i, j) return |N^d(i) ∩ N^d(j)|: d=0 → zeros (only σ); d=1 → shared
+    1-neighbours; d≥2 → shared d-balls (BFS to depth d, exclusive of the centre)."""
     if d == 0:
         return np.zeros(len(pairs))
     unique = set()
@@ -70,19 +58,9 @@ def sample_pairs(G_gcc, sample_edges: int, seed: int):
 
 
 def aic_select_d(G_gcc, pairs, labels, d_candidates: Iterable[int]):
-    """Pick the LG neighbourhood radius d by AIC of the σ, β logit fit.
-
-    Returns (best_dict, table_of_all_d_results).
-    AIC = 2k − 2·loglik, k = 1 if d=0 else 2 (intercept + slope).
-
-    For d=0, σ for downstream MCMC is set to logit(true density), not the
-    intercept-only fit on the balanced sample (which would give σ=0). The
-    sample log-likelihood is still the principled quantity for the AIC
-    comparison across d, since the data sampling is the same for every d.
-    For d≥1, σ keeps the sample value (matches the existing single-graph
-    drivers' MCMC behaviour). β is exact (slope coefficients are
-    invariant under case-control sampling).
-    """
+    """Pick the LG neighbourhood radius d by AIC (=2k−2·loglik, k=1 if d=0 else 2) of the σ, β
+    logit fit; returns (best_dict, table). For d=0, downstream σ is logit(true density) (not the
+    balanced-sample intercept); β is exact (slope invariant under case-control sampling)."""
     import statsmodels.api as sm
     import networkx as nx
 
