@@ -1,49 +1,7 @@
 #!/usr/bin/env python3
-"""Validate the single-graph dyadic-robust Wald test by simulation (ROC curves).
-
-The real-data ANOVAs (Twitch, connectomes) compare sigma across groups with one
-graph per group, using the dyadic-cluster-robust SE + Wald test. This script
-validates *that same test* under the same one-graph-per-group design, replacing
-the older ROC machinery that (a) validated a different test (ANOVA over n_reps
-replicate graphs, impossible on one real graph) and (b) faked SE proportional to
-1/n via a fractional pair-subsample knob (ROCSweepConfig.subsample_pairs).
-
-Why a *standardized* effect. A Wald/z-test's discrimination is governed entirely
-by the non-centrality delta = (sigma1 - sigma2) / sqrt(SE1^2 + SE2^2): the ROC
-AUC is exactly Phi(delta / sqrt(2)). With honest SEs (SE ~ 1/sqrt(n)), a fixed
-*raw* effect like 0.5 gives a huge delta at n>=100, so the ROC saturates (AUC=1)
--- which is correct but uninformative. We therefore sweep the standardized effect
-delta directly: at each (n, d) we estimate the typical SE from a pilot and set
-the raw gap sigma1 - sigma2 = delta * sqrt(2) * SE so the realized non-centrality
-is ~delta. This traces the test's intrinsic ROC (no saturation, no subsample
-knob), keeps the original graph sizes, and lets us check the empirical AUC
-against the theoretical Phi(delta/sqrt(2)).
-
-Two figures:
-  * roc_effect_robust  -- ROC (TPR vs FPR) for delta in {0.5,1,1.5,2,3} at
-    n_effect=500. Curves span diagonal -> top-left; empirical AUC ~= theory.
-  * roc_sample_robust  -- vary n at ONE fixed raw effect (sigma gap), pinned so
-    the mid-grid n lands at DELTA_REF. Larger n -> larger non-centrality ->
-    better AUC, so the ROC curves separate (discrimination grows with graph
-    size) without saturating -- the honest version of the old Fig 4.
-
-Per replicate we generate two *independent* graphs (experiments.sweeps.simulate_graph:
-d=0 direct ER at p=expit(sigma); d=1 Layer-2 Gibbs at beta=1, adaptive_stopping
-disabled), fit offset-logit sigma-hat + dyadic-robust SE on each
-(logit_graph.robust_se), and form z = (s1-s2)/sqrt(SE1^2+SE2^2). Reproducible:
-fixed seed (LG_AVR_SEED), BLAS threads pinned to 1. Writes only under
-runs/anova_validation_robust/.
-
-Env knobs (all optional):
-  LG_AVR_SEED (12345)     LG_AVR_QUICK (0 -> full; 1 -> d=0, small n, few reps)
-  LG_AVR_ALPHA (0.05)     LG_AVR_DS ("0,1")
-  LG_AVR_N_EXP (200)      d=0 experiments per scenario point
-  LG_AVR_D1_N_EXP (80)    d=1 experiments per scenario point
-  LG_AVR_D1_MAX_N (500)   skip d=1 points above this n (logged)
-
-  make lg-anova-validation-robust         full run
-  make lg-anova-validation-robust-quick   smoke (d=0, small n, few reps)
-"""
+"""Validate the single-graph dyadic-robust Wald test by simulation (ROC curves): the same
+one-graph-per-group test the real-data ANOVAs use, swept over the standardized effect delta
+(AUC = Phi(delta/sqrt(2))) so the ROC traces intrinsic discrimination without saturating."""
 from __future__ import annotations
 
 import json
@@ -105,10 +63,8 @@ D1_BURN_PER_N = _int("LG_AVR_D1_BURN_PER_N", 40)
 SIGMA1 = -1.0
 DELTAS = [0.5, 1.0] if QUICK else [0.5, 1.0, 1.5, 2.0, 3.0]  # standardized effects
 N_EFFECT = 500                                # graph size for the effect ROC
-# Sample ROC: fix ONE raw effect (sigma gap) and vary n -> discrimination
-# improves with graph size (the honest version of the old Fig 4). The raw gap is
-# pinned so the mid-grid n lands at standardized DELTA_REF; smaller/larger n then
-# spread below/above it, giving visibly separated (non-overlapping) ROC curves.
+# Sample ROC: fix ONE raw effect (sigma gap) and vary n -> discrimination grows with graph size;
+# the gap is pinned so the mid-grid n lands at standardized DELTA_REF, giving separated ROC curves.
 DELTA_REF = 1.5
 N_SAMPLE = [50, 100] if QUICK else [50, 100, 200, 350, 500]
 PILOT_K = _int("LG_AVR_PILOT_K", 6 if QUICK else 16)  # graphs to estimate typical SE
@@ -176,12 +132,9 @@ def _roc(h0_p, h1_p):
 
 
 def _theory_auc(delta):
-    """ROC AUC of the TWO-sided Wald test (score = |z|) at non-centrality delta.
-
-    Under H0 z~N(0,1), under H1 z~N(delta,1); the two-sided p ranks by |z|, so
-    AUC = P(|z_H1| > |z_H0|) = E_U[P(V>U)] with U=|N(0,1)|, V=|N(delta,1)|.
-    (The one-sided value Phi(delta/sqrt(2)) would overstate it.)
-    """
+    """ROC AUC of the TWO-sided Wald test (score = |z|) at non-centrality delta: under H0 z~N(0,1),
+    under H1 z~N(delta,1), and the two-sided p ranks by |z|, so AUC = P(|z_H1| > |z_H0|). (The
+    one-sided value Phi(delta/sqrt(2)) would overstate it.)"""
     u = np.linspace(0.0, 12.0, 6001)
     f_u = 2.0 * norm.pdf(u)                       # half-normal density of |z_H0|
     p_v_gt_u = 1.0 - norm.cdf(u - delta) + norm.cdf(-u - delta)  # P(|z_H1| > u)
