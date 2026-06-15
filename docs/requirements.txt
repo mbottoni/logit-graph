@@ -1,0 +1,6 @@
+# Docs-only tooling for the Read the Docs build. The package itself is NOT installed:
+# mkdocstrings reads docstrings statically from src/ via griffe, so the heavy runtime
+# dependencies (numba, umap-learn, statsmodels, ...) are not needed to build the docs.
+mkdocs-material>=9.5
+mkdocstrings[python]>=0.26
+black>=24  # lets mkdocstrings format rendered signatures

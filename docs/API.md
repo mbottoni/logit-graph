@@ -1,6 +1,7 @@
 # API Reference
 
-Detailed reference for the main `logit_graph` exports. For a quick start, see the [README](../README.md).
+Detailed reference for the main `logit_graph` exports. For a quick start, see the [Home page](index.md);
+for the full docstring-generated reference, see the [API Reference](reference.md).
 
 The **paper-consistent** pipeline is:
 
