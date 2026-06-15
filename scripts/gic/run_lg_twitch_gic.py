@@ -1,35 +1,7 @@
 #!/usr/bin/env python3
-"""Fit LG + ER/WS/BA on every Twitch country network and rank by GIC.
-
-Structurally identical to ``run_facebook_gic.py`` / ``run_arxiv_gic.py``
-— per-graph single-pass fit using KPM spectral density on the SPARSE
-normalised Laplacian, sampled logistic regression for σ/β, dense LG
-MCMC at d=0 with a KPM-based convergence monitor. NO dense
-``eigvalsh`` inside the convergence loop — that's the bottleneck the
-existing notebook hit (5–15 hours per fit on the larger countries).
-This script does each country in ~30–60s.
-
-Loops over the 6 country graphs in ``data/twitch/graphs_processed/``
-(PTBR, RU, ES, FR, ENGB, DE — n=1,912 to n=9,498) and emits both
-per-country result rows and an aggregate leaderboard.
-
-Env-var overrides:
-  LG_TWITCH_MAX_NODES    cap on |V|        (default 10000 = all 6)
-  LG_TWITCH_MIN_NODES    floor on |V|      (default 500)
-  LG_TWITCH_MAX_ITER     LG MCMC iters     (default 30_000)
-  LG_TWITCH_CHECK        spectral check    (default 3_000)
-  LG_TWITCH_WARM_UP      iters before patience (default 6_000)
-  LG_TWITCH_PATIENCE     no-improvement checks  (default 30)
-  LG_TWITCH_SAMPLE_EDGES σ/β estimation sample  (default 30_000)
-  LG_TWITCH_KPM_MOMENTS  Chebyshev moments      (default 120)
-  LG_TWITCH_KPM_PROBES   random probes          (default 30)
-  LG_TWITCH_USE_CACHE    reuse cached per-country results (default 1)
-  LG_TWITCH_SEED         RNG seed                (default 42)
-  LG_TWITCH_QUICK        smoke (skips DE/FR/ENGB, fewer iters)
-
-  make lg-gic-twitch         full preset (~3-5 min, all 6 countries)
-  make lg-gic-twitch-quick   smoke (~1 min, smaller countries only)
-"""
+"""Fit LG + ER/WS/BA on every Twitch country network (6 graphs, n 1912-9498) and rank by GIC,
+using KPM spectral density on the sparse Laplacian, sampled logistic regression for sigma/beta,
+and a KPM convergence monitor (~30-60s/country, no dense eigvalsh). `make lg-gic-twitch`."""
 from __future__ import annotations
 
 import gc
