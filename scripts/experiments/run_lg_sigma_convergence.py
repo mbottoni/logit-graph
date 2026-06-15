@@ -1,22 +1,7 @@
 #!/usr/bin/env python3
-"""Reproduce paper Figure 2: σ̂ convergence to true σ as n grows.
-
-Runs the PAPER_SIGMA_CONVERGENCE sweep preset:
-  σ ∈ {-2, -4, -6, -8}, d ∈ {0, 1, 2}, n ∈ {20, 50, 100, 300, 1000},
-  n_reps=5, adaptive Gibbs stopping, iter_cap=300k (prevents the d=2
-  cascade from biasing σ̂ at sparse-favored σ).
-
-Produces a 3-panel figure (one per d) with σ̂ vs n on a log x-axis,
-95% CI shaded bands, and dotted lines at the true σ values.
-
-Env-var overrides:
-  LG_SIGMA_JOBS         parallel job count          default 4
-  LG_SIGMA_USE_CACHE    reuse cached CSV (0/1)      default 1
-  LG_SIGMA_QUICK        smoke (n∈{20,50,100}, n_reps=2, iter_cap=20k)
-
-  make lg-sigma-convergence        full preset, ~10-15 min
-  make lg-sigma-convergence-quick  smoke, ~30 sec
-"""
+"""Reproduce paper Figure 2: sigma-hat convergence to true sigma as n grows, via the
+PAPER_SIGMA_CONVERGENCE sweep (sigma in {-2,-4,-6,-8}, d in {0,1,2}, n in {20,50,100,300,1000});
+3-panel figure (one per d) with 95% CI bands and dotted true-sigma lines. `make lg-sigma-convergence`."""
 from __future__ import annotations
 
 import os
