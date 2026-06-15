@@ -1,0 +1,16 @@
+# Read the Docs build configuration (https://docs.readthedocs.io/en/stable/config-file/v2.html).
+# The API reference is extracted statically from src/ by griffe/mkdocstrings, so the
+# build only needs the docs tooling — not the package's heavy runtime deps (numba, umap-learn).
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.12"
+
+mkdocs:
+  configuration: mkdocs.yml
+
+python:
+  install:
+    - requirements: docs/requirements.txt
