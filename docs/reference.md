@@ -6,22 +6,28 @@ see the [API Guide](API.md).
 All symbols below are importable directly from the top-level `logit_graph` package, e.g.
 `from logit_graph import simulate_graph`.
 
-## The model family
+## The model — Logistic Random Graph (LG)
 
-Every model here scores edges with a logistic link; they differ in what enters the linear predictor.
+There is a single model, the **Logistic Random Graph (LG)** of Ottoni, Takahashi & Fujita (2026);
+the entries below are its computational forms and the general-pairwise-features extension (§3.7).
+All score an edge with a logistic link and differ only in what enters the linear predictor `η_ij`.
 
-| Model | Edge log-odds | Packaged as |
-|-------|---------------|-------------|
-| **Equilibrium LG** | `σ` + degree feature (Gibbs at stationarity) | `simulate_graph`, `GraphModel` |
-| **Temporal LG (TLG)** | `σ + α·D(t-1)` — degree from the predetermined snapshot | [Temporal LG](#temporal-growth-logit-graph) |
-| **Multi-feature TLG** | `σ + α·D(t-1) + Σ βₖ·Fₖ` — degree **plus** fixed exogenous dyad covariates | [Multi-feature TLG](#multi-feature-unified-temporal-logit-graph) |
+| Form | Edge log-odds `η_ij` | Packaged as |
+|------|----------------------|-------------|
+| **Equilibrium sampler** | `σ + α·[g(S_i)+g(S_j)]` at stationarity (Gibbs) | `simulate_graph`, `GraphModel` |
+| **Iterative generation** | same, with `S` evaluated on the lagged graph `G(t-1)` (Eq. 3.5) | [LG generation & estimation](#lg-iterative-generation-estimation) |
+| **General pairwise features (§3.7)** | `σ + Σₖ θₖ·φₖ(i,j)` — degree term **plus** extra features | [Unified LG](#unified-lg-general-pairwise-features) |
 
-- **`σ` (intercept)** — baseline edge log-odds (controls density).
-- **`α` (degree slope)** — how a dyad's degree feature `D` shifts its edge probability (hubs / preferential attachment).
-- **`Fₖ` (extra covariates)** — fixed, exogenous per-dyad features such as same-community indicators
-  (`community_feature`) or latent-embedding proximity (`latent_feature`). Because every `Fₖ` and the
-  lagged `D` are predetermined, the pooled dyad design is an ordinary logistic regression whose MLE
-  recovers `(σ, α, β₁…βₖ)` consistently — the property that makes the multi-feature model identifiable.
+- **`σ`** — baseline connection propensity (baseline log-odds; typically negative).
+- **`α ≥ 0`** — strength of the neighborhood degree effect on `g(S_i)+g(S_j)`, `g(s)=log(1+s)`,
+  `S_i = Σ_{l∈N_d(i)} k_l` the neighborhood degree sum over the `d`-hop ball.
+- **`d`** — the neighborhood radius (hops). `d=0` uses each node's own degree only (`S_i = k_i`);
+  `d=1` adds the neighbors' degrees; larger `d` reaches further. Selected from data by AIC.
+- **`φₖ` (extra features)** — appended columns: exogenous / pair-local ones (e.g. block membership via
+  `community_feature`) are directly estimable; globally-coupled ones (e.g. latent proximity via
+  `latent_feature`, or the degree term itself) are made consistent by the **predetermined-predictor
+  (temporal)** form that reads them off `G(t-1)`. The *unified five-feature LG model* of the thesis is the
+  instance with degree + coarse/fine community (`γc`, `γf`) + latent proximity (`λ`).
 
 ## Paper-consistent sampler & estimator
 
@@ -51,10 +57,11 @@ Every model here scores edges with a logistic link; they differ in what enters t
 ::: logit_graph.incremental_h
 ::: logit_graph.recommended_iterations
 
-## Temporal / growth Logit-Graph
+## LG: iterative generation & estimation
 
-The degree-only temporal model: `logit P[edge_ij at t] = σ + α·D(t-1)`, with `D` read from the
-predetermined previous snapshot so the pooled dyad design is an ordinary logistic regression.
+The LG iterative generation algorithm and its estimator: `logit Pr[A_ij(t)=1 | G(t-1)] = σ + α·D(t-1)`
+(Eq. 3.5), with the degree term `D = g(S_i)+g(S_j)` read from the predetermined previous graph so the
+pooled dyad design is an ordinary logistic regression and the MLE of `(σ, α)` is consistent.
 
 ::: logit_graph.grow_graph
 ::: logit_graph.GrowthResult
@@ -62,12 +69,12 @@ predetermined previous snapshot so the pooled dyad design is an ordinary logisti
 ::: logit_graph.fit_growth_params
 ::: logit_graph.fit_growth_from_result
 
-## Multi-feature (unified) Temporal Logit-Graph
+## Unified LG: general pairwise features
 
-The TLG extended with fixed exogenous dyad covariates:
-`logit P[edge_ij at t] = σ + α·D(t-1) + Σ βₖ·Fₖ`. `grow_graph_multi` / `fit_multi_params` mirror the
-degree-only API but carry arbitrary extra features; `community_feature` and `latent_feature` build the
-canonical same-community and latent-embedding covariates from an observed graph.
+The §3.7 extension `logit p_ij = σ + Σₖ θₖ·φₖ(i,j)`: the degree term plus arbitrary appended pairwise
+features. `grow_graph_multi` / `fit_multi_params` mirror the degree-only API but carry the extra features;
+`community_feature` (block membership) and `latent_feature` (latent proximity) build the canonical
+covariates of the thesis's unified five-feature LG model from an observed graph.
 
 ::: logit_graph.grow_graph_multi
 ::: logit_graph.MultiGrowthResult
