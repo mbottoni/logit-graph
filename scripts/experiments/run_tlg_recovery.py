@@ -1,37 +1,7 @@
 #!/usr/bin/env python3
-"""Temporal Logit-Graph (TLG) parameter-recovery experiment.
-
-Generates growth graphs with KNOWN ground truth (sigma, alpha) for d in {0,1,2}
-and n in {10,20,50,75,100,150,500,1000,1500}, estimates (sigma, alpha) by logistic regression on
-the at-risk dyads, and shows the estimates converge to the truth as n grows.
-Several (sigma, alpha) scenarios are swept and overlaid in ONE figure.
-
-Output under runs/tlg_recovery/ (gitignored):
-  - <scenario>/recovery_raw.csv   per-replicate estimates (cache + custom re-plots)
-  - <scenario>/recovery.csv       tidy per-scenario summary
-  - <scenario>/results.json       per-scenario config + summary
-  - recovery_all.csv              combined summary over all scenarios
-  - recovery.png                  ONE figure: rows = (sigma, alpha), cols = d.
-                                  Each (sigma,alpha) scenario is one COLOR, the same
-                                  across every subplot; solid line = mean estimate,
-                                  shaded = 95% interval, dashed = that scenario's true
-                                  value; x = n (log).
-
-Re-plotting: per-scenario results are cached. Re-running with LG_TLG_USE_CACHE=1
-(default) reloads the caches and only regenerates recovery.png, so styling tweaks
-are cheap. Force a fresh run with LG_TLG_USE_CACHE=0.
-
-Env knobs (all optional):
-  LG_TLG_SEED (12345)     LG_TLG_QUICK (0 -> full; 1 -> 2 scenarios, d={0,1}, small n)
-  LG_TLG_NREPS (12)       replicates per (d, n) cell
-  LG_TLG_NSTEPS (4)       growth steps per generated graph
-  LG_TLG_SIGMAS (-2,-3,-4,-5,-6)  true intercepts; PAIRED index-wise with ALPHAS
-  LG_TLG_ALPHAS (0.04,0.06,0.08,0.10,0.12)  true degree coeffs; one distinct pair each
-  LG_TLG_USE_CACHE (1)    1 -> reload + replot if cache exists; 0 -> always simulate
-
-  make tlg-recovery         full run (scenario grid)
-  make tlg-recovery-quick   smoke (small grid, d={0,1}, n={10,50})
-"""
+"""Temporal Logit-Graph (TLG) parameter-recovery experiment: generate growth graphs with known
+(sigma, alpha) for d in {0,1,2} across a grid of n, estimate (sigma, alpha) by logistic regression
+on the at-risk dyads, and show the estimates converge to truth as n grows. `make tlg-recovery`."""
 from __future__ import annotations
 
 import json
