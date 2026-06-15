@@ -1,24 +1,6 @@
-"""Stochastic Block Model baseline fitted to an observed graph.
-
-Single source of truth used by both the production codepath
-(``model_selection._generate_graph`` and
-``simulation.GraphModelComparator._fit_other_models``) and the
-single-graph driver scripts in ``notebooks/refactors/``.
-
-The fit follows the recipe in ``notebooks/more_baselines/02_new_baselines_facebook.ipynb``
-and the corresponding twitch notebook:
-
-  1. Detect communities on ``G_real`` with Louvain.
-  2. Treat the communities as SBM blocks; compute the per-block-pair edge
-     probability ``p_ij = actual_edges_between_blocks / possible_pairs``
-     (within-block uses ``len(B)·(len(B)-1)/2`` possible pairs).
-  3. Generate an SBM sample with ``nx.stochastic_block_model``.
-
-The model has ``k·(k+1)/2`` free probability parameters where ``k`` is the
-number of Louvain communities; this is reported as ``n_params`` for the
-caller's AIC bookkeeping. The current pipeline scores SBM by spectral
-GIC like the other baselines, so the parameter count is informational.
-"""
+"""Stochastic Block Model baseline fitted to an observed graph: detect Louvain
+communities as blocks, set per-block-pair edge probabilities from observed counts, then
+draw via ``nx.stochastic_block_model``. Has ``k·(k+1)/2`` params (reported for AIC)."""
 from __future__ import annotations
 
 from typing import Optional
@@ -31,16 +13,9 @@ def fit_sbm_from_graph(
     G_real: nx.Graph,
     seed: Optional[int] = None,
 ) -> tuple[list[int], np.ndarray, list[list[int]]]:
-    """Louvain communities + per-block-pair edge probabilities.
-
-    Returns ``(sizes, p_matrix, comm_nodes)`` where:
-      - ``sizes`` is the list of community sizes in detection order;
-      - ``p_matrix`` is a ``k × k`` symmetric matrix of within / between
-        block edge probabilities;
-      - ``comm_nodes`` is the list of node-index lists per community
-        (sorted within each community), useful if the caller needs to
-        recover the partition.
-    """
+    """Louvain communities + per-block-pair edge probabilities. Returns
+    ``(sizes, p_matrix, comm_nodes)``: community sizes in detection order, the k×k
+    symmetric within/between edge-probability matrix, and sorted node lists per community."""
     comms = list(nx.community.louvain_communities(G_real, seed=seed))
     sizes = [len(c) for c in comms]
     k = len(comms)
@@ -71,12 +46,9 @@ def generate_sbm_from_real(
     G_real: nx.Graph,
     seed: Optional[int] = None,
 ) -> tuple[nx.Graph, int]:
-    """Fit an SBM to ``G_real`` and draw one sample.
-
-    Returns ``(G_sbm, n_params)`` with ``n_params = k·(k+1)/2``.
-    The returned graph is a fresh ``nx.Graph`` re-labeled to integer
-    nodes ``0..n-1`` so it is directly comparable with other baselines.
-    """
+    """Fit an SBM to ``G_real`` and draw one sample. Returns ``(G_sbm, n_params)`` with
+    ``n_params = k·(k+1)/2``; the graph is a fresh ``nx.Graph`` re-labeled to nodes
+    ``0..n-1`` so it is directly comparable with the other baselines."""
     sizes, p_matrix, _ = fit_sbm_from_graph(G_real, seed=seed)
     sbm = nx.stochastic_block_model(sizes, p_matrix.tolist(), seed=seed)
     G_out = nx.Graph()
