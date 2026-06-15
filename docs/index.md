@@ -35,7 +35,7 @@ from logit_graph import simulate_graph, select_d_ensemble, estimate_sigma_from_g
 adj = simulate_graph(n=200, d=1, sigma=-4.0, n_iter=30_000,
                      feature_mode="incremental", target_density=0.10, seed=42)
 
-# Recover the neighborhood depth by AIC, then the intercept
+# Recover the neighborhood radius d by AIC, then the baseline sigma
 d_hat, aic_stats = select_d_ensemble(graphs=[adj], d_candidates=[0, 1, 2, 3])
 sigma_hat = estimate_sigma_from_graph(adj, d=d_hat, feature_mode="incremental")
 ```
