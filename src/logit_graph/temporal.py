@@ -1,27 +1,6 @@
 """Temporal / growth Logit-Graph: generation + estimation (degree-only).
-
-The equilibrium Logit-Graph (graph.py / simulate_graph) samples a graph at
-stationarity. There, a *free* coefficient on a node-degree feature is neither
-recoverable by logistic regression nor non-degenerate (see FINDINGS). This module
-adds the **temporal** reformulation, where each dyad's state at step t is drawn from
-the *predetermined* previous snapshot:
-
-    logit( P[edge_ij at t] ) = sigma + alpha * D_ij(t-1)
-
-with D = degree feature ("bounded": log(1+S_i)+log(1+S_j)), read from the snapshot
-at t-1. By default (``allow_removal=True``) every dyad is resampled each step, so
-edges form AND dissolve and the process is an ergodic Markov chain with a stationary
-distribution at moderate density. Setting ``allow_removal=False`` recovers the
-add-only growth variant (edges only formed, drifting to saturation). Either way the
-predictors are predetermined, so conditional on the snapshot each draw is an
-independent Bernoulli and the pooled dyad design is an ordinary logistic regression
-whose MLE recovers (sigma, alpha) consistently, with no degeneracy.
-
-(The structural feature has been removed for now; only the degree slope is modeled.)
-
-This is a separate, additive path: the equilibrium model is untouched. Features
-reuse logit_graph.lg_features; the fit reuses statsmodels.
-"""
+Each dyad at step t is drawn from the predetermined snapshot t-1, so the pooled dyad design
+is an ordinary logistic regression whose MLE recovers (sigma, alpha) consistently."""
 from __future__ import annotations
 
 import warnings
@@ -40,11 +19,9 @@ DEGREE_MODE: FeatureMode = "bounded"
 
 
 def _adjacency_esd_kl(cur: np.ndarray, prev: np.ndarray, nbins: int = 50) -> float:
-    """KL divergence between two graphs' adjacency eigenvalue spectral densities.
-
-    Both eigenvalue spectra are histogrammed on common bins spanning their combined
-    range; KL is computed with a 1e-10 floor (as in the convergence diagnostics).
-    """
+    """KL divergence between two graphs' adjacency-eigenvalue spectral densities.
+    Both spectra are histogrammed on common bins over their combined range, with a
+    1e-10 floor (as in the convergence diagnostics)."""
     ec = np.linalg.eigvalsh(cur)
     ep = np.linalg.eigvalsh(prev)
     lo = float(min(ec.min(), ep.min()))
@@ -59,14 +36,9 @@ def _adjacency_esd_kl(cur: np.ndarray, prev: np.ndarray, nbins: int = 50) -> flo
 
 @dataclass
 class GrowthResult:
-    """Output of :func:`grow_graph`.
-
-    adj        final adjacency (n x n, 0/1, symmetric).
-    X          (m, 1) pooled design [D] over all at-risk dyads across steps.
-    y          (m,) formation outcomes (1 = the at-risk non-edge formed that step).
-    snapshots  list of adjacency snapshots G(0), ..., G(n_steps) (empty if not stored).
-    params     the generative parameters used.
-    """
+    """Output of :func:`grow_graph`: final adjacency ``adj`` (n x n, 0/1, symmetric),
+    pooled design ``X`` (m,1)=[D] / outcomes ``y`` (1=at-risk non-edge formed),
+    ``snapshots`` G(0..n_steps) (empty if not stored), and the generative ``params``."""
     adj: np.ndarray
     X: np.ndarray
     y: np.ndarray
@@ -75,10 +47,8 @@ class GrowthResult:
 
 
 def _degree_feature(adj, d, degree_mode):
-    """Degree feature (D) + current-edge labels over all pairs.
-
-    Pairs are in row-major upper-triangle order, matching np.triu_indices(n, 1).
-    """
+    """Degree feature (D) + current-edge labels over all pairs, in row-major
+    upper-triangle order (matching np.triu_indices(n, 1))."""
     D, labels = build_pair_dataset(adj, d=d, mode=degree_mode, layer2=True)
     return np.asarray(D, dtype=np.float64), np.asarray(labels, dtype=np.int8)
 
@@ -106,37 +76,9 @@ def grow_graph(
     esd_nbins: int = 50,
     step_callback=None,
 ) -> GrowthResult:
-    """Grow a temporal Logit-Graph from a sparse ER seed (degree-only model).
-
-    By default (``allow_removal=True``) each step resamples **every** dyad from the
-    lagged probability — y_ij(t) ~ Bernoulli(expit(sigma + alpha*D_ij(t-1))), D read
-    from the current snapshot — so edges form AND dissolve. The design is over *all*
-    dyads with the new state as outcome. Because predictors are predetermined, it is
-    an ordinary logistic regression and the MLE stays consistent. This is an ergodic
-    Markov chain with a stationary distribution (no saturation), at the cost of
-    possible ERGM-style bistability for strong positive alpha.
-
-    With ``allow_removal=False`` the step instead only forms at-risk non-edges with
-    p = expit(sigma + alpha*D) (edges are never removed); the design is over the
-    at-risk non-edges (outcome = formed?) and the graph grows monotonically toward
-    saturation. With ``record_design`` the per-step dyads (D, outcome) are pooled into
-    ``GrowthResult.X/y`` for estimation.
-
-    Stopping. By default the chain runs for exactly ``n_steps``. With
-    ``until_convergence=True`` it instead runs *until mixed* — ``n_steps`` becomes a
-    safety cap and the loop stops early once the adjacency-ESD KL divergence between
-    consecutive snapshots stays below ``esd_tol`` for ``patience`` consecutive steps
-    (the spectrum has stopped changing). ``GrowthResult.params`` then carries
-    ``n_steps_run``, ``converged``, and the per-step ``esd_kl_trace``. The criterion
-    is reliable for moderately large graphs (n ≳ 300); for small graphs the ESD itself
-    fluctuates between independent draws, so the noise floor is high and convergence
-    may not trigger before the cap.
-
-    ``step_callback`` is an optional ``callable(step, adj) -> bool`` invoked after each
-    step with the live adjacency (copy it to retain). Returning True stops growth
-    early — e.g. a caller streaming a GIC-vs-iteration trace with its own early stop,
-    without storing every snapshot.
-    """
+    """Grow a temporal Logit-Graph from a sparse ER seed (degree-only). allow_removal
+    (default) resamples every dyad from lagged expit(sigma+alpha*D) — edges form and
+    dissolve (ergodic chain); allow_removal=False grows add-only to saturation."""
     rng = np.random.default_rng(seed)
     rows, cols = np.triu_indices(n, k=1)
 
@@ -219,15 +161,9 @@ def growth_design_from_snapshots(
     degree_mode: FeatureMode = DEGREE_MODE,
     allow_removal: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Build the at-risk logistic-regression design from observed snapshots.
-
-    For each consecutive pair (G(t-1), G(t)): predictor D from G(t-1); the at-risk
-    set is the non-edges of G(t-1); the outcome is whether each became an edge in
-    G(t). Reproduces the design recorded by :func:`grow_graph`.
-
-    With ``allow_removal=True`` the at-risk set is *all* dyads and the outcome is the
-    full new state of each dyad in G(t) — matching ``grow_graph(allow_removal=True)``.
-    """
+    """Build the at-risk logistic-regression design from observed snapshots: predictor D
+    from G(t-1), outcome = formed in G(t). With allow_removal the set is all dyads and the
+    outcome is each dyad's full new state — matching grow_graph (whose design it reproduces)."""
     Xs: list[np.ndarray] = []
     ys: list[np.ndarray] = []
     for t in range(len(snapshots) - 1):
@@ -250,12 +186,9 @@ def growth_design_from_snapshots(
 
 
 def fit_growth_params(X: np.ndarray, labels: np.ndarray) -> dict:
-    """Fit logit(P[form]) = sigma + alpha*D by ordinary logistic regression.
-
-    Returns sigma, alpha (and their SEs), the log-likelihood, AIC (k=2), and
-    n_params. This is the exact MLE for the growth model (dyad-independent given the
-    past), so the estimates are consistent.
-    """
+    """Fit logit(P[form]) = sigma + alpha*D by ordinary logistic regression — the exact,
+    consistent MLE for the growth model (dyad-independent given the past). Returns sigma,
+    alpha, their SEs, the log-likelihood, AIC (k=2), and n_params."""
     y = np.asarray(labels, dtype=int)
     Xc = sm.add_constant(np.asarray(X, dtype=np.float64), has_constant="add")
     res = None
