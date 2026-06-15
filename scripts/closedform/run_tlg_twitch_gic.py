@@ -1,53 +1,7 @@
 #!/usr/bin/env python3
-"""Fit the Twitch networks with the Temporal Logit-Graph (TLG) and rank families by GIC.
-
-For each Twitch country graph (default: the smallest, PTBR), we fit several random-graph
-families and compare them with the spectral GIC = 2*KL(real||model) + 2*n_params
-(KL on the normalized-Laplacian spectral density; lower = better):
-
-  * TLG (our model) — an IDENTIFIABLE degree + coarse-community + fine-community model,
-    fit to the *whole* real graph (TLG is cheap, no subsampling):
-      - features (all exogenous -> identifiable): degree D (depth d); same-coarse-community
-        and same-fine-community indicators from two fixed Louvain partitions (coarse =
-        community structure like SBM; fine = a local-density / clustering proxy). There is
-        NO endogenous clustering term, so the model is non-degenerate and its parameters
-        are recoverable by MLE (validated on synthetic data).
-      - fit: alpha from the degree MLE; the two community coefficients (gc, gf) tuned by
-        minimizing the FORWARD, edge-matched KL (fair — the closed-form baselines also
-        pick parameters by grid min-GIC).
-      - generation: budgeted add-only growth to the real edge count — edges added in
-        batches with prob proportional to exp(alpha*D + gc*Bc + gf*Bf), D recomputed on
-        the GENERATED graph (honest/forward), Bc/Bf fixed; the budget matches the edge
-        count by construction and makes the intercept irrelevant.   n_params = 3.
-    On Twitch (sparse, community-driven spectrum) this BEATS SBM; clustering-dominated
-    graphs (e.g. dense ego networks) instead need the non-identifiable triadic term — so
-    estimability and best-spectral-fit coincide only when community structure dominates.
-  * ER / BA / WS / KR / GRG — closed-form (moment-matched) parameters, ensemble-mean
-             spectral density.
-  * SBM — Louvain blocks + per-block edge probabilities; n_params = k(k+1)/2.
-
-Per graph it writes a table with, for each family: GIC, its rank, the two GIC terms
-(2*KL goodness-of-fit and 2*n_params penalty), n_params, and the structural metrics of
-the fitted/representative graph (edges, density, clustering, assortativity) next to a
-"Real" reference row.
-
-Output under runs/tlg_twitch_gic/ (gitignored):
-  - <region>_table.csv     per-graph family comparison table
-  - <region>_gic_bar.png   GIC by family (ranked; stacked 2*KL and 2*n_params terms)
-  - summary.csv            rank of each family across regions (+ mean rank)
-
-Env knobs (all optional):
-  LG_TLGT_REGIONS (PTBR)   comma list; LG_TLGT_ALL=1 -> all six
-  LG_TLGT_NRUNS (5)        baseline ensemble size
-  LG_TLGT_D (1)            degree-feature depth for the forward fit
-  LG_TLGT_K (25)           budgeted-growth batches to reach E_real
-  LG_TLGT_SEARCH (16)      Nelder-Mead iterations for the (gc, gf) min-KL tuning
-  LG_TLGT_FINE_RES (8)     Louvain resolution for the fine partition
-  LG_TLGT_SEED (12345)     LG_TLGT_QUICK (0 -> tiny: fewer batches/iters)
-
-  make tlg-twitch-gic        full run (PTBR, the smallest)
-  make tlg-twitch-gic-quick  smoke
-"""
+"""Fit the Twitch networks with the Temporal Logit-Graph (TLG) and rank random-graph families
+by spectral GIC = 2*KL(real||model) + 2*n_params (KL on the normalized-Laplacian density,
+lower=better); TLG uses identifiable degree + coarse/fine community features. `make tlg-twitch-gic`."""
 from __future__ import annotations
 
 import math
@@ -174,12 +128,9 @@ def _baseline_generators(G, cf):
 
 
 def _community_feature(G, rows, cols, seed, resolution=1.0):
-    """Same-community indicator over pairs, from a fixed Louvain partition of G at the
-    given resolution. This is a NODE attribute (the kind of real-graph info SBM uses),
-    not edge-conditional, so it stays IDENTIFIABLE (a fixed covariate, recovered by MLE)
-    and using it during forward generation is honest. Higher resolution -> more, smaller
-    communities (a finer partition acts as a local-density / clustering proxy).
-    Returns (B, n_communities)."""
+    """Same-community indicator over pairs from a fixed Louvain partition of G at the given
+    resolution — an exogenous NODE covariate (like SBM uses), so it stays identifiable; higher
+    resolution gives finer communities (a local-density proxy). Returns (B, n_communities)."""
     part = nx.community.louvain_communities(G, seed=seed, resolution=resolution)
     blk = np.empty(G.number_of_nodes(), dtype=int)
     for i, com in enumerate(part):
@@ -189,16 +140,9 @@ def _community_feature(G, rows, cols, seed, resolution=1.0):
 
 
 def _budgeted_grow(n, rows, cols, alpha, gc, gf, Bc, Bf, d, e_real, seed, scorer, real_den):
-    """Honest forward generation: budgeted add-only growth to the real edge count.
-
-    Start empty; over TLG_K batches add ~E_real/TLG_K edges per batch, each non-edge
-    chosen with prob proportional to exp(alpha*D + gc*Bc + gf*Bf). The degree feature D
-    is RECOMPUTED on the GENERATED graph every batch (the forward part); Bc/Bf (same
-    coarse / fine community) are FIXED exogenous covariates. No endogenous clustering
-    term -> identifiable and non-degenerate, while the fine partition supplies the local
-    density. The per-batch budget makes the intercept irrelevant (no sparse/dense
-    overshoot) and lands the edge count at E_real by construction. Returns the lowest-KL
-    graph within +-5% of the real edge count."""
+    """Honest forward generation: budgeted add-only growth to the real edge count. Over TLG_K
+    batches add ~E_real/TLG_K edges each, non-edges chosen with prob ∝ exp(alpha*D + gc*Bc +
+    gf*Bf) (D recomputed on the generated graph; Bc/Bf fixed). Returns the lowest-KL graph within ±5%."""
     rng = np.random.default_rng(seed)
     A = np.zeros((n, n))
     batch = max(1, e_real // TLG_K)
@@ -226,18 +170,9 @@ def _budgeted_grow(n, rows, cols, alpha, gc, gf, Bc, Bf, d, e_real, seed, scorer
 
 
 def fit_tlg(adj, real_den, scorer, G):
-    """Identifiable, SBM-beating TLG: degree + coarse-community + fine-community.
-
-    All features are exogenous/identifiable: degree (recovered forward) plus two fixed
-    Louvain partitions (coarse = community structure like SBM; fine = a local-density /
-    clustering proxy). The model's parameters are recoverable by MLE in the add+remove
-    Bernoulli model (validated); there is NO endogenous clustering term, so it is
-    non-degenerate. For the GIC comparison alpha is taken from the degree MLE and the two
-    community coefficients (gc, gf) are tuned by minimizing the FORWARD, edge-matched KL
-    (fair — the closed-form baselines also pick parameters by grid min-GIC). On Twitch
-    (sparse, community-driven spectrum) this beats SBM; clustering-dominated graphs (e.g.
-    dense ego nets) instead need the non-identifiable triadic term — see FINDINGS.
-    n_params = 3 (alpha, gc, gf)."""
+    """Identifiable, SBM-beating TLG: degree + coarse-community + fine-community (all exogenous,
+    recoverable by MLE; no endogenous clustering term). alpha from the degree MLE; gc, gf tuned by
+    minimizing the forward edge-matched KL (fair, like the baselines' grid min-GIC). n_params = 3."""
     n = adj.shape[0]
     e_real = int(adj.sum() // 2)
     rows, cols = np.triu_indices(n, k=1)
