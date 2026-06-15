@@ -10,14 +10,13 @@
 [![Python](https://img.shields.io/pypi/pyversions/logit-graph?style=flat-square&logo=python&logoColor=white)](https://pypi.org/project/logit-graph/)
 [![License: MIT](https://img.shields.io/github/license/mbottoni/logit-graph?style=flat-square)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/mbottoni/logit-graph/ci.yml?branch=main&style=flat-square&label=tests)](https://github.com/mbottoni/logit-graph/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/readthedocs/logit-graph?style=flat-square&logo=readthedocs&logoColor=white)](https://logit-graph.readthedocs.io/)
+[![Docs](https://img.shields.io/readthedocs/logit-graph?style=flat-square&logo=readthedocs&logoColor=white)](https://logit-graph.readthedocs.io/en/latest/)
 [![Downloads](https://img.shields.io/pypi/dm/logit-graph?style=flat-square)](https://pypi.org/project/logit-graph/)
 
 [Installation](#installation) ·
 [Quickstart](#quickstart-60-seconds) ·
 [Examples](#examples) ·
-[Docs](https://logit-graph.readthedocs.io/) ·
-[API](docs/API.md) ·
+[Docs](https://logit-graph.readthedocs.io/en/latest/) ·
 [Changelog](CHANGELOG.md) ·
 [Contributing](CONTRIBUTING.md) ·
 [Issues](https://github.com/mbottoni/logit-graph/issues) ·
