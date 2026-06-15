@@ -57,8 +57,8 @@ def estimate_sigma_only(
     l1_wt: float = 1,
     alpha: float = 0,
 ) -> tuple[float, Any]:
-    """Estimate sigma via Layer-2 offset logit (paper formulation), using
-    :func:`build_pair_dataset` (layer2=True) so it stays consistent with generation.
+    """Estimate sigma via the leave-one-out (full conditional) offset logit (paper formulation),
+    using :func:`build_pair_dataset` (layer2=True) so it stays consistent with generation.
     Returns ``(sigma_hat, fit_result)``; legacy max_edges/max_non_edges/l1_wt/alpha unused."""
     del l1_wt, alpha  # accepted for backwards compatibility, unused
 
@@ -93,7 +93,7 @@ def estimate_sigma_many(
     l1_wt: float = 1,
     alpha: float = 0,
 ) -> list[float]:
-    """Repeat Layer-2 sigma estimation ``n_repeats`` times with different seeds, returning
+    """Repeat the leave-one-out sigma estimation ``n_repeats`` times with different seeds, returning
     a list of ``sigma_hat``. Variability comes from random pair sampling when ``max_pairs``
     is set; with ``max_pairs=None`` on a small graph every repetition is identical."""
     del l1_wt, alpha
