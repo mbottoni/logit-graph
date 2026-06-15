@@ -1,7 +1,6 @@
-"""Multi-feature (unified) Temporal Logit-Graph: the degree-only temporal model extended with
-fixed exogenous dyad covariates, logit P[edge_ij at t] = sigma + alpha*D(t-1) + sum_k beta_k*F_k.
-Every F_k is predetermined, so the pooled dyad design is an ordinary logistic regression whose
-MLE recovers (sigma, alpha, beta_1..beta_k) consistently — no degeneracy."""
+"""Unified Logistic Random Graph (LG) model — the general-pairwise-features extension (paper Sec 3.7):
+logit p_ij = sigma + alpha*D(t-1) + sum_k theta_k*phi_k(i,j). Predetermined predictors make the pooled
+dyad design an ordinary logistic regression whose MLE recovers (sigma, alpha, theta_1..theta_k) consistently."""
 from __future__ import annotations
 
 import warnings
@@ -103,11 +102,9 @@ def grow_graph_multi(
     record_design: bool = True,
     store_snapshots: bool = True,
 ) -> MultiGrowthResult:
-    """Grow a multi-feature temporal Logit-Graph from a sparse ER seed. ``features`` is an
-    (n*(n-1)/2, k) array of FIXED exogenous dyad covariates (upper-triangle order) with
-    coefficients ``coefs``; each step draws dyads from expit(sigma + alpha*D + features @ coefs),
-    D read from the previous snapshot. allow_removal (default) resamples every dyad (ergodic
-    chain); allow_removal=False grows add-only. Returns the pooled design and outcomes."""
+    """Generate from the unified LG (general pairwise features) by growth from a sparse ER seed:
+    ``features`` (n*(n-1)/2, k) are fixed pairwise covariates phi_k with coefficients ``coefs``, and each
+    step draws dyads from expit(sigma + alpha*D + features @ coefs), D from G(t-1) (allow_removal=ergodic)."""
     features = np.atleast_2d(np.asarray(features, dtype=np.float64))
     if features.shape[0] != n * (n - 1) // 2:
         features = features.T
