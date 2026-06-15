@@ -1,31 +1,7 @@
 #!/usr/bin/env python3
-"""Fit LG + ER/WS/BA on human-brain connectomes (OASIS-3) and rank by GIC.
-
-The repo ships ~7000 .graphml files under ``data/brain_graph/`` across
-multiple parcellation atlases:
-  oasis3_graphmls_scale1/2/3  — OASIS-3, ~975 subjects, n ∈ {124, 170, 272}
-  repeated_10_scale_33/60/125/250 — repeated parcellations, n ∈ {83, 129, 234, 463}
-
-To stay under the 5-min budget we sample N graphs from a chosen scale
-and run the same LG vs ER/WS/BA GIC ranking pipeline used in
-``run_connectomes_gic.py`` (with KPM spectral density + parallel workers).
-
-Env-var overrides:
-  LG_HCONN_SCALE        atlas dir under brain_graph/  (default oasis3_graphmls_scale1)
-  LG_HCONN_SAMPLE       number of subjects to sample  (default 100; "all" = no cap)
-  LG_HCONN_MAX_NODES    cap on |V|                     (default 500)
-  LG_HCONN_MIN_NODES    floor on |V|                   (default 20)
-  LG_HCONN_LG_ITER      LG MCMC cap                    (default 1500)
-  LG_HCONN_GRID_POINTS  baseline grid                  (default 3)
-  LG_HCONN_N_RUNS       baseline reps                  (default 1)
-  LG_HCONN_USE_CACHE    reload finished networks       (default 1)
-  LG_HCONN_WORKERS      parallel proc count            (default cpu-1)
-  LG_HCONN_SEED         RNG seed for the random sample (default 0)
-  LG_HCONN_QUICK        set to 1 for smoke (scale_33, sample=20, fewer iter)
-
-  make lg-gic-human-connectomes        ~3-5 min on 4 cores
-  make lg-gic-human-connectomes-quick  ~30s
-"""
+"""Fit LG + ER/WS/BA on sampled OASIS-3 human-brain connectomes (data/brain_graph/, several
+parcellation scales) and rank by spectral GIC -- same pipeline as run_lg_connectomes_gic.py with
+KPM spectral density + parallel workers. `make lg-gic-human-connectomes`."""
 from __future__ import annotations
 
 import os
@@ -322,14 +298,9 @@ def _fit_worker(args):
 
 
 def _discover(cfg, sample_size, seed):
-    """Sample up to ``sample_size`` graphs from cfg.glob_pattern.
-
-    All subjects in a given parcellation atlas have the same node count,
-    so the size filter is effectively a sanity check. We don't pre-load
-    every .graphml to peek size — too slow with 1000+ files. Instead we
-    peek a single file to learn n, apply min/max bounds to the whole
-    batch, then random-sample paths.
-    """
+    """Sample up to ``sample_size`` graphs from cfg.glob_pattern. All subjects in an atlas share a
+    node count, so the size filter is a sanity check; rather than pre-loading 1000+ .graphml to peek
+    size, we peek one file for n, apply min/max bounds, then random-sample paths."""
     import networkx as nx
 
     paths = sorted(cfg.data_root.glob(cfg.glob_pattern))
