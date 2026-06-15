@@ -1,54 +1,7 @@
 #!/usr/bin/env python3
-"""Identifiability / parameter-recovery experiment for the UNIFIED latent TLG.
-
-This is the recovery experiment of ``run_tlg_recovery.py`` extended from the degree-only
-TLG to the unified model that wins the multi-dataset GIC comparison
-(``scripts/closedform/run_tlg_multidataset_gic.py``):
-
-    logit P[edge_ij at t] = sigma + alpha * D_ij(t-1)        (degree, predetermined)
-                                  + gamma_c * Bc_ij           (coarse-community indicator)
-                                  + gamma_f * Bf_ij           (fine-community indicator)
-                                  + lambda  * L_ij            (latent-embedding proximity)
-
-The whole point of the winning model is that EVERY feature is identifiable: the degree
-feature is read from the *previous* snapshot (predetermined), and the community indicators
-and latent feature are FIXED exogenous covariates. So in the add+remove Bernoulli model
-(every dyad resampled each step from the lagged probability) each draw is, conditional on
-the past, an independent Bernoulli and the pooled dyad design is an ordinary logistic
-regression whose MLE recovers (sigma, alpha, gamma_c, gamma_f, lambda) consistently — no
-degeneracy (there is NO endogenous clustering term, which is exactly what would make an
-ERGM-style feature non-identifiable).
-
-This experiment makes that claim falsifiable: generate add+remove temporal graphs with a
-KNOWN parameter vector and synthetic but fixed exogenous covariates (two random community
-partitions + a random latent embedding, standing in for the Louvain partitions and the
-adjacency spectral embedding used on real graphs), estimate all five coefficients by pooled
-MLE, and show the estimates converge to truth while their spread shrinks ~1/sqrt(n).
-
-Output under runs/tlg_latent_identifiability/ (gitignored):
-  - <scenario>/recovery_raw.csv   per-replicate estimates (cache + custom re-plots)
-  - <scenario>/recovery.csv       tidy per-scenario summary (mean/std/CI per (n, param))
-  - <scenario>/results.json       per-scenario config + summary
-  - recovery_all.csv              combined summary over all scenarios
-  - identifiability.png           one figure: a panel per parameter (estimate -> truth as
-                                  n grows; color+marker = scenario; dashed = truth) plus a
-                                  log-log consistency panel (std vs n with a 1/sqrt(n) ref).
-
-Re-plotting: per-scenario results are cached. Re-running with LG_TLI_USE_CACHE=1 (default)
-reloads the caches and only regenerates the figure. Force a fresh run with
-LG_TLI_USE_CACHE=0.
-
-Env knobs (all optional):
-  LG_TLI_SEED (12345)     LG_TLI_QUICK (0 -> full; 1 -> 1 scenario, small n)
-  LG_TLI_NREPS (12)       replicates per (scenario, n)
-  LG_TLI_NSTEPS (5)       add+remove steps per generated graph
-  LG_TLI_KC (4)           coarse-partition block count   LG_TLI_KF (16) fine-partition
-  LG_TLI_KLAT (4)         latent embedding dimension
-  LG_TLI_USE_CACHE (1)
-
-  make tlg-identifiability        full run
-  make tlg-identifiability-quick  smoke (1 scenario, small n)
-"""
+"""Identifiability / parameter-recovery experiment for the UNIFIED latent TLG (sigma + alpha*D +
+gamma_c*Bc + gamma_f*Bf + lambda*L): generate add+remove temporal graphs with a known parameter
+vector and fixed exogenous covariates, then show pooled MLE recovers all five coefficients (~1/sqrt(n))."""
 from __future__ import annotations
 
 import json
@@ -154,10 +107,9 @@ def make_covariates(n, seed):
 # ---------------------------------------------------------------------------
 
 def generate(n, truth, covars, seed, p0=0.02):
-    """Add+remove temporal graph: every step resample ALL dyads from the lagged
-    probability expit(sigma + alpha*D(t-1) + gc*Bc + gf*Bf + lam*L). D is the degree
-    feature of the previous snapshot (predetermined); Bc/Bf/L are fixed. Returns the
-    pooled design X=[D, Bc, Bf, L] and outcomes y over all dyads x steps."""
+    """Add+remove temporal graph: every step resamples ALL dyads from lagged expit(sigma + alpha*D
+    + gc*Bc + gf*Bf + lam*L) (D from the previous snapshot, predetermined; Bc/Bf/L fixed). Returns
+    the pooled design X=[D, Bc, Bf, L] and outcomes y over all dyads x steps."""
     rows, cols, Bc, Bf, L = covars
     rng = np.random.default_rng(seed)
     adj = np.zeros((n, n))
