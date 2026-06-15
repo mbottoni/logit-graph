@@ -41,6 +41,15 @@ from .temporal import (
     grow_graph,
     growth_design_from_snapshots,
 )
+# Multi-feature (unified) temporal LG: degree + arbitrary fixed exogenous dyad covariates.
+from .temporal_multi import (
+    MultiGrowthResult,
+    community_feature,
+    fit_multi_params,
+    grow_graph_multi,
+    latent_feature,
+    multi_design_from_snapshots,
+)
 
 __all__ = [
     # Core model
@@ -74,4 +83,11 @@ __all__ = [
     "growth_design_from_snapshots",
     "fit_growth_params",
     "fit_growth_from_result",
+    # Multi-feature (unified) temporal Logit-Graph
+    "grow_graph_multi",
+    "MultiGrowthResult",
+    "multi_design_from_snapshots",
+    "fit_multi_params",
+    "community_feature",
+    "latent_feature",
 ]

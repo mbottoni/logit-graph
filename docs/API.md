@@ -131,10 +131,17 @@ After `fit(G)`: `fitter.fitted_graph`, `fitter.metadata`.
 
 ## Model summary
 
-**Edge probability:** `P(i–j) = sigmoid(σ · (deg_d(i) + deg_d(j)))`
+Logistic Random Graph (LG) model, Ottoni–Takahashi–Fujita (2026).
 
-**GIC:** `GIC = 2 · spectral_distance(original, fitted) + 2 · |θ|`
+**Edge probability (Eq. 3.1):** `p_ij = logistic(σ + α·[g(S_i) + g(S_j)])`, with `g(s) = log(1 + s)`
+and `S_i = Σ_{l ∈ N_d(i)} k_l` the neighborhood degree sum over the `d`-hop ball. `σ` is the baseline
+connection propensity; `α ≥ 0` is the strength of the neighborhood degree effect.
 
-**Baselines:** ER, WS, BA, optionally GRG.
+**Extension (§3.7):** append pairwise features — `logit p_ij = σ + Σₖ θₖ·φₖ(i,j)`.
+
+**GIC:** `GIC = 2 · KL(observed ‖ generated) + 2 · |θ|` (lower = better); `KL` is the spectral KL
+divergence between normalized-Laplacian spectral densities and is the un-penalized goodness-of-fit.
+
+**Baselines:** ER, WS, BA, optionally GRG / KR / SBM.
 
 **Spectral distances:** KL (default), L1, L2.
