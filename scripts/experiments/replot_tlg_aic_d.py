@@ -1,7 +1,5 @@
 """Re-render the AIC d-selection confusion figure from the cached CSV (no rerun).
-
-Usage: replot_tlg_aic_d.py <out_png>
-"""
+Usage: replot_tlg_aic_d.py <out_png>"""
 import sys
 from pathlib import Path
 
