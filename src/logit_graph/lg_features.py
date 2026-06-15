@@ -1,8 +1,6 @@
-"""Neighborhood features for the logistic random graph model.
-
-Supports Layer-2 conditioning (compute features on the graph with pair
-(i, j) removed) and several feature modes used in paper experiments.
-"""
+"""Neighborhood features for the logistic random graph model. Supports Layer-2
+conditioning (features on the graph with pair (i, j) removed) and the several
+feature modes used in the paper experiments."""
 from __future__ import annotations
 
 import math
@@ -149,13 +147,9 @@ def build_pair_dataset(
     max_pairs: Optional[int] = None,
     seed: Optional[int] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Build offset vector and binary labels for all upper-triangle pairs.
-
-    Returns
-    -------
-    offsets : (m,) feature values (used as fixed beta=1 offset)
-    labels : (m,) 0/1 edge indicators
-    """
+    """Build offset vector and binary labels for all upper-triangle pairs. Returns
+    ``(offsets, labels)``: offsets are (m,) feature values (the fixed beta=1 offset),
+    labels are (m,) 0/1 edge indicators."""
     adj = _adj_from_input(graph)
     n = adj.shape[0]
 
