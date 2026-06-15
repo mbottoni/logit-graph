@@ -1,11 +1,6 @@
 """Logit Graph: paper-consistent random-graph model with Layer-2 estimation.
-
-The default exports here are all paper-consistent (Layer-2 conditioning,
-``feature_mode="incremental"``, ``beta=1`` offset logit, d=0 direct ER
-sampling, warm-started Gibbs for sparse regimes). Legacy classes
-(:class:`MLEGraphModelEstimator`, :class:`NegativeLogLikelihoodLoss`) are
-deprecated but kept importable for reproducibility of the original notebooks.
-"""
+Default exports are paper-consistent (Layer-2, incremental feature, beta=1 offset logit,
+d=0 direct-ER, warm-started Gibbs); legacy estimator classes stay importable for repro."""
 
 from .graph import GraphModel
 from .lg_features import (
@@ -26,9 +21,7 @@ from .simulation import (
     estimate_sigma_only,
 )
 
-# Re-export the corrected sampler / estimator helpers so users get the
-# paper-consistent path directly from the top level:
-#
+# Re-export the paper-consistent sampler / estimator helpers at the top level, e.g.
 #   from logit_graph import simulate_graph, estimate_sigma_from_graph
 from .experiments.sweeps import (
     estimate_sigma_from_graph,
