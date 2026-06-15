@@ -1,17 +1,7 @@
 #!/usr/bin/env python3
-"""Replot the Twitch LG ANOVA figure from the saved data (no refit / no simulation rerun).
-
-Reads runs/twitch_tlg_anova_robust/{summary,pairwise_sigma,pairwise_alpha}.csv and regenerates
-twitch_tlg_anova_robust.png with the presentation changes requested for the paper:
-  * LG instead of TLG, and no "dyadic-cluster-robust SE" qualifier in the title;
-  * the per-region forest plots show a SINGLE error bar (no naive-SE overlay), matching the
-    connectomes figure, and the subplot titles drop the "(... SE)" note;
-  * the display sign convention sigma <= 0 and alpha >= 0, keeping the raw magnitude
-    (sigma -> -|sigma|, alpha -> +|alpha|). For Twitch both are already so-signed, so the
-    magnitudes are identical; the convention is applied for consistency with the connectomes.
-The pairwise Bonferroni heatmaps are taken verbatim from the saved CSVs (the equality test is
-invariant to the display sign convention).
-"""
+"""Replot the Twitch LG ANOVA figure from saved data (no rerun): reads
+runs/twitch_tlg_anova_robust/{summary,pairwise_sigma,pairwise_alpha}.csv with LG labels, a
+single error bar, and sign convention sigma<=0 / alpha>=0; Bonferroni heatmaps verbatim from CSV."""
 from pathlib import Path
 
 import numpy as np
