@@ -135,7 +135,7 @@ class GraphModel:
         return float(self._degrees[vertex])
 
     def _layer2_feature(self, i: int, j: int) -> float:
-        """Layer-2 pair feature via in-place neighbor-list toggle."""
+        """leave-one-out pair feature via in-place neighbor-list toggle."""
         return pair_feature_layer2_nbrs(
             self._nbrs, i, j, self.d, mode=self.feature_mode,
         )
@@ -207,7 +207,7 @@ class GraphModel:
         self._adj_only = False
 
     def _add_remove_edge_legacy(self) -> None:
-        """Dense-matrix-copy layer-2 path (reference for equivalence tests)."""
+        """Dense-matrix-copy leave-one-out path (reference for equivalence tests)."""
         i = int(self._rng.integers(0, self.n))
         j = int(self._rng.integers(0, self.n - 1))
         if j >= i:

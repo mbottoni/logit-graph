@@ -25,7 +25,7 @@ adj = simulate_graph(
 
 | Parameter | Description |
 |-----------|-------------|
-| `n`, `d`, `sigma` | Graph size, feature depth, logit intercept |
+| `n`, `d`, `sigma` | Graph size, neighborhood radius, baseline σ (connection propensity) |
 | `n_iter` | Gibbs iterations (`d≥1`) or ignored (`d=0`, direct ER) |
 | `feature_mode` | `"incremental"` (paper mode), `"bounded"`, or `"full"` |
 | `target_density` | Used when calibrating `β` if `sigma` is omitted |
@@ -35,7 +35,7 @@ adj = simulate_graph(
 
 ## `select_d_ensemble`
 
-Pick `d̂` by AIC over candidate depths using the Layer-2 offset logit.
+Pick the neighborhood radius `d̂` by AIC over candidate radii using the leave-one-out (full conditional) offset logit.
 
 ```python
 from logit_graph import select_d_ensemble
@@ -102,7 +102,7 @@ Sklearn-style fitter at a **fixed** `d`: estimate `σ` and search for a graph mi
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `d` | `0` | Neighborhood depth for degree-sum features |
+| `d` | `0` | Neighborhood radius for the degree-sum feature (`d=0` = own degree) |
 | `n_iteration` | `10000` | Max edge-swap / Gibbs iterations |
 | `warm_up` | `500` | Burn-in before GIC tracking |
 | `patience` | `2000` | Early-stop patience |
@@ -120,10 +120,10 @@ After `fit(G)`: `fitter.fitted_graph`, `fitter.metadata`.
 | Symbol | Role |
 |--------|------|
 | `LogitGraphSimulation` | Lower-level multi-run LG simulation |
-| `LogitRegEstimator` | Layer-2 offset logit on pair features |
+| `LogitRegEstimator` | Leave-one-out (full conditional) offset logit on pair features |
 | `calculate_graph_attributes` | Density, clustering, diameter, assortativity |
 | `recommended_iterations` | Suggested Gibbs length vs `n` |
-| `build_pair_dataset`, `pair_feature`, `pair_feature_layer2` | Feature construction |
+| `build_pair_dataset`, `pair_feature`, `pair_feature_layer2` | Feature construction (`pair_feature_layer2` / `layer2=True` = the leave-one-out / full conditional feature) |
 | `GraphModel` | Core Gibbs / edge-swap engine |
 | `AICSweepConfig`, `SigmaSweepConfig`, `PRESETS` | Experiment presets (`logit_graph.experiments`) |
 

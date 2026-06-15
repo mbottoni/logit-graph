@@ -1,5 +1,5 @@
-"""Neighborhood features for the logistic random graph model. Supports Layer-2
-conditioning (features on the graph with pair (i, j) removed) and the several
+"""Neighborhood features for the Logistic Random Graph (LG) model. Supports the leave-one-out
+(full conditional) feature — evaluated on the graph with pair (i, j) removed — and the several
 feature modes used in the paper experiments."""
 from __future__ import annotations
 
@@ -121,7 +121,7 @@ def pair_feature_layer2(
     mode: FeatureMode = "bounded",
     alpha_gwesp: float = ALPHA_GWESP_DEFAULT,
 ) -> float:
-    """Layer-2 feature: computed on the graph with edge (i,j) removed."""
+    """Leave-one-out (full conditional) feature: computed on the graph with edge (i,j) removed."""
     adj = _adj_from_input(graph).copy()
     had = adj[i, j] > 0
     if had:

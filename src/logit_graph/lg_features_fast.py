@@ -357,7 +357,7 @@ def _sum_ball_degree_skip_rows(
 def _precompute_vertex_ball_sums_skip_rows(
     rows: list, n: int, d: int, mode_code: int,
 ) -> np.ndarray:
-    """Ball-degree sums per vertex for paper_raw / bounded (Layer-2 via -1 fixup)."""
+    """Ball-degree sums per vertex for paper_raw / bounded (leave-one-out via -1 fixup)."""
     sums = np.empty(n, dtype=np.float64)
     for v in range(n):
         raw = _sum_ball_degree_skip_rows(rows, v, d, n, False, -1, -1)
@@ -420,7 +420,7 @@ def build_multi_d_pair_dataset_skip_rows(
     mode_code: int,
     alpha_gwesp: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Layer-2 offsets for several ``d`` in one pass over upper-triangle pairs."""
+    """leave-one-out offsets for several ``d`` in one pass over upper-triangle pairs."""
     nd = d_values.shape[0]
     m = n * (n - 1) // 2
     offsets = np.empty((nd, m), dtype=np.float64)
@@ -511,7 +511,7 @@ def build_pair_dataset_skip_rows(
     mode_code: int,
     alpha_gwesp: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Layer-2 offsets and edge labels for all upper-triangle pairs."""
+    """leave-one-out offsets and edge labels for all upper-triangle pairs."""
     d_values = np.array([d], dtype=np.int32)
     offsets_2d, labels = build_multi_d_pair_dataset_skip_rows(
         rows, n, d_values, mode_code, alpha_gwesp,
@@ -1085,7 +1085,7 @@ def build_pair_dataset_from_rows(
     mode: FeatureMode = "incremental",
     alpha_gwesp: float = ALPHA_GWESP_DEFAULT,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Layer-2 pair dataset from CSR rows (no dense adjacency conversion)."""
+    """leave-one-out pair dataset from CSR rows (no dense adjacency conversion)."""
     n = len(rows)
     offsets, labels = build_pair_dataset_skip_rows(
         rows, n, d, MODE_TO_CODE[mode], alpha_gwesp,
@@ -1101,7 +1101,7 @@ def build_pair_dataset_fast(
     *,
     rows: Optional[list] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Fast Layer-2 pair dataset via Numba CSR (matches ``build_pair_dataset``)."""
+    """Fast leave-one-out pair dataset via Numba CSR (matches ``build_pair_dataset``)."""
     if rows is None:
         adj = np.asarray(graph, dtype=float)
         rows = rows_from_adj(adj)
@@ -1116,7 +1116,7 @@ def build_multi_d_pair_datasets_fast(
     *,
     rows: Optional[list] = None,
 ) -> tuple[np.ndarray, dict[int, np.ndarray]]:
-    """Fast multi-``d`` Layer-2 pair datasets sharing one CSR + label pass."""
+    """Fast multi-``d`` leave-one-out pair datasets sharing one CSR + label pass."""
     if rows is None:
         adj = np.asarray(graph, dtype=float)
         rows = rows_from_adj(adj)

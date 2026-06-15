@@ -23,7 +23,7 @@
 [Issues](https://github.com/mbottoni/logit-graph/issues) ·
 [Releases](https://github.com/mbottoni/logit-graph/releases)
 
-*Scikit-learn-style API · Layer-2 offset logit · reproducible GIC (`random_state`) · on PyPI as `logit-graph`*
+*Scikit-learn-style API · leave-one-out (full conditional) offset logit · reproducible GIC (`random_state`) · on PyPI as `logit-graph`*
 
 </div>
 
@@ -219,7 +219,7 @@ recover them.
 | `make lg-sigma-convergence` | Fig 2 — σ̂ converges to the true σ as `n` grows. |
 | `make lg-roc-paper` | Figs 3–4 — ANOVA-on-σ̂ ROC curves vs effect size and `n`. |
 | `make lg-aic-paper-fast` | AIC `d`-selection sweep — recovers the true neighborhood radius `d` across `n`. |
-| `make lg-convergence-diagnostics` | MCMC convergence diagnostics for the Layer-2 Gibbs sampler. |
+| `make lg-convergence-diagnostics` | MCMC convergence diagnostics for the leave-one-out (full conditional) Gibbs sampler. |
 
 ### Model selection on real networks (spectral GIC)
 
