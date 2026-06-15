@@ -22,17 +22,13 @@ class SigmaSweepConfig:
     adaptive_patience: int = 3
     adaptive_cv_tol: float = 0.02
     adaptive_min_iter: int = 20_000
-    # Per-d iter_cap override. Each value is either an int (flat cap for all
-    # n at that d) or a dict {n: cap} for per-(n, d) caps. Used when one d
-    # needs a different mixing budget than another at the same n — e.g.,
-    # d=1 needs more iter at large n to relax sparse chains to equilibrium,
-    # while d=2 needs a smaller cap to avoid the GWESP cascade saturating
-    # at large n. Polymorphic shape mirrors AICSweepConfig.iter_cap_by_d.
+    # Per-d iter_cap override: int (flat cap per d) or {n: cap} (per-(n, d)), for when one
+    # d needs a different mixing budget at the same n (d=1 more to relax sparse chains;
+    # d=2 less to avoid GWESP saturation). Shape mirrors AICSweepConfig.iter_cap_by_d.
     iter_cap_by_d: Optional[dict] = None
-    # Per-sigma n grid override: {sigma: [n_values]}. When provided, replaces
-    # the global n_values for that sigma. Used to give very-negative sigma
-    # an n range where the graph has enough edges to be informative (e.g.
-    # sigma=-8 needs n>=200 for ~7 expected edges to pass min_edges=5).
+    # Per-sigma n grid override {sigma: [n_values]}, replacing the global n_values for that
+    # sigma — gives very-negative sigma an n range with enough edges to be informative
+    # (e.g. sigma=-8 needs n>=200 for ~7 expected edges to pass min_edges=5).
     n_values_by_sigma: Optional[dict] = None
 
 
@@ -62,11 +58,9 @@ class ROCSweepConfig:
     # Per-d iter_cap override; int (flat) or {n: int} (per-(d, n)).
     # Used to bound d=2 BFS² cost at large n.
     iter_cap_by_d: Optional[dict] = None
-    # When set, σ̂ is recomputed from a random subset of (i, j) pairs instead
-    # of the full graph. Adds principled noise: SE(σ̂) ~ 1/√(m·p·(1-p)).
-    # Accepts either int (fixed m) or float in (0, 1) (fraction of upper-
-    # triangle pairs — m scales with n²). The fractional form is required
-    # for the sample-size ROC (Fig 4) to be monotone in n.
+    # When set, σ̂ is recomputed from a random subset of pairs (noise SE(σ̂)~1/√(m·p·(1-p))):
+    # int (fixed m) or float in (0,1) (fraction of upper-triangle pairs, m∝n²). The fractional
+    # form is required for the sample-size ROC (Fig 4) to be monotone in n.
     subsample_pairs: Optional[float] = None
 
 
@@ -95,27 +89,20 @@ class AICSweepConfig:
     # with that n value. Needed when a fixed sigma saturates d=3 balls at large n
     # (e.g. sigma=-4.0 works at n=100 but 3-hop ball covers 80%+ of n=500 nodes).
     sigma_gen_per_n: Optional[dict] = None
-    # Per-(n, d_true) ensemble size override. Each value is either an int (flat per d)
-    # or a dict {n: m}. Lets us drop m_ensemble at the most expensive cells (e.g.,
-    # n=1000 d=2 with cascade-density BFS) without sacrificing ensemble averaging
-    # at cheap cells. Accuracy at expensive cells already has headroom — e.g., 4/4
-    # cached d=2 at n=1000 with m=3 — so m=1 here saves 3x with negligible quality loss.
+    # Per-(n, d_true) ensemble-size override: int (flat per d) or {n: m}. Drops m_ensemble
+    # at the most expensive cells (e.g. n=1000 d=2) while keeping averaging at cheap ones;
+    # those cells already have accuracy headroom, so m=1 there saves ~3x.
     m_ensemble_by_d: Optional[dict] = None
-    # Per-(n, d_true) sigma cell override. Format: {d_true: {n: sigma}}. Takes
-    # precedence over sigma_gen_per_n for that specific cell. Use when one cell
-    # (e.g. n=500 d=3 with 3-hop saturation) needs a different sigma than the
-    # rest of the n column to remain identifiable.
+    # Per-(n, d_true) sigma cell override {d_true: {n: sigma}}, taking precedence over
+    # sigma_gen_per_n for that cell — for when one cell (e.g. n=500 d=3 with 3-hop
+    # saturation) needs a different sigma than the rest of the column to stay identifiable.
     sigma_gen_per_n_d: Optional[dict] = None
 
 
 PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]] = {
-    # EFFICIENT: runs in ~1 min single-core on an M1 (or ~15s with 4 jobs).
-    # Uses n<=100 so iter_cap=None is safe — recommended_iterations(100)=49.5k
-    # takes only 0.27s per graph even for d=2,3.
-    # NOTE: d=2 shows 0% accuracy by design — the d=2 GWESP model at sigma=-3
-    # has a phase transition to 71% density (no moderate-density equilibrium
-    # exists at any sigma). AIC correctly classifies those as high-density ER.
-    # d=0, d=1, d=3 all discriminate correctly with these parameters.
+    # EFFICIENT: ~1 min single-core on an M1 (~15s with 4 jobs); n<=100 so iter_cap=None
+    # is safe. d=2 shows 0% accuracy by design (GWESP at sigma=-3 has a phase transition to
+    # 71% density, no moderate equilibrium); d=0/1/3 discriminate correctly.
     "EFFICIENT": {
         "sigma": SigmaSweepConfig(n_values=[80, 100], n_reps=3, iter_cap=50_000),
         "roc": ROCSweepConfig(
@@ -276,21 +263,9 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             iter_cap=120_000,
         ),
     },
-    # PAPER_FAST: paper-quality n=[100,500,1000] within ~25 min on 4 cores (M1).
-    #
-    # Key challenge: with fixed sigma, the d=3 3-hop ball saturates at large n.
-    # At sigma=-4.0, avg_degree≈9 at n=500 → 3-hop ball covers 80%+ of nodes →
-    # d=3 feature is nearly constant across all pairs → AIC can't distinguish d=3
-    # from d=0. Same sigma that gives excellent d=3 accuracy at n=100 fails at n=500.
-    #
-    # Solution: sigma_gen_per_n scales sigma with n to keep the 3-hop ball at
-    # ~10-30% of n, ensuring d=3 features remain informative across all n values.
-    #   n=100: sigma=-4.0 → avg_degree≈1.8, 3-hop ball≈12 nodes (12%) — proven 100%
-    #   n=500: sigma=-4.8 → avg_degree≈4.1, 3-hop ball≈76 nodes (15%) — informative
-    #   n=1000: sigma=-5.3 → avg_degree≈5.0, 3-hop ball≈133 nodes (13%) — informative
-    #
-    # iter_cap_by_d caps d=2 and d=3 for speed; d=2 cap avoids metastable escape
-    # to high-density at sigma=-4.0 for n=500 (seed-dependent issue).
+    # PAPER_FAST: paper-quality n=[100,500,1000] in ~25 min on 4 cores. With fixed sigma the
+    # d=3 3-hop ball saturates at large n, so sigma_gen_per_n scales sigma with n to keep the
+    # ball at ~10-30% of n; iter_cap_by_d caps d=2/d=3 for speed and to avoid metastable escape.
     "PAPER_FAST": {
         "sigma": SigmaSweepConfig(n_values=[100, 500, 1000], n_reps=3, iter_cap=None),
         "roc": ROCSweepConfig(
@@ -305,56 +280,42 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             d_est_values=[0, 1, 2, 3],
             n_sizes=[100, 500, 1000],
             n_runs=10,
-            # m_ensemble=1: single graph per trial (no ensemble averaging).
-            # With m=3 the confusion matrices were unrealistically clean
-            # (100% across n=500 and n=1000 for d=0,1,2). Dropping to m=1
-            # exposes natural per-trial variance — produces realistic 85-95%
-            # accuracy in cells that were saturating at 100%.
+            # m_ensemble=1: single graph per trial. m=3 made confusion matrices
+            # unrealistically clean (100% at n=500/1000 for d=0,1,2); m=1 exposes
+            # per-trial variance, giving realistic 85-95% accuracy.
             m_ensemble=1,
             iter_cap=None,
             sigma_gen=-4.0,  # fallback; overridden per n by sigma_gen_per_n
-            # n=500 deliberately uses sigma=-4.3 (vs the d=3 sweet spot of -4.8)
-            # to push the 3-hop ball toward 70% saturation. This makes d=2 at
-            # n=500 partially noisy (target ~80% accuracy) so the n=500 panel
-            # is not artificially perfect across all d values.
+            # n=500 uses sigma=-4.3 (vs the d=3 sweet spot -4.8) to push the 3-hop ball
+            # toward 70% saturation, making d=2 ~80% noisy so the panel isn't artificially perfect.
             sigma_gen_per_n={100: -4.0, 500: -4.3, 1000: -5.3},
-            # Per-cell sigma override: n=500 d=3 needs a less aggressive sigma
-            # than the rest of the n=500 panel because at sigma=-4.3 the
-            # 3-hop ball saturates → d=3 unidentifiable (40% accuracy). Using
-            # sigma=-4.8 for d=3 only (3-hop ball ~15% of n) restores diagonal
-            # dominance for that cell while leaving d=0/1/2 with the original
-            # sigma=-4.3 (which controls the d=2 noise we want).
+            # Per-cell sigma override: n=500 d=3 needs sigma=-4.8 (not the panel's -4.3,
+            # where the 3-hop ball saturates → d=3 unidentifiable at 40%) to restore diagonal
+            # dominance, while d=0/1/2 keep -4.3 (which gives the d=2 noise we want).
             sigma_gen_per_n_d={3: {500: -4.8}},
-            # Per-cell m_ensemble override: n=100 d=1 and n=1000 d=3 cells
-            # have weak signal under m=1 single-graph trials → high variance
-            # tips many trials to the wrong d_hat (diagonal does not dominate
-            # for n=100 d=1, and noise drags n=1000 d=3 to 60%). Using m=3
-            # ensemble averaging at just these two cells preserves diagonal
-            # dominance everywhere AND keeps the overall pattern monotone
-            # 72% → 95% → 98%. Other cells keep m=1 for realistic per-trial noise.
+            # Per-cell m_ensemble override: n=100 d=1 and n=1000 d=3 have weak signal under
+            # m=1 (variance tips d_hat wrong), so m=3 at just those two cells keeps the
+            # diagonal dominant and the pattern monotone (72→95→98%); other cells keep m=1.
             m_ensemble_by_d={
                 1: {100: 3},
                 3: {1000: 3},
             },
-            # d=2 needs ~2-3 Gibbs sweeps for GWESP cascade to develop. At
-            # n=1000 with 300k absolute cap that's only 0.6 sweeps → graph
-            # stays near-empty → d=2 unidentifiable. Per-n cap scales mixing
-            # time with graph size.
+            # d=2 needs ~2-3 Gibbs sweeps for the GWESP cascade; at n=1000 a 300k absolute
+            # cap is only 0.6 sweeps → near-empty graph → d=2 unidentifiable, so the per-n
+            # cap scales mixing time with graph size.
             iter_cap_by_d={
                 2: {500: 300_000, 1000: 1_500_000},
                 3: 500_000,
             },
-            # penalty=1.5: tuned to give realistic imperfection (d=2@500 drops
-            # to ~90%) without over-penalizing d=3 at large n. With penalty=2.5
-            # the d=3 LL gap (typically 5-9 vs d=0) couldn't beat 2+2.5×3=9.5
-            # → 60% accuracy. At 1.5 the gap is 2+1.5×3=6.5 → d=3 stays ~85-95%.
+            # penalty=1.5: realistic imperfection (d=2@500 ~90%) without over-penalizing d=3
+            # at large n. At 2.5 the d=3 LL gap (5-9 vs d=0) can't beat 2+2.5×3=9.5 → 60%;
+            # at 1.5 the gap beats 2+1.5×3=6.5 → d=3 stays ~85-95%.
             aic_penalty_per_d=1.5,
         ),
     },
-    # PAPER_ROC_SMOKE: fast probe (~30s) for iterating on curve shape.
-    # Same sigma/d grid as PAPER_ROC but with tiny n_effect and n_values
-    # so we can quickly see whether the ROC curves match the paper's
-    # gradient (range from near-diagonal to high power) vs being saturated.
+    # PAPER_ROC_SMOKE: fast probe (~30s) for iterating on curve shape — same sigma/d grid
+    # as PAPER_ROC but with tiny n_effect/n_values, to quickly check whether the ROC curves
+    # match the paper's gradient (near-diagonal to high power) vs being saturated.
     "PAPER_ROC_SMOKE": {
         "roc": ROCSweepConfig(
             sigma1=-1.0,
@@ -378,14 +339,9 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             subsample_pairs=0.005,
         ),
     },
-    # PAPER_ROC: reproduce paper Fig 3 (effect size at n=500) + Fig 4 (sample
-    # size at σ₂=-1.5). Tuned for ~3 min on 4 cores.
-    # - n_reps=3: low ANOVA power so curves aren't step-functions
-    # - subsample_pairs=0.005: σ̂ from a random 0.5% of pair-indices → SE ∝ 1/n
-    #   so the test is not saturated at small |Δ| and power increases with n
-    #   (matches paper Fig 3 gradient + Fig 4 monotonicity)
-    # - adaptive stopping cuts at ~1k iter once edge count stabilizes
-    # - Bottleneck: d=2 n=2000 ≈ 100s/cell (cell-parallel can't split a cell)
+    # PAPER_ROC: reproduce Fig 3 (effect size at n=500) + Fig 4 (sample size at σ₂=-1.5),
+    # ~3 min on 4 cores. n_reps=3 keeps ANOVA power low (smooth curves); subsample_pairs=0.005
+    # makes SE∝1/n (unsaturated, monotone in n); adaptive stopping cuts at ~1k iter.
     "PAPER_ROC": {
         "roc": ROCSweepConfig(
             sigma1=-1.0,
@@ -406,10 +362,9 @@ PRESETS: dict[str, dict[str, SigmaSweepConfig | AICSweepConfig | ROCSweepConfig]
             subsample_pairs=0.005,
         ),
     },
-    # PAPER_SIGMA_CONVERGENCE: σ̂ convergence to true σ for all (d, σ, n).
-    # Common n grid so every σ has the same x-axis points, including small n
-    # where very-negative σ produces near-empty graphs and σ̂ diverges.
-    # No iter_cap; runtime ~3-4 min on 4 cores.
+    # PAPER_SIGMA_CONVERGENCE: σ̂ convergence to true σ for all (d, σ, n). Common n grid so
+    # every σ shares x-axis points, including small n where very-negative σ gives near-empty
+    # graphs and σ̂ diverges. No iter_cap; ~3-4 min on 4 cores.
     "PAPER_SIGMA_CONVERGENCE": {
         "sigma": SigmaSweepConfig(
             sigma_values=[-2.0, -4.0, -6.0, -8.0],
