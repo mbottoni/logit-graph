@@ -1,7 +1,7 @@
 [project]
 name = "logit-graph"
-version = "0.1.4"
-description = "Probabilistic logit-based graph model and utilities"
+version = "0.2.0"
+description = "Logistic Random Graph (LG) model: generation, leave-one-out estimation, and spectral GIC comparison"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
