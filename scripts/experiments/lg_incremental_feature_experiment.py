@@ -1,7 +1,5 @@
 """End-to-end incremental-feature LG experiment (Condition D focus + baselines).
-
-Run: python lg_incremental_feature_experiment.py
-"""
+Run: python lg_incremental_feature_experiment.py"""
 from __future__ import annotations
 
 import contextlib
