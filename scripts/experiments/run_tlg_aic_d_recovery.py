@@ -1,40 +1,7 @@
 #!/usr/bin/env python3
-"""Temporal Logit-Graph (TLG) AIC d-recovery experiment.
-
-The TLG analog of the equilibrium AIC d-selection experiment. There, AIC over
-candidate neighborhood depths d is known to **collapse to d_hat=0** — the offset
-model (only sigma free) cannot tell d>=1 apart from d=0. The temporal model fits a
-free degree coefficient alpha *at depth d*, so the candidate designs differ in fit
-and AIC can actually identify the true d.
-
-Mechanism (one replicate):
-  * grow a TLG graph at the true depth d_true (storing snapshots);
-  * for each candidate d in D_GRID, rebuild the at-risk logistic design from the
-    SAME snapshots at that d, fit (sigma_hat, alpha_hat), read off AIC;
-  * d_hat = argmin_d AIC.  (k=2 for every candidate, so AIC ranking == fit ranking.)
-Repeating over replicates and n gives the recovery accuracy P(d_hat = d_true) and the
-(d_true, d_hat) confusion matrix.
-
-Output under runs/tlg_aic_d/ (gitignored):
-  - aic_<dtrue>_n<n>.npy   cached per-cell AIC matrices (reps x len(D_GRID))
-  - aic_d_long.csv         tidy accuracy / confusion rows
-  - aic_accuracy.png       recovery accuracy vs n (one line per d_true)
-  - aic_confusion.png      (d_true x d_hat) confusion matrices, one per n
-
-Env knobs (all optional):
-  LG_TLGAIC_QUICK (0)      1 -> small grids
-  LG_TLGAIC_SEED (7000)    LG_TLGAIC_JOBS (cpu-2)
-  LG_TLGAIC_NREPS (20)     replicates per (d_true, n) cell
-  LG_TLGAIC_NSTEPS (5)     growth steps per generated graph
-  LG_TLGAIC_SIGMA (-2.0)   LG_TLGAIC_ALPHA (0.05)
-  LG_TLGAIC_DTRUE (0,1,2)  true depths to test
-  LG_TLGAIC_DGRID (0,1,2)  candidate depths for AIC
-  LG_TLGAIC_NS (20,50,100,200,250)
-  LG_TLGAIC_USE_CACHE (1)
-
-  make tlg-aic-d           full run
-  make tlg-aic-d-quick     smoke
-"""
+"""Temporal Logit-Graph (TLG) AIC d-recovery experiment: unlike the equilibrium offset model
+(where AIC collapses to d_hat=0), the temporal model fits a free degree coefficient alpha at each
+depth, so AIC over candidate depths can identify the true d. `make tlg-aic-d`."""
 from __future__ import annotations
 
 import os
