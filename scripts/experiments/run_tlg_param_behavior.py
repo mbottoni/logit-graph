@@ -83,7 +83,7 @@ NS = _ints("LG_TLGB_NS", [50] if QUICK else [50, 200, 500])
 # Betweenness centrality is O(n*m): exact below BETWEEN_EXACT_MAX nodes, else estimated
 # from BETWEEN_K seeded source samples (keeps the dense large-n cells affordable).
 BETWEEN_EXACT_MAX = _int("LG_TLGB_BETWEEN_EXACT_MAX", 300)
-BETWEEN_K = _int("LG_TLGB_BETWEEN_K", 120)
+BETWEEN_K = _int("LG_TLGB_BETWEEN_K", 80)
 BETWEEN_SEED = SEED % (2 ** 31 - 1)
 
 OUT_DIR = _here / "runs" / "tlg_param_behavior"
@@ -149,28 +149,38 @@ def _powerlaw_fit(degs: np.ndarray) -> dict:
     return out
 
 
+def _clustering_from_adj(A: np.ndarray, degs: np.ndarray) -> tuple[float, float]:
+    """(avg local clustering, transitivity) exactly, from triangle counts diag(A^3) via
+    numpy matmul — far cheaper than networkx's pure-Python triangle counting on dense graphs."""
+    A3_diag = ((A @ A) * A).sum(axis=1)        # triangles through node i = (A^3)_ii / 2
+    k = degs.astype(float)
+    denom = k * (k - 1.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        c_local = np.where(denom > 0, A3_diag / denom, 0.0)
+    avg_clust = float(c_local.mean()) if c_local.size else 0.0
+    triads = float(denom.sum())
+    transitivity = float(A3_diag.sum() / triads) if triads > 0 else 0.0
+    return avg_clust, transitivity
+
+
 def _distance_stats(H) -> tuple[float, float]:
     """(avg shortest path length, diameter) on a connected graph H. Exact below
-    BETWEEN_EXACT_MAX nodes; above it, estimated by BFS from BETWEEN_K seeded source
-    samples (mean over sampled pairs; diameter = max sampled eccentricity)."""
+    BETWEEN_EXACT_MAX nodes; above it, estimated by C-level (scipy) BFS from BETWEEN_K
+    seeded source samples (mean over sampled pairs; diameter = max sampled distance)."""
     nn = H.number_of_nodes()
     if nn <= 1:
         return np.nan, np.nan
     if nn <= BETWEEN_EXACT_MAX:
         return float(nx.average_shortest_path_length(H)), float(nx.diameter(H))
-    nodes = list(H.nodes())
+    from scipy.sparse.csgraph import shortest_path
+    sub = nx.to_scipy_sparse_array(H, format="csr")
     rng = np.random.default_rng(BETWEEN_SEED)
-    srcs = rng.choice(nodes, size=min(BETWEEN_K, nn), replace=False)
-    tot, cnt, ecc = 0.0, 0, 0
-    for s in srcs:
-        lengths = nx.single_source_shortest_path_length(H, s)
-        d = [v for v in lengths.values() if v > 0]
-        if d:
-            tot += float(sum(d))
-            cnt += len(d)
-            ecc = max(ecc, max(d))
-    apl = tot / cnt if cnt else np.nan
-    return float(apl), float(ecc)
+    src = rng.choice(nn, size=min(BETWEEN_K, nn), replace=False)
+    D = shortest_path(sub, method="D", unweighted=True, indices=src)
+    finite = D[np.isfinite(D) & (D > 0)]
+    if finite.size == 0:
+        return np.nan, np.nan
+    return float(finite.mean()), float(finite.max())
 
 
 def graph_metrics(adj: np.ndarray) -> dict:
@@ -191,12 +201,13 @@ def graph_metrics(adj: np.ndarray) -> dict:
         deg_cv=float(degs.std() / mean_deg) if mean_deg > 0 else 0.0,
     )
     try:
-        m["assortativity"] = float(nx.degree_assortativity_coefficient(G))
+        # nan for empty/regular graphs (zero degree variance) — silence the divide warning.
+        with np.errstate(invalid="ignore", divide="ignore"):
+            m["assortativity"] = float(nx.degree_assortativity_coefficient(G))
     except Exception:
         m["assortativity"] = np.nan
 
-    m["avg_clustering"] = float(nx.average_clustering(G))
-    m["transitivity"] = float(nx.transitivity(G))
+    m["avg_clustering"], m["transitivity"] = _clustering_from_adj(A, degs)
 
     comps = list(nx.connected_components(G))
     lcc = max(comps, key=len) if comps else set()
