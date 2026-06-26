@@ -5,9 +5,13 @@ clustering/connectivity, degree heterogeneity, and power-law / scale-free fits �
 of (sigma, alpha) on graph behavior can be read off heatmaps. `make tlg-param-behavior`.
 
 Model: the equilibrium TLG (``grow_graph`` with the default ``allow_removal=True`` ergodic chain),
-degree-feature depth d=1 (at d=0 the feature is 0 and alpha has no effect). Set
-``LG_TLGB_ALLOW_REMOVAL=0`` for the add-only growth (preferential-attachment) regime instead.
-Reproducible (seeded) and cached: per-n raw metrics CSVs keyed by a config hash."""
+swept over degree-feature depths d in {0, 1, 2}. The feature is ``bounded`` mode
+log(1+S_i^(d))+log(1+S_j^(d)) where S_i^(d) sums degrees over i's d-hop ball, so alpha is active at
+every d: d=0 is preferential attachment on each node's OWN degree, d=1/2 widen the aggregation to
+1-/2-hop neighbour degrees (larger feature => stronger alpha effect). Set ``LG_TLGB_ALLOW_REMOVAL=0``
+for the add-only growth regime instead. Reproducible (seeded) and cached: per-n raw metrics CSVs
+keyed by a config hash. Plots are emitted per d. At large n, betweenness and distance metrics are
+estimated from seeded source samples (``LG_TLGB_BETWEEN_EXACT_MAX`` / ``LG_TLGB_BETWEEN_K``)."""
 from __future__ import annotations
 
 import hashlib
@@ -62,14 +66,25 @@ QUICK = os.environ.get("LG_TLGB_QUICK", "0") == "1"
 SEED = _int("LG_TLGB_SEED", 20260626)
 NREPS = _int("LG_TLGB_NREPS", 2 if QUICK else 5)
 NSTEPS = _int("LG_TLGB_NSTEPS", 6 if QUICK else 20)
-D_FIX = _int("LG_TLGB_D", 1)               # d=0 => degree feature is 0 => alpha inert
+DS = _ints("LG_TLGB_DS", [0, 1] if QUICK else [0, 1, 2])  # degree-aggregation radius (d=0 = own degree)
 P0 = float(os.environ.get("LG_TLGB_P0", "0.02"))
 ALLOW_REMOVAL = os.environ.get("LG_TLGB_ALLOW_REMOVAL", "1") == "1"
 USE_CACHE = os.environ.get("LG_TLGB_USE_CACHE", "1") == "1"
 
-SIGMAS = _floats("LG_TLGB_SIGMAS", [-3.0, -2.0] if QUICK else [-4.0, -3.0, -2.0])
-ALPHAS = _floats("LG_TLGB_ALPHAS", [0.0, 0.3] if QUICK else [0.0, 0.15, 0.30, 0.45])
+SIGMAS = _floats("LG_TLGB_SIGMAS",
+                 [-3.0, -2.0] if QUICK else [-5.0, -4.0, -3.0, -2.0, -1.0])
+# Denser in the low-alpha transition band (where the non-degenerate structure lives);
+# the high-alpha cells saturate toward a complete graph.
+ALPHAS = _floats("LG_TLGB_ALPHAS",
+                 [0.0, 0.3] if QUICK
+                 else [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50])
 NS = _ints("LG_TLGB_NS", [50] if QUICK else [50, 200, 500])
+
+# Betweenness centrality is O(n*m): exact below BETWEEN_EXACT_MAX nodes, else estimated
+# from BETWEEN_K seeded source samples (keeps the dense large-n cells affordable).
+BETWEEN_EXACT_MAX = _int("LG_TLGB_BETWEEN_EXACT_MAX", 300)
+BETWEEN_K = _int("LG_TLGB_BETWEEN_K", 120)
+BETWEEN_SEED = SEED % (2 ** 31 - 1)
 
 OUT_DIR = _here / "runs" / "tlg_param_behavior"
 
@@ -89,7 +104,8 @@ HEATMAP_METRICS = [
 
 
 def _cache_key(n: int) -> str:
-    payload = (SIGMAS, ALPHAS, D_FIX, NREPS, NSTEPS, ALLOW_REMOVAL, P0, SEED, n)
+    payload = (SIGMAS, ALPHAS, DS, NREPS, NSTEPS, ALLOW_REMOVAL, P0, SEED,
+               BETWEEN_EXACT_MAX, BETWEEN_K, n)
     return hashlib.md5(repr(payload).encode()).hexdigest()[:8]
 
 
@@ -133,6 +149,30 @@ def _powerlaw_fit(degs: np.ndarray) -> dict:
     return out
 
 
+def _distance_stats(H) -> tuple[float, float]:
+    """(avg shortest path length, diameter) on a connected graph H. Exact below
+    BETWEEN_EXACT_MAX nodes; above it, estimated by BFS from BETWEEN_K seeded source
+    samples (mean over sampled pairs; diameter = max sampled eccentricity)."""
+    nn = H.number_of_nodes()
+    if nn <= 1:
+        return np.nan, np.nan
+    if nn <= BETWEEN_EXACT_MAX:
+        return float(nx.average_shortest_path_length(H)), float(nx.diameter(H))
+    nodes = list(H.nodes())
+    rng = np.random.default_rng(BETWEEN_SEED)
+    srcs = rng.choice(nodes, size=min(BETWEEN_K, nn), replace=False)
+    tot, cnt, ecc = 0.0, 0, 0
+    for s in srcs:
+        lengths = nx.single_source_shortest_path_length(H, s)
+        d = [v for v in lengths.values() if v > 0]
+        if d:
+            tot += float(sum(d))
+            cnt += len(d)
+            ecc = max(ecc, max(d))
+    apl = tot / cnt if cnt else np.nan
+    return float(apl), float(ecc)
+
+
 def graph_metrics(adj: np.ndarray) -> dict:
     """Register the full structural-descriptor set for one graph (adjacency, 0/1, symmetric)."""
     n = adj.shape[0]
@@ -163,14 +203,11 @@ def graph_metrics(adj: np.ndarray) -> dict:
     m["n_components"] = len(comps)
     m["lcc_frac"] = len(lcc) / n if n else 0.0
     H = G.subgraph(lcc)
-    if H.number_of_nodes() > 1:
-        m["avg_path_len"] = float(nx.average_shortest_path_length(H))
-        m["diameter"] = float(nx.diameter(H))
-    else:
-        m["avg_path_len"] = np.nan
-        m["diameter"] = np.nan
+    m["avg_path_len"], m["diameter"] = _distance_stats(H)
 
-    bc = np.fromiter(nx.betweenness_centrality(G, normalized=True).values(), dtype=float)
+    bc_k = None if n <= BETWEEN_EXACT_MAX else min(BETWEEN_K, n)
+    bc = np.fromiter(nx.betweenness_centrality(G, k=bc_k, normalized=True,
+                                               seed=BETWEEN_SEED).values(), dtype=float)
     m["betweenness_mean"] = float(bc.mean()) if bc.size else 0.0
     m["betweenness_max"] = float(bc.max()) if bc.size else 0.0
     cc = np.fromiter(nx.closeness_centrality(G).values(), dtype=float)
@@ -194,37 +231,39 @@ def graph_metrics(adj: np.ndarray) -> dict:
 # ---------------------------------------------------------------------------
 
 def simulate_n(n: int):
-    """Run the (sigma, alpha) grid at one n. Returns (long-form per-rep metrics DataFrame,
+    """Run the (d, sigma, alpha) grid at one n. Returns (long-form per-rep metrics DataFrame,
     {cell_key: rep-0 degree sequence} for the CCDF panel)."""
     rows = []
     deg_seqs = {}
-    for si, sigma in enumerate(SIGMAS):
-        for ai, alpha in enumerate(ALPHAS):
-            t0 = time.perf_counter()
-            for rep in range(NREPS):
-                seed = SEED + 100003 * si + 1009 * ai + 13 * rep + n
-                res = grow_graph(n, d=D_FIX, sigma=sigma, alpha=alpha,
-                                 n_steps=NSTEPS, seed=seed,
-                                 allow_removal=ALLOW_REMOVAL,
-                                 record_design=False, store_snapshots=False)
-                met = graph_metrics(res.adj)
-                rows.append(dict(n=n, sigma=sigma, alpha=alpha, rep=rep, seed=seed, **met))
-                if rep == 0:
-                    A = (np.asarray(res.adj) > 0).astype(int)
-                    np.fill_diagonal(A, 0)
-                    deg_seqs[f"s{si}_a{ai}"] = A.sum(axis=1).astype(int)
-            dt = time.perf_counter() - t0
-            print(f"    n={n:4d} sigma={sigma:+.2f} alpha={alpha:.2f}: "
-                  f"{NREPS} reps in {dt:5.1f}s")
-            sys.stdout.flush()
+    for d in DS:
+        for si, sigma in enumerate(SIGMAS):
+            for ai, alpha in enumerate(ALPHAS):
+                t0 = time.perf_counter()
+                for rep in range(NREPS):
+                    seed = SEED + 100003 * si + 1009 * ai + 13 * rep + 31 * d + n
+                    res = grow_graph(n, d=d, sigma=sigma, alpha=alpha,
+                                     n_steps=NSTEPS, seed=seed,
+                                     allow_removal=ALLOW_REMOVAL,
+                                     record_design=False, store_snapshots=False)
+                    met = graph_metrics(res.adj)
+                    rows.append(dict(n=n, d=d, sigma=sigma, alpha=alpha, rep=rep,
+                                     seed=seed, **met))
+                    if rep == 0:
+                        A = (np.asarray(res.adj) > 0).astype(int)
+                        np.fill_diagonal(A, 0)
+                        deg_seqs[f"d{d}_s{si}_a{ai}"] = A.sum(axis=1).astype(int)
+                dt = time.perf_counter() - t0
+                print(f"    n={n:4d} d={d} sigma={sigma:+.2f} alpha={alpha:.2f}: "
+                      f"{NREPS} reps in {dt:5.1f}s")
+                sys.stdout.flush()
     return pd.DataFrame(rows), deg_seqs
 
 
 def aggregate(raw: pd.DataFrame) -> pd.DataFrame:
-    """Mean + std of every numeric metric over reps, per (n, sigma, alpha)."""
+    """Mean + std of every numeric metric over reps, per (n, d, sigma, alpha)."""
     metric_cols = [c for c in raw.columns
-                   if c not in ("n", "sigma", "alpha", "rep", "seed")]
-    g = raw.groupby(["n", "sigma", "alpha"], as_index=False)
+                   if c not in ("n", "d", "sigma", "alpha", "rep", "seed")]
+    g = raw.groupby(["n", "d", "sigma", "alpha"], as_index=False)
     summ = g[metric_cols].mean()
     std = g[metric_cols].std().rename(columns={c: f"{c}_std" for c in metric_cols})
     return pd.concat([summ, std[[c for c in std.columns if c.endswith("_std")]]], axis=1)
@@ -234,10 +273,10 @@ def aggregate(raw: pd.DataFrame) -> pd.DataFrame:
 # Plots
 # ---------------------------------------------------------------------------
 
-def _grid(summary: pd.DataFrame, n: int, metric: str) -> np.ndarray:
-    """metric mean as a (len(SIGMAS), len(ALPHAS)) grid (rows top=high sigma)."""
+def _grid(summary: pd.DataFrame, n: int, d: int, metric: str) -> np.ndarray:
+    """metric mean as a (len(SIGMAS), len(ALPHAS)) grid (rows top=high sigma) at (n, d)."""
     M = np.full((len(SIGMAS), len(ALPHAS)), np.nan)
-    sub = summary[summary["n"] == n]
+    sub = summary[(summary["n"] == n) & (summary["d"] == d)]
     for si, s in enumerate(SIGMAS):
         for ai, a in enumerate(ALPHAS):
             cell = sub[(np.isclose(sub["sigma"], s)) & (np.isclose(sub["alpha"], a))]
@@ -246,26 +285,29 @@ def _grid(summary: pd.DataFrame, n: int, metric: str) -> np.ndarray:
     return M
 
 
-def plot_heatmaps(summary: pd.DataFrame, out_path: Path):
-    """metrics (rows) x n (cols) grid of heatmaps over the (alpha, sigma) plane."""
+def plot_heatmaps(summary: pd.DataFrame, d: int, out_path: Path):
+    """metrics (rows) x n (cols) grid of heatmaps over the (alpha, sigma) plane, at fixed d."""
     nrows, ncols = len(HEATMAP_METRICS), len(NS)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.3 * ncols, 2.7 * nrows),
+    annotate = len(SIGMAS) <= 5 and len(ALPHAS) <= 6  # too cramped on a denser grid
+    col_w = max(3.3, 0.55 * len(ALPHAS) + 1.6)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(col_w * ncols, 2.5 * nrows),
                              squeeze=False)
     for ri, (key, label) in enumerate(HEATMAP_METRICS):
         for ci, n in enumerate(NS):
             ax = axes[ri][ci]
-            M = _grid(summary, n, key)
+            M = _grid(summary, n, d, key)
             im = ax.imshow(M, origin="lower", aspect="auto", cmap="viridis")
             ax.set_xticks(range(len(ALPHAS)))
-            ax.set_xticklabels([f"{a:g}" for a in ALPHAS], fontsize=8)
+            ax.set_xticklabels([f"{a:g}" for a in ALPHAS], fontsize=7, rotation=45)
             ax.set_yticks(range(len(SIGMAS)))
-            ax.set_yticklabels([f"{s:g}" for s in SIGMAS], fontsize=8)
-            for si in range(len(SIGMAS)):
-                for ai in range(len(ALPHAS)):
-                    v = M[si, ai]
-                    if np.isfinite(v):
-                        ax.text(ai, si, f"{v:.2f}", ha="center", va="center",
-                                fontsize=7, color="w")
+            ax.set_yticklabels([f"{s:g}" for s in SIGMAS], fontsize=7)
+            if annotate:
+                for si in range(len(SIGMAS)):
+                    for ai in range(len(ALPHAS)):
+                        v = M[si, ai]
+                        if np.isfinite(v):
+                            ax.text(ai, si, f"{v:.2f}", ha="center", va="center",
+                                    fontsize=7, color="w")
             if ri == 0:
                 ax.set_title(f"n = {n}", fontsize=11)
             if ci == 0:
@@ -274,20 +316,21 @@ def plot_heatmaps(summary: pd.DataFrame, out_path: Path):
                 ax.set_xlabel("α (degree slope)", fontsize=9)
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     regime = "add+remove (equilibrium)" if ALLOW_REMOVAL else "add-only (growth)"
-    fig.suptitle(f"TLG structural behavior vs (σ, α)   [d={D_FIX}, {NSTEPS} steps, "
+    note = "  (own-degree PA)" if d == 0 else f"  ({d}-hop neighbour degree)"
+    fig.suptitle(f"TLG structural behavior vs (σ, α)   [d={d}{note}, {NSTEPS} steps, "
                  f"{regime}, mean of {NREPS} reps]", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.99])
     fig.savefig(out_path, dpi=130, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_scale_free_vs_alpha(summary: pd.DataFrame, out_path: Path):
-    """Power-law exponent and scale-free fraction vs alpha (one line per sigma), per n."""
+def plot_scale_free_vs_alpha(summary: pd.DataFrame, d: int, out_path: Path):
+    """Power-law exponent and scale-free fraction vs alpha (one line per sigma), per n, at d."""
     fig, axes = plt.subplots(2, len(NS), figsize=(4.2 * len(NS), 7),
                              sharex=True, squeeze=False)
     colors = plt.cm.viridis(np.linspace(0, 0.85, len(SIGMAS)))
     for ci, n in enumerate(NS):
-        sub = summary[summary["n"] == n]
+        sub = summary[(summary["n"] == n) & (summary["d"] == d)]
         for si, s in enumerate(SIGMAS):
             cell = sub[np.isclose(sub["sigma"], s)].sort_values("alpha")
             axes[0][ci].plot(cell["alpha"], cell["pl_alpha"], marker="o",
@@ -301,34 +344,37 @@ def plot_scale_free_vs_alpha(summary: pd.DataFrame, out_path: Path):
     axes[0][0].set_ylabel("power-law exponent")
     axes[1][0].set_ylabel("scale-free fraction")
     axes[0][-1].legend(fontsize=8, frameon=False)
-    fig.suptitle("Scale-free behavior vs α  (lines = σ)", fontsize=13)
+    fig.suptitle(f"Scale-free behavior vs α  (lines = σ)   [d={d}]", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.98])
     fig.savefig(out_path, dpi=130, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_degree_ccdf(deg_seqs: dict, n: int, out_path: Path):
-    """Log-log CCDF of the degree distribution for each (sigma, alpha) cell at one n."""
+def plot_degree_ccdf(deg_seqs: dict, n: int, d: int, out_path: Path):
+    """Log-log CCDF of the degree distribution for each (sigma, alpha) cell at one (n, d)."""
+    from matplotlib.ticker import NullFormatter
     fig, axes = plt.subplots(len(SIGMAS), len(ALPHAS),
-                             figsize=(3.0 * len(ALPHAS), 2.6 * len(SIGMAS)),
+                             figsize=(2.4 * len(ALPHAS), 2.2 * len(SIGMAS)),
                              squeeze=False)
     for si, s in enumerate(SIGMAS):
         for ai, a in enumerate(ALPHAS):
             ax = axes[si][ai]
-            seq = deg_seqs.get(f"s{si}_a{ai}")
+            seq = deg_seqs.get(f"d{d}_s{si}_a{ai}")
             if seq is not None:
-                d = np.sort(np.asarray(seq, dtype=float))
-                d = d[d > 0]
-                if d.size:
-                    ccdf = 1.0 - np.arange(d.size) / d.size
-                    ax.loglog(d, ccdf, marker=".", ls="none", ms=4)
-            ax.set_title(f"σ={s:g}, α={a:g}", fontsize=9)
-            ax.grid(alpha=0.25, which="both")
+                dd = np.sort(np.asarray(seq, dtype=float))
+                dd = dd[dd > 0]
+                if dd.size:
+                    ccdf = 1.0 - np.arange(dd.size) / dd.size
+                    ax.loglog(dd, ccdf, marker=".", ls="none", ms=3)
+            ax.set_title(f"σ={s:g}, α={a:g}", fontsize=8)
+            ax.tick_params(labelsize=6)
+            ax.xaxis.set_minor_formatter(NullFormatter())  # avoid dense overlapping log labels
+            ax.grid(alpha=0.2, which="major")
             if si == len(SIGMAS) - 1:
-                ax.set_xlabel("degree", fontsize=8)
+                ax.set_xlabel("degree", fontsize=7)
             if ai == 0:
-                ax.set_ylabel("CCDF", fontsize=8)
-    fig.suptitle(f"Degree distribution CCDF (log-log) at n = {n}", fontsize=13)
+                ax.set_ylabel("CCDF", fontsize=7)
+    fig.suptitle(f"Degree distribution CCDF (log-log) at n = {n}, d = {d}", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.98])
     fig.savefig(out_path, dpi=130, bbox_inches="tight")
     plt.close(fig)
@@ -341,7 +387,7 @@ def plot_degree_ccdf(deg_seqs: dict, n: int, out_path: Path):
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     regime = "add+remove" if ALLOW_REMOVAL else "add-only"
-    print(f"TLG param-behavior  seed={SEED}  quick={QUICK}  d={D_FIX}  regime={regime}\n"
+    print(f"TLG param-behavior  seed={SEED}  quick={QUICK}  d={DS}  regime={regime}\n"
           f"  n={NS}  sigma={SIGMAS}  alpha={ALPHAS}  reps={NREPS}  steps={NSTEPS}")
 
     all_raw = []
@@ -371,30 +417,36 @@ def main():
     summary.to_csv(OUT_DIR / "metrics_summary.csv", index=False)
     raw_all.to_csv(OUT_DIR / "metrics_raw_all.csv", index=False)
 
-    plot_heatmaps(summary, OUT_DIR / "param_behavior_heatmaps.png")
-    plot_scale_free_vs_alpha(summary, OUT_DIR / "scale_free_vs_alpha.png")
     n_big = NS[-1]
-    if deg_seqs_by_n.get(n_big):
-        plot_degree_ccdf(deg_seqs_by_n[n_big], n_big, OUT_DIR / "degree_ccdf.png")
+    for d in DS:
+        plot_heatmaps(summary, d, OUT_DIR / f"param_behavior_heatmaps_d{d}.png")
+        plot_scale_free_vs_alpha(summary, d, OUT_DIR / f"scale_free_vs_alpha_d{d}.png")
+        if deg_seqs_by_n.get(n_big):
+            plot_degree_ccdf(deg_seqs_by_n[n_big], n_big, d,
+                             OUT_DIR / f"degree_ccdf_d{d}.png")
 
     (OUT_DIR / "config.json").write_text(json.dumps(
-        dict(seed=SEED, d=D_FIX, ns=NS, sigmas=SIGMAS, alphas=ALPHAS,
-             n_reps=NREPS, n_steps=NSTEPS, allow_removal=ALLOW_REMOVAL, p0=P0),
+        dict(seed=SEED, ds=DS, ns=NS, sigmas=SIGMAS, alphas=ALPHAS,
+             n_reps=NREPS, n_steps=NSTEPS, allow_removal=ALLOW_REMOVAL, p0=P0,
+             between_exact_max=BETWEEN_EXACT_MAX, between_k=BETWEEN_K),
         indent=2))
 
     print("\n" + "=" * 72)
     print("Behavior summary (mean over reps):")
     for n in NS:
-        print(f"\n n = {n}")
-        sub = summary[summary["n"] == n].sort_values(["sigma", "alpha"])
-        for r in sub.itertuples():
-            sf = "  <scale-free>" if getattr(r, "frac_scale_free", 0) >= 0.5 else ""
-            print(f"  σ={r.sigma:+.2f} α={r.alpha:.2f}: dens={r.density:.3f} "
-                  f"<k>={r.mean_degree:5.1f} gini={r.deg_gini:.2f} "
-                  f"clust={r.avg_clustering:.2f} assort={r.assortativity:+.2f} "
-                  f"pl_a={r.pl_alpha:.2f}{sf}")
+        for d in DS:
+            print(f"\n n = {n}, d = {d}")
+            sub = summary[(summary["n"] == n) & (summary["d"] == d)].sort_values(
+                ["sigma", "alpha"])
+            for r in sub.itertuples():
+                sf = "  <scale-free>" if getattr(r, "frac_scale_free", 0) >= 0.5 else ""
+                print(f"  σ={r.sigma:+.2f} α={r.alpha:.2f}: dens={r.density:.3f} "
+                      f"<k>={r.mean_degree:5.1f} gini={r.deg_gini:.2f} "
+                      f"clust={r.avg_clustering:.2f} assort={r.assortativity:+.2f} "
+                      f"pl_a={r.pl_alpha:.2f}{sf}")
     print(f"\nWrote {OUT_DIR}/ : metrics_summary.csv, metrics_raw_all.csv, "
-          f"param_behavior_heatmaps.png, scale_free_vs_alpha.png, degree_ccdf.png")
+          f"and per-d figures (param_behavior_heatmaps_d*, scale_free_vs_alpha_d*, "
+          f"degree_ccdf_d*).")
 
 
 if __name__ == "__main__":

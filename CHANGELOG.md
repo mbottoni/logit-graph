@@ -7,10 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - TLG **parameter-behavior characterization** experiment (`make tlg-param-behavior`,
-  `scripts/experiments/run_tlg_param_behavior.py`): sweeps (σ, α) for n ∈ {50, 200, 500} and
-  registers centrality, clustering/connectivity, degree-heterogeneity, and power-law /
-  scale-free metrics per graph, emitting metrics×n heatmaps, a scale-free-vs-α figure, and
-  degree-CCDF panels. Reproducible (seeded) and cached (config-hashed per-n CSVs).
+  `scripts/experiments/run_tlg_param_behavior.py`): sweeps the degree-feature depth d ∈ {0, 1, 2}
+  and (σ, α) for n ∈ {50, 200, 500} and registers centrality, clustering/connectivity,
+  degree-heterogeneity, and power-law / scale-free metrics per graph, emitting per-d metrics×n
+  heatmaps, scale-free-vs-α figures, and degree-CCDF panels. Reproducible (seeded) and cached
+  (config-hashed per-n CSVs); betweenness/distance metrics use seeded source sampling at large n.
 
 ## [0.2.0] - 2026-06-15
 
