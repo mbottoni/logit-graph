@@ -56,10 +56,14 @@ def main():
     for col, (name, graph, kl) in enumerate(panels):
         ax_deg, ax_spec = axes[0, col], axes[1, col]
 
-        # Top: degree distribution.
+        # Top: degree distribution. Use a shared bin range so every panel spans the
+        # same axis; this keeps a degenerate (regular) degree sequence such as the
+        # k-regular graph's single spike visible in one proper-width bin rather than
+        # collapsing to a zero-width, invisible bar. The KDE is drawn only when the
+        # degrees vary (a constant sequence has a singular, undefined kernel).
         deg = _degrees(graph)
-        sns.histplot(x=deg, kde=True, ax=ax_deg, stat="density", bins=30,
-                     color=DEG_BAR, edgecolor="white", linewidth=0.3)
+        sns.histplot(x=deg, kde=bool(deg.var() > 0), ax=ax_deg, stat="density", bins=30,
+                     binrange=(0.0, kmax), color=DEG_BAR, edgecolor="white", linewidth=0.3)
         title = name if kl is None else f"{name}\nKL $= {kl:.3f}$"
         ax_deg.set_title(title, fontsize=13, fontweight="bold")
         ax_deg.set_xlabel("Degree", fontsize=11)
