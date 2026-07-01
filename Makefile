@@ -336,6 +336,13 @@ tlg-recovery-quick:  ## Smoke run of the TLG recovery experiment (d={0,1}, small
 	LG_TLG_QUICK=1 \
 		$(UV) run python scripts/experiments/run_tlg_recovery.py
 
+tlg-param-behavior:  ## TLG (d,sigma,alpha) behavior sweep for d={0,1,2}, n={50,200,500}: centrality, clustering, scale-free / power-law metrics + per-d heatmaps (reproducible, cached)
+	$(UV) run python scripts/experiments/run_tlg_param_behavior.py
+
+tlg-param-behavior-quick:  ## Smoke run of the TLG param-behavior sweep (d={0,1}, n=50, tiny grid, ~30s)
+	LG_TLGB_QUICK=1 \
+		$(UV) run python scripts/experiments/run_tlg_param_behavior.py
+
 tlg-identifiability:  ## Unified latent-TLG identifiability: recover sigma,alpha,gamma_c,gamma_f,lambda vs n (MLE, add+remove)
 	$(UV) run python scripts/experiments/run_tlg_latent_identifiability.py
 
