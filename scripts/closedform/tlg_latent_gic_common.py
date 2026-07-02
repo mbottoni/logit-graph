@@ -22,7 +22,7 @@ import numpy as np
 import networkx as nx
 import pandas as pd
 import scipy.sparse as sp
-from scipy.stats import entropy
+from scipy.stats import entropy, ks_2samp
 from scipy.optimize import minimize
 
 _here = Path(__file__).resolve().parent
@@ -80,7 +80,10 @@ SEED = _int("LG_TLM_SEED", 12345)
 DGRID = [int(x) for x in os.environ.get("LG_TLM_DGRID", "0,1").split(",")]  # degree depths
 assert all(dd in (0, 1) for dd in DGRID), "fast separable degree feature supports d in {0,1}"
 TLG_N_PARAMS = 4   # alpha, gc, gf, lam (d/kernel/rank are selected hyperparameters, uncounted)
-CACHE_VERSION = 2   # bump to invalidate stale per-network sweep caches (schema/fit changed)
+CACHE_VERSION = 3   # bump to invalidate stale per-network sweep caches (schema/fit changed)
+# Above this node count, skip the O(n·<k>^2) clustering discrepancy (still report the cheap
+# degree-KS and assortativity discrepancies); avoids blowups on large graphs like the citation net.
+DESC_MAX_N = _int("LG_TLM_DESC_MAX_N", 20000)
 TUNE_SEEDS = range(4)
 EVAL_SEEDS = range(100, 100 + NRUNS)
 FAMILIES = ["TLG", "ER", "BA", "WS", "KR", "GRG", "SBM"]
@@ -211,6 +214,43 @@ def _gmetrics(G):
     return _metrics(G)
 
 
+def _nan_discrepancy():
+    return dict(ks_deg=np.nan, d_clustering=np.nan, d_assortativity=np.nan)
+
+
+def _fit_discrepancy(model_graphs, real_deg, real_clust, real_assort):
+    """Three fit metrics complementing the spectral KL, each a *discrepancy* from the observed
+    network (lower = closer, like KL), averaged over the same model ensemble the KL uses:
+
+      ks_deg          : mean Kolmogorov--Smirnov distance between the model and observed degree
+                        distributions (local connectivity heterogeneity);
+      d_clustering    : |mean model clustering - observed clustering| (triadic closure);
+      d_assortativity : |mean model degree assortativity - observed assortativity| (mixing).
+
+    model_graphs is a list of generated nx.Graph draws; empty -> NaNs.
+    """
+    graphs = [g for g in model_graphs if g is not None]
+    if not graphs:
+        return _nan_discrepancy()
+    ks, cl, ass = [], [], []
+    for H in graphs:
+        mdeg = [d for _, d in H.degree()]
+        if mdeg and len(real_deg):
+            ks.append(float(ks_2samp(real_deg, mdeg).statistic))
+        if H.number_of_nodes() <= DESC_MAX_N:
+            cl.append(float(nx.average_clustering(H)))
+        try:
+            ass.append(float(nx.degree_assortativity_coefficient(H)))
+        except Exception:
+            ass.append(np.nan)
+    ks_deg = float(np.mean(ks)) if ks else np.nan
+    d_clustering = (abs(float(np.nanmean(cl)) - float(real_clust))
+                    if cl and np.isfinite(real_clust) else np.nan)
+    d_assortativity = (abs(float(np.nanmean(ass)) - float(real_assort))
+                       if ass and np.isfinite(real_assort) else np.nan)
+    return dict(ks_deg=ks_deg, d_clustering=d_clustering, d_assortativity=d_assortativity)
+
+
 # --------------------------------------------------------------------------- TLG
 def _grow_one(n, rows, cols, alpha, gc, gf, lam, Bc, Bf, L, e_real, seed, d):
     """One budgeted add-only growth to E_real; returns the final adjacency."""
@@ -255,10 +295,13 @@ def _ensemble_kl(x, n, rows, cols, Bc, Bf, L, e_real, scorer, real_den, seeds, d
     return (kl, rep) if want_graph else (kl, None)
 
 
-def fit_tlg(G, scorer, real_den):
+def fit_tlg(G, scorer, real_den, real_desc=None):
     """Tune (alpha, gc, gf, lam) and select degree depth d∈{0,1}, latent kernel, and rank k by
     min ensemble-KL on TUNE seeds; reported KL is scored on disjoint HELD-OUT seeds. n_params = 4
-    (coefficients only — d/kernel/rank are selected hyperparameters, not counted, like SBM)."""
+    (coefficients only — d/kernel/rank are selected hyperparameters, not counted, like SBM).
+
+    real_desc=(real_deg, real_clust, real_assort) enables the degree-KS / clustering /
+    assortativity discrepancy metrics, scored on the same EVAL ensemble as the KL."""
     n = G.number_of_nodes()
     adj = nx.to_numpy_array(G)
     e_real = G.number_of_edges()
@@ -300,22 +343,35 @@ def fit_tlg(G, scorer, real_den):
                     f"(α={res.x[0]:.2f} γc={res.x[1]:.2f} γf={res.x[2]:.2f} "
                     f"λ={res.x[3]:.2f}) {nev['n']} evals")
                 if kl_eval < best["kl"]:
-                    best = dict(kl=kl_eval, d=d, k=k, kind=kind, x=res.x, graph=rep)
+                    best = dict(kl=kl_eval, d=d, k=k, kind=kind, x=res.x, graph=rep, L=L)
 
     x = best["x"]
     gic = 2.0 * best["kl"] + 2.0 * TLG_N_PARAMS
     param = (f"d={best['d']}, {best['kind']} k={best['k']}, α={x[0]:.2f}, "
              f"γc={max(0,x[1]):.2f}, γf={max(0,x[2]):.2f}, λ={x[3]:.2f}")
+
+    # Degree-KS / clustering / assortativity discrepancies on the SAME EVAL ensemble as the KL:
+    # regenerate the winning config's held-out draws and compare their descriptors to the observed.
+    disc = _nan_discrepancy()
+    if real_desc is not None and "L" in best:
+        graphs = [nx.from_numpy_array(
+                      _grow_one(n, rows, cols, x[0], max(0.0, x[1]), max(0.0, x[2]), x[3],
+                                Bc, Bf, best["L"], e_real, s, best["d"]))
+                  for s in EVAL_SEEDS]
+        disc = _fit_discrepancy(graphs, *real_desc)
+
     log(f"    TLG: best d={best['d']} {best['kind']} k={best['k']} KL={best['kl']:.4f} "
         f"GIC={gic:.4f} ({time.perf_counter()-t0:.1f}s)")
     return dict(gic=gic, kl=best["kl"], n_params=TLG_N_PARAMS, graph=best["graph"],
                 param=param, trace=trace,
-                selected=dict(d=best["d"], kernel=best["kind"], k=best["k"]))
+                selected=dict(d=best["d"], kernel=best["kind"], k=best["k"]), **disc)
 
 
-def baseline_gic(G, gen_fn, n_params, real_den, scorer):
-    """Ensemble-mean-density KL for a baseline family (same estimator as TLG)."""
-    dens, rep = [], None
+def baseline_gic(G, gen_fn, n_params, real_den, scorer, real_desc=None):
+    """Ensemble-mean-density KL for a baseline family (same estimator as TLG). When real_desc=
+    (real_deg, real_clust, real_assort) is given, also reports the degree-KS / clustering /
+    assortativity discrepancies over the same ensemble."""
+    dens, rep, graphs = [], None, []
     for s in EVAL_SEEDS:
         try:
             g = gen_fn(SEED + s)
@@ -323,12 +379,14 @@ def baseline_gic(G, gen_fn, n_params, real_den, scorer):
             continue
         if rep is None:
             rep = g
+        graphs.append(g)
         dens.append(scorer.compute_spectral_density(g)[0])
     if not dens:
         return None
     avg = np.mean(dens, axis=0)
     kl = float(entropy(real_den + 1e-10, avg + 1e-10))
-    return dict(gic=2.0 * kl + 2.0 * n_params, kl=kl, n_params=n_params, graph=rep)
+    disc = _fit_discrepancy(graphs, *real_desc) if real_desc is not None else _nan_discrepancy()
+    return dict(gic=2.0 * kl + 2.0 * n_params, kl=kl, n_params=n_params, graph=rep, **disc)
 
 
 # --------------------------------------------------------------------------- driver
@@ -344,14 +402,19 @@ def process_dataset(name, loader):
         f"clust={rm['clustering']:.3f} assort={rm['assortativity']:.3f} ===")
     scorer = GraphInformationCriterion(G, model="LG", dist="KL")
     real_den, _ = scorer.compute_spectral_density(G)
+    real_desc = ([d for _, d in G.degree()], rm["clustering"], rm["assortativity"])
 
+    # Real row is the reference: zero discrepancy from itself.
     rows = [dict(dataset=name, model="Real", n_params=np.nan, gic=np.nan,
-                 gic_fit=np.nan, gic_penalty=np.nan, kl=np.nan, param="—", **rm)]
+                 gic_fit=np.nan, gic_penalty=np.nan, kl=np.nan, param="—",
+                 ks_deg=0.0, d_clustering=0.0, d_assortativity=0.0, **rm)]
 
-    tlg = fit_tlg(G, scorer, real_den)
+    tlg = fit_tlg(G, scorer, real_den, real_desc=real_desc)
     rows.append(dict(dataset=name, model="TLG", n_params=tlg["n_params"], gic=tlg["gic"],
                      gic_fit=2.0 * tlg["kl"], gic_penalty=2.0 * tlg["n_params"],
                      kl=tlg["kl"], param=tlg["param"],
+                     ks_deg=tlg["ks_deg"], d_clustering=tlg["d_clustering"],
+                     d_assortativity=tlg["d_assortativity"],
                      **(_metrics(tlg["graph"]) if tlg["graph"] is not None else
                         dict(edges=np.nan, density=np.nan, clustering=np.nan,
                              assortativity=np.nan))))
@@ -365,14 +428,16 @@ def process_dataset(name, loader):
         gen_fn, n_params = gens[fam]
         if fam == "SBM":
             _, n_params = generate_sbm_from_real(G, seed=SEED)
-        res = baseline_gic(G, gen_fn, n_params, real_den, scorer)
+        res = baseline_gic(G, gen_fn, n_params, real_den, scorer, real_desc=real_desc)
         if res is None:
             log(f"  {fam}: generation failed — skipping")
             continue
         rows.append(dict(dataset=name, model=fam, n_params=res["n_params"],
                          gic=res["gic"], gic_fit=2.0 * res["kl"],
                          gic_penalty=2.0 * res["n_params"], kl=res["kl"],
-                         param=cf_params[fam], **_metrics(res["graph"])))
+                         param=cf_params[fam], ks_deg=res["ks_deg"],
+                         d_clustering=res["d_clustering"],
+                         d_assortativity=res["d_assortativity"], **_metrics(res["graph"])))
         log(f"  {fam}: np={res['n_params']} KL={res['kl']:.4f} GIC={res['gic']:.4f}")
 
     df = pd.DataFrame(rows)
@@ -385,9 +450,9 @@ def process_dataset(name, loader):
         df[c] = df[c].astype("Int64")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    cols = ["dataset", "model", "kl_rank", "gic_rank", "kl", "gic", "gic_fit",
-            "gic_penalty", "n_params", "edges", "density", "clustering",
-            "assortativity", "param"]
+    cols = ["dataset", "model", "kl_rank", "gic_rank", "kl", "ks_deg", "d_clustering",
+            "d_assortativity", "gic", "gic_fit", "gic_penalty", "n_params", "edges",
+            "density", "clustering", "assortativity", "param"]
     df[cols].to_csv(OUT_DIR / f"{name}_table.csv", index=False)
     _plot_bar(df, name, OUT_DIR / f"{name}_gic_bar.png")
     log(df[cols].to_string(index=False))
@@ -562,10 +627,14 @@ def _sweep_worker(task):
         with contextlib.redirect_stdout(open(os.devnull, "w")):  # silence inner fit log
             scorer = GraphInformationCriterion(G, model="LG", dist="KL")
             real_den, _ = scorer.compute_spectral_density(G)
+            rmet = _metrics(G)
+            real_desc = ([d for _, d in G.degree()], rmet["clustering"], rmet["assortativity"])
             fams = []
-            tlg = fit_tlg(G, scorer, real_den)
+            tlg = fit_tlg(G, scorer, real_den, real_desc=real_desc)
             fams.append(dict(model="TLG", kl=float(tlg["kl"]), gic=float(tlg["gic"]),
                              n_params=int(tlg["n_params"]), param=tlg["param"],
+                             ks_deg=float(tlg["ks_deg"]), d_clustering=float(tlg["d_clustering"]),
+                             d_assortativity=float(tlg["d_assortativity"]),
                              **_gmetrics(tlg["graph"])))
             cf = tw.closed_form_params(G)
             gens = tw._baseline_generators(G, cf)
@@ -573,13 +642,16 @@ def _sweep_worker(task):
                 gen_fn, npar = gens[fam]
                 if fam == "SBM":
                     _, npar = generate_sbm_from_real(G, seed=SEED)
-                res = baseline_gic(G, gen_fn, npar, real_den, scorer)
+                res = baseline_gic(G, gen_fn, npar, real_den, scorer, real_desc=real_desc)
                 if res is not None:
                     fams.append(dict(model=fam, kl=float(res["kl"]), gic=float(res["gic"]),
                                      n_params=int(res["n_params"]),
+                                     ks_deg=float(res["ks_deg"]),
+                                     d_clustering=float(res["d_clustering"]),
+                                     d_assortativity=float(res["d_assortativity"]),
                                      **_gmetrics(res.get("graph"))))
         result = dict(cache_version=CACHE_VERSION, dataset=dataset, id=nid,
-                      real=_metrics(G), families=fams,
+                      real=rmet, families=fams,
                       tlg_selected=tlg["selected"],   # chosen (d, kernel, k)
                       tlg_trace=tlg["trace"])         # every (d,kernel,k) config: tune/eval KL, GIC, coeffs
 
@@ -613,7 +685,10 @@ def _aggregate_dataset(dataset):
         real = d.get("real", {})
         for _, fr in fam.iterrows():
             rows.append(dict(dataset=dataset, file=d["id"], model=fr["model"],
-                             kl=fr["kl"], gic=fr["gic"], n_params=fr["n_params"],
+                             kl=fr["kl"], ks_deg=fr.get("ks_deg"),
+                             d_clustering=fr.get("d_clustering"),
+                             d_assortativity=fr.get("d_assortativity"),
+                             gic=fr["gic"], n_params=fr["n_params"],
                              kl_rank=fr["kl_rank"],
                              real_nodes=real.get("nodes"), real_edges=real.get("edges"),
                              real_clustering=real.get("clustering"),
@@ -639,6 +714,12 @@ def _aggregate_dataset(dataset):
                         win_rate=float((sub["kl_rank"] == 1).mean()),
                         mean_kl_rank=float(sub["kl_rank"].mean()),
                         median_kl=float(sub["kl"].median()),
+                        median_ks_deg=float(sub["ks_deg"].median())
+                        if "ks_deg" in sub else float("nan"),
+                        median_d_clustering=float(sub["d_clustering"].median())
+                        if "d_clustering" in sub else float("nan"),
+                        median_d_assortativity=float(sub["d_assortativity"].median())
+                        if "d_assortativity" in sub else float("nan"),
                         tlg_beats_sbm=(tvs if fam == "TLG" else float("nan"))))
     summ = pd.DataFrame(agg).sort_values("mean_kl_rank")
     summ.to_csv(odir / "summary.csv", index=False)
