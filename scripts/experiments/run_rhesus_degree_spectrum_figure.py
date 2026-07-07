@@ -11,6 +11,7 @@ Set LG_CASE_NET to another connectome id to regenerate for it (default: rhesus_b
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -46,6 +47,11 @@ def _degrees(G):
 def main():
     G, results = CS.compute()
     ranked = sorted(results, key=lambda f: results[f]["kl"])       # best (lowest KL) first
+    # With the modern baselines there can be up to 13 models; a 2-row degree/spectrum layout gets
+    # unreadably wide, so this combined figure shows the observed graph plus the top-K models by KL
+    # (env LG_DEGSPEC_TOPK, default 7). The full set is shown in the node-link and spectrum figures.
+    topk = int(os.environ.get("LG_DEGSPEC_TOPK", "7"))
+    ranked = ranked[:topk]
     panels = [("Original", G, None)] + [(m, results[m]["graph"], results[m]["kl"]) for m in ranked]
 
     ncols = len(panels)
