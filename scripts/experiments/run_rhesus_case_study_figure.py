@@ -17,12 +17,18 @@ import matplotlib.pyplot as plt
 
 _here = Path(__file__).resolve().parent
 _repo = _here.parents[1]
-for p in (_repo / "src", _repo / "scripts" / "closedform"):
+for p in (_repo / "src", _repo / "scripts" / "closedform", _repo / "scripts" / "more_baselines"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
 import tlg_latent_gic_common as C   # noqa: E402  (loaders, KL scorer, samplers, ensemble KL)
 import run_tlg_twitch_gic as tw     # noqa: E402  (closed_form_params, baseline gens, community feat)
+import more_baselines_common as MB  # noqa: E402  (modern baseline fitters: RDPG/DCSBM/Hyperbolic/...)
+
+# Modern baselines (fitted the same way, scored with the same ensemble-mean KL). Set
+# LG_CASE_MODERN=0 to reproduce the original 7-model figure.
+MODERN = [("ChungLu", MB.fit_chunglu), ("Config", MB.fit_config), ("RDPG", MB.fit_rdpg),
+          ("DCSBM", MB.fit_dcsbm), ("HolmeKim", MB.fit_holmekim), ("Hyperbolic", MB.fit_hyper)]
 
 # Which connectome to plot. Default: rhesus_brain_1, where LG is the best fit (lowest KL).
 # Set LG_CASE_NET=rhesus_cerebral.cortex_1 for the thesis-Fig.-3.11 network (where GRG wins).
@@ -100,6 +106,19 @@ def compute():
         if ck is not None and abs(res["kl"] - ck) > KL_TOL:
             raise SystemExit(f"{fam} KL {res['kl']:.4f} disagrees with cache {ck:.4f} — investigate.")
 
+    if os.environ.get("LG_CASE_MODERN", "1") == "1":
+        A = nx.to_numpy_array(G)
+        deg = A.sum(1)
+        for name, fitter in MODERN:
+            try:
+                gen_fn, npar = fitter(G, A, deg)
+                res = C.baseline_gic(G, gen_fn, npar, real_den, scorer)
+            except Exception as ex:
+                C.log(f"  {name}: fit/score failed ({ex}) — skipping")
+                continue
+            if res is not None:
+                results[name] = dict(kl=res["kl"], graph=res["graph"])
+
     for fam in results:
         cm = cache.get("TLG" if fam == "LG" else fam)
         tag = "" if cm is None else f"  (cache {cm:.4f}; OK)"
@@ -123,7 +142,10 @@ def plot(G, results):
     panels = [("Original", G, None)] + [(fam, results[fam]["graph"], results[fam]["kl"])
                                         for fam in ranked]
 
-    fig, axes = plt.subplots(2, 4, figsize=(18, 9.5))
+    ncols = min(5, len(panels))
+    nrows = -(-len(panels) // ncols)                 # ceil
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.6 * ncols, 4.4 * nrows), squeeze=False)
+    axes = axes.reshape(-1)
     for ax, (name, graph, kl) in zip(axes.flat, panels):
         hl = None if kl is None else RANK_HL.get(rank[name])
         _draw(ax, graph, color=(hl if hl else "#9ecae1"))

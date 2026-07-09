@@ -36,7 +36,10 @@ def main():
     ranked = sorted(results, key=lambda f: results[f]["kl"])     # best (lowest KL) first
     panels = [("Original", G)] + [(m, results[m]["graph"]) for m in ranked]
 
-    fig, axes = plt.subplots(2, 4, figsize=(18, 9))
+    ncols = min(5, len(panels))
+    nrows = -(-len(panels) // ncols)                 # ceil, so all models (incl. modern baselines) fit
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.6 * ncols, 3.4 * nrows), squeeze=False)
+    axes = axes.reshape(-1)
     for ax, (name, graph) in zip(axes.flat, panels):
         eigs = _laplacian_eigs(graph)
         sns.histplot(x=eigs, kde=True, ax=ax, stat="density", bins=40,
