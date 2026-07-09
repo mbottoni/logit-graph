@@ -24,7 +24,7 @@ from scipy.stats import skew, kurtosis
 _here = Path(__file__).resolve().parent
 _repo_root = _here.parents[1]
 _closedform = _repo_root / "scripts" / "closedform"
-for p in (_repo_root / "src", _closedform, _here):
+for p in (_repo_root / "src", _closedform, _repo_root / "scripts" / "more_baselines", _here):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
@@ -35,7 +35,13 @@ except Exception:
     pass
 
 import tlg_latent_gic_common as C  # noqa: E402  (loaders, latent-TLG sampler pieces, baselines)
+import more_baselines_common as MB  # noqa: E402  (modern baseline fitters)
 from logit_graph.sbm import generate_sbm_from_real  # noqa: E402
+
+# Modern baselines: name -> fitter(G, A, deg) -> (gen_fn(seed), n_params). Included by default so
+# the feature-space comparison spans them too; drop from LG_DR_FAMILIES to exclude.
+_MODERN = {"ChungLu": MB.fit_chunglu, "Config": MB.fit_config, "RDPG": MB.fit_rdpg,
+           "DCSBM": MB.fit_dcsbm, "HolmeKim": MB.fit_holmekim, "Hyperbolic": MB.fit_hyper}
 
 def _int(env, d):
     v = os.environ.get(env); return int(v) if v else d
@@ -63,7 +69,8 @@ OUT = _here / "runs" / f"tlg_dimred_{DATASET}"
 CACHE = OUT / "cache"
 
 NREPS = _int("LG_DR_NREPS", 10)
-FAMILIES = (os.environ.get("LG_DR_FAMILIES") or "ER,BA,WS,KR,GRG,SBM,TLG").split(",")
+FAMILIES = (os.environ.get("LG_DR_FAMILIES")
+            or "ER,BA,WS,KR,GRG,SBM,ChungLu,Config,RDPG,DCSBM,HolmeKim,Hyperbolic,TLG").split(",")
 THRESH = _float("LG_DR_COLINEAR_THRESH", 0.85)   # pairwise |Pearson| pre-prune cutoff
 VIF_THRESH = _float("LG_DR_VIF_THRESH", 5.0)      # max variance-inflation factor kept
 SEED = _int("LG_DR_SEED", 12345)
@@ -204,6 +211,19 @@ def _family_setup(G, net_id):
         setup[fam] = ((lambda s, gf=gen_fn: gf(s)), est[fam])
     _, sbm_np = generate_sbm_from_real(G, seed=SEED)
     setup["SBM"] = ((lambda s: generate_sbm_from_real(G, seed=s)[0]), {"n_params": int(sbm_np)})
+    # Modern baselines (fitted once per network; reuse the same generators as the KL comparison).
+    if any(f in _MODERN for f in FAMILIES):
+        A = nx.to_numpy_array(G)
+        deg = A.sum(1)
+        for name, fitter in _MODERN.items():
+            if name not in FAMILIES:
+                continue
+            try:
+                gen_fn, npar = fitter(G, A, deg)
+            except Exception as ex:
+                log(f"  {net_id}/{name}: fit failed ({ex}) — skipping")
+                continue
+            setup[name] = ((lambda s, gf=gen_fn: gf(s)), {"n_params": int(npar)})
     tlg_fn, tlg_params = _tlg_sampler(G, net_id)
     setup["TLG"] = (tlg_fn, tlg_params)
     return {f: setup[f] for f in FAMILIES if f in setup}
@@ -310,6 +330,13 @@ _FAM_STYLE = {
     "GRG": ("#CC79A7", "v"),   # pink
     "SBM": ("#0072B2", "P"),   # strong blue
     "TLG": ("#D55E00", "X"),   # strong vermillion (the model of interest)
+    # modern baselines
+    "ChungLu":    ("#7f7f7f", "o"),
+    "Config":     ("#bcbd22", "s"),
+    "RDPG":       ("#17becf", "^"),
+    "DCSBM":      ("#1f77b4", "D"),
+    "HolmeKim":   ("#8c564b", "v"),
+    "Hyperbolic": ("#9467bd", "*"),
 }
 
 
@@ -576,14 +603,15 @@ def _distance_figure(meta, F, keep, region_embeds):
     emb, sub = region_embeds[focus]
     method = DIST_METHOD if DIST_METHOD in emb else list(emb)[-1]
 
-    fig = plt.figure(figsize=(14, max(5.5, 0.55 * len(regions) + 2.2)))
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.7, 1.25], wspace=0.14)
+    fig = plt.figure(figsize=(max(16, 1.15 * len(order) + 6), max(5.5, 0.55 * len(regions) + 2.4)))
+    gs = fig.add_gridspec(1, 2, width_ratios=[2.0, 1.1], wspace=0.16)
     # left: distance heatmap (NOT a dim-red result -- raw Euclidean distance in the
     # standardized 7-D feature space, real graph -> family centroid)
     axh = fig.add_subplot(gs[0, 0])
     H = Ddf[order]
     im = axh.imshow(H.values, aspect="auto", cmap="viridis")
-    axh.set_xticks(range(len(order))); axh.set_xticklabels([_disp(o) for o in order])
+    axh.set_xticks(range(len(order)))
+    axh.set_xticklabels([_disp(o) for o in order], rotation=40, ha="right", fontsize=9)
     axh.set_yticks(range(len(regions))); axh.set_yticklabels(regions)
     mean_all = np.nanmean(H.values)
     for ri in range(len(regions)):
