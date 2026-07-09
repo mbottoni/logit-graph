@@ -603,14 +603,15 @@ def _distance_figure(meta, F, keep, region_embeds):
     emb, sub = region_embeds[focus]
     method = DIST_METHOD if DIST_METHOD in emb else list(emb)[-1]
 
-    fig = plt.figure(figsize=(14, max(5.5, 0.55 * len(regions) + 2.2)))
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.7, 1.25], wspace=0.14)
+    fig = plt.figure(figsize=(max(16, 1.15 * len(order) + 6), max(5.5, 0.55 * len(regions) + 2.4)))
+    gs = fig.add_gridspec(1, 2, width_ratios=[2.0, 1.1], wspace=0.16)
     # left: distance heatmap (NOT a dim-red result -- raw Euclidean distance in the
     # standardized 7-D feature space, real graph -> family centroid)
     axh = fig.add_subplot(gs[0, 0])
     H = Ddf[order]
     im = axh.imshow(H.values, aspect="auto", cmap="viridis")
-    axh.set_xticks(range(len(order))); axh.set_xticklabels([_disp(o) for o in order])
+    axh.set_xticks(range(len(order)))
+    axh.set_xticklabels([_disp(o) for o in order], rotation=40, ha="right", fontsize=9)
     axh.set_yticks(range(len(regions))); axh.set_yticklabels(regions)
     mean_all = np.nanmean(H.values)
     for ri in range(len(regions)):
