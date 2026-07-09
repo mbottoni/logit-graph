@@ -58,6 +58,9 @@ def main() -> None:
         sys.path.insert(0, str(_src))
     if str(_here) not in sys.path:
         sys.path.insert(0, str(_here))
+    _mb = _repo_root / "scripts" / "more_baselines"
+    if str(_mb) not in sys.path:
+        sys.path.insert(0, str(_mb))
 
     import numpy as np
     import networkx as nx
@@ -199,13 +202,15 @@ def main() -> None:
     real_avg_deg = 2 * m / n
     eps = 1e-10
 
-    def _gic(p, n_params):
-        # GIC = 2*spectral_distance + 2*n_params (AIC-style complexity penalty);
-        # spectral_distance is the symmetric KL between the real and model ESDs.
+    def _kl(p):
+        # symmetric KL between the real and model spectral densities (the goodness-of-fit term).
         from scipy.stats import entropy as _entropy
-        dist = 0.5 * (_entropy(real_density + eps, p + eps)
-                      + _entropy(p + eps, real_density + eps))
-        return 2.0 * dist + 2.0 * n_params
+        return float(0.5 * (_entropy(real_density + eps, p + eps)
+                            + _entropy(p + eps, real_density + eps)))
+
+    def _gic(p, n_params):
+        # GIC = 2*KL + 2*n_params (AIC-style complexity penalty).
+        return 2.0 * _kl(p) + 2.0 * n_params
 
     # LG
     t0 = time.perf_counter()
@@ -215,7 +220,8 @@ def main() -> None:
         n_probes=kpm_probes, seed=seed + 99_991,
     )
     lg_gic = _gic(lg_density, n_params=1)  # LG penalized on sigma only
-    results["LG"] = {"gic": float(lg_gic), "param": f"σ={sigma:.3f},β={beta:.3f},d={d_lg}",
+    results["LG"] = {"gic": float(lg_gic), "kl": _kl(lg_density),
+                     "param": f"σ={sigma:.3f},β={beta:.3f},d={d_lg}",
                      "n": n, "m": int(best_graph.sum() // 2)}
     print(f"  LG  GIC={lg_gic:.4f}  ({_fmt(time.perf_counter() - t0)})")
     del gm
@@ -237,6 +243,23 @@ def main() -> None:
         ("SBM", f"Louvain SBM (k={_sbm_k})", sbm_n_params,
          lambda: generate_sbm_from_real(G_gcc, seed=seed)[0]),
     ]
+
+    # Modern baselines that scale to a graph of this size (sparse generators only). The dense
+    # O(n^2) latent-position / block / hyperbolic models (RDPG, DCSBM, Hyperbolic) cannot be
+    # materialized at n~27k and are instead evaluated on capped subgraphs by the more_baselines
+    # experiment. Set LG_ARXIV_MODERN=0 to reproduce the original table.
+    if os.environ.get("LG_ARXIV_MODERN", "1") == "1":
+        import more_baselines_common as MB
+        deg_seq = np.array([d for _, d in G_gcc.degree()])
+        cl_gen, _ = MB.fit_chunglu(G_gcc, None, deg_seq)
+        cf_gen, _ = MB.fit_config(G_gcc, None, deg_seq)
+        hk_gen, _ = MB.fit_holmekim(G_gcc, None, deg_seq)
+        baselines += [
+            ("ChungLu", "Chung-Lu (expected degree)", 1, lambda: cl_gen(0)),
+            ("Config", "Configuration model", 1, lambda: cf_gen(0)),
+            ("HolmeKim", "Holme-Kim (BA + triads)", 2, lambda: hk_gen(0)),
+        ]
+
     for name, label, n_params, gen in baselines:
         t0 = time.perf_counter()
         G_m = gen()
@@ -246,19 +269,19 @@ def main() -> None:
             n_probes=kpm_probes, seed=seed + hash(name) % 1000,
         )
         gic_val = float(_gic(m_density, n_params))
-        results[name] = {"gic": gic_val, "param": label,
+        results[name] = {"gic": gic_val, "kl": _kl(m_density), "param": label,
                          "n": G_m.number_of_nodes(), "m": G_m.number_of_edges()}
         print(f"  {name:<2s}  GIC={gic_val:.4f}  ({_fmt(time.perf_counter() - t0)})")
         del G_m, L_m
         gc.collect()
 
     # 6. Summary + cache
-    summary_rows = [{"model": "Original", "gic": float("nan"), "param": "N/A",
+    summary_rows = [{"model": "Original", "kl": float("nan"), "gic": float("nan"), "param": "N/A",
                      "nodes": n, "edges": m, "density": real_density_val}]
     for name, data in results.items():
         summary_rows.append({
-            "model": name, "gic": data["gic"], "param": data["param"],
-            "nodes": data["n"], "edges": data["m"],
+            "model": name, "kl": data.get("kl", float("nan")), "gic": data["gic"],
+            "param": data["param"], "nodes": data["n"], "edges": data["m"],
             "density": 2 * data["m"] / (data["n"] * (data["n"] - 1))
             if data["n"] > 1 else 0,
         })
@@ -288,12 +311,12 @@ def _print_summary(summary_df, n, m):
     import pandas as pd
     print(f"\n=== Summary  (cit-HepTh GCC: n={n:,}, m={m:,}) ===\n")
     print(summary_df.to_string(index=False))
-    models_only = summary_df[summary_df["model"] != "Original"].sort_values("gic")
-    print("\nRanking by GIC (lower = better):")
+    models_only = summary_df[summary_df["model"] != "Original"].sort_values("kl")
+    print("\nRanking by KL spectral divergence (lower = better):")
     medals = ["🥇", "🥈", "🥉", "4️⃣"]
     for rank, (_, row) in enumerate(models_only.iterrows(), 1):
         m_str = medals[rank - 1] if rank <= 4 else f"{rank}."
-        print(f"  {m_str} {row['model']:>3s}  GIC = {row['gic']:.4f}")
+        print(f"  {m_str} {row['model']:>8s}  KL = {row['kl']:.4f}   (GIC = {row['gic']:.4f})")
 
 
 if __name__ == "__main__":
